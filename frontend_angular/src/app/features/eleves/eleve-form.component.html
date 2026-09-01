@@ -1,0 +1,136 @@
+<div class="page-head">
+  <div>
+    <h1>Inscrire un élève</h1>
+    <p>Renseigne les informations pour créer le dossier de l'élève.</p>
+  </div>
+  <a class="btn-ghost" routerLink="/eleves">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    Annuler
+  </a>
+</div>
+
+@if (erreur()) {
+  <div class="form-error" style="max-width:760px;">{{ erreur() }}</div>
+}
+
+<div style="max-width:760px;">
+  <form [formGroup]="form" (ngSubmit)="submit()">
+
+    <div class="form-section">
+      <div class="form-section-title">Informations de l'élève</div>
+      <div class="form-section-sub">Ces informations figureront sur le dossier scolaire.</div>
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="nom">Nom</label>
+          <input class="input" id="nom" formControlName="nom" placeholder="Diagne">
+        </div>
+        <div class="field">
+          <label for="prenom">Prénom</label>
+          <input class="input" id="prenom" formControlName="prenom" placeholder="Fatou">
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="date_naissance">Date de naissance</label>
+          <input class="input" id="date_naissance" type="date" formControlName="date_naissance">
+        </div>
+        <div class="field">
+          <label>Sexe</label>
+          <div class="radio-pills">
+            <label class="radio-pill" [class.checked]="form.get('sexe')?.value === 'F'">
+              <input type="radio" formControlName="sexe" value="F"> Féminin
+            </label>
+            <label class="radio-pill" [class.checked]="form.get('sexe')?.value === 'M'">
+              <input type="radio" formControlName="sexe" value="M"> Masculin
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="adresse">Adresse <span class="hint">(optionnel)</span></label>
+        <input class="input" id="adresse" formControlName="adresse" placeholder="Zac Mbao, Dakar">
+      </div>
+    </div>
+
+    <div class="form-section">
+      <div class="form-section-title">Scolarité</div>
+      <div class="form-section-sub">Classe et année concernées par cette inscription.</div>
+
+      <div class="form-grid cols-3">
+        <div class="field">
+          <label for="id_niveau">Niveau <span class="hint">(filtre la liste des classes)</span></label>
+          <select class="input" id="id_niveau" formControlName="id_niveau">
+            <option value="">Tous</option>
+            @for (n of niveaux(); track n.id) {
+              <option [value]="n.id">{{ n.libelle }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="id_classe">Classe</label>
+          <select class="input" id="id_classe" formControlName="id_classe">
+            <option value="" disabled>Sélectionner…</option>
+            @for (c of classesFiltrees(); track c.id) {
+              <option [value]="c.id">{{ c.nom }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="id_annee_scolaire">Année scolaire</label>
+          <select class="input" id="id_annee_scolaire" formControlName="id_annee_scolaire">
+            <option value="" disabled>Sélectionner…</option>
+            @for (a of annees(); track a.id) {
+              <option [value]="a.id">{{ a.libelle }}</option>
+            }
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="date_inscription">Date d'inscription</label>
+        <input class="input" id="date_inscription" type="date" formControlName="date_inscription">
+      </div>
+    </div>
+
+    <div class="form-section">
+      <div class="form-section-title">Parent / Tuteur</div>
+      <div class="form-section-sub">Contact principal à joindre pour cet élève (optionnel).</div>
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="parent_nom_complet">Nom complet</label>
+          <input class="input" id="parent_nom_complet" formControlName="parent_nom_complet" placeholder="Awa Diagne">
+        </div>
+        <div class="field">
+          <label for="parent_lien">Lien de parenté</label>
+          <select class="input" id="parent_lien" formControlName="parent_lien">
+            <option value="mere">Mère</option>
+            <option value="pere">Père</option>
+            <option value="tuteur">Tuteur</option>
+            <option value="autre">Autre</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label for="parent_telephone">Téléphone</label>
+          <input class="input" id="parent_telephone" formControlName="parent_telephone" placeholder="+221 77 000 00 00">
+        </div>
+        <div class="field">
+          <label for="parent_email">E-mail <span class="hint">(optionnel)</span></label>
+          <input class="input" id="parent_email" type="email" formControlName="parent_email">
+        </div>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <a class="btn-ghost" routerLink="/eleves">Annuler</a>
+      <button type="submit" class="btn-primary" [disabled]="enregistrement()">
+        {{ enregistrement() ? 'Enregistrement…' : "Enregistrer l'élève" }}
+      </button>
+    </div>
+  </form>
+</div>

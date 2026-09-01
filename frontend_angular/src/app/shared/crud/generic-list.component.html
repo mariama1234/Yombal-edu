@@ -1,0 +1,77 @@
+@if (config) {
+  <div class="page-head">
+    <div>
+      <p class="module-eyebrow">{{ config.eyebrow }}</p>
+      <h1>{{ config.titre }}</h1>
+      <p>{{ config.description }}</p>
+    </div>
+    @if (!config.lectureSeule) {
+      <a class="btn-primary" [routerLink]="['nouveau']">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        Ajouter {{ config.titreSingulier }}
+      </a>
+    }
+  </div>
+
+  @if (erreur()) {
+    <div class="panel" style="border-color:var(--red); color:var(--red); font-size:13px;">
+      {{ erreur() }}
+    </div>
+  }
+
+  <div class="panel">
+    @if (loading()) {
+      <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
+    } @else if (items().length === 0) {
+      <p style="color:var(--ink-400); font-size:13px;">Aucun élément pour le moment.</p>
+    } @else {
+      <table class="simple">
+        <thead>
+          <tr>
+            @for (col of config.columns; track col.key) {
+              <th>{{ col.label }}</th>
+            }
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of items(); track item.id) {
+            <tr>
+              @for (col of config.columns; track col.key) {
+                <td [class.mono]="col.type === 'number' || col.type === 'date'">
+                  @if (col.type === 'badge') {
+                    <span class="pill" [class]="item[col.key]">{{ item[col.key] }}</span>
+                  } @else if (item[col.key] === true) {
+                    Oui
+                  } @else if (item[col.key] === false) {
+                    Non
+                  } @else {
+                    {{ item[col.key] ?? '—' }}
+                  }
+                </td>
+              }
+              <td style="text-align:right; white-space:nowrap;">
+                @for (action of config.actions ?? []; track action.chemin) {
+                  @if (actionVisible(action, item)) {
+                    <button class="panel-link" (click)="lancerAction(action, item)">{{ action.label }}</button>
+                    &nbsp;·&nbsp;
+                  }
+                }
+                @if (!config.lectureSeule) {
+                  <a class="panel-link" [routerLink]="[item.id]">Modifier</a>
+                  &nbsp;·&nbsp;
+                  <button class="panel-link" style="color:var(--red)" (click)="supprimer(item.id)">Supprimer</button>
+                } @else {
+                  <span style="color:var(--ink-400); font-size:12px;">Consultation seule</span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      <div class="pagination">
+        <span>{{ total() }} résultat(s)</span>
+      </div>
+    }
+  </div>
+}

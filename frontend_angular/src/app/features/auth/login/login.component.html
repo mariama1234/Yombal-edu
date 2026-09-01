@@ -1,0 +1,54 @@
+<div class="login-screen">
+  <div class="login-side">
+    <div class="login-side-top">
+      <div class="brand-mark"><img src="assets/logo-yombaledu.png" alt="YombalEdu"></div>
+      <div>
+        <div class="brand-name">YombalEdu</div>
+        <div class="brand-sub">Gestion scolaire</div>
+      </div>
+    </div>
+    <div class="login-side-quote">
+      <p>Toute l'école — élèves, notes, finances — dans un seul outil.</p>
+      <span>École MIC CITE · Dakar, Sénégal</span>
+    </div>
+    <div class="login-orbit"></div>
+  </div>
+
+  <div class="login-form-wrap">
+    <div class="login-card">
+      <div class="login-card-brand">
+        <div class="brand-mark"><img src="assets/logo-yombaledu.png" alt="YombalEdu"></div>
+        <div class="brand-name" style="color:var(--ink-900)">YombalEdu</div>
+      </div>
+      <h1>Connexion</h1>
+      <p class="lead">Accédez à l'espace administrateur de votre école.</p>
+
+      <form [formGroup]="form" (ngSubmit)="submit()">
+        <div class="field">
+          <label for="email">Adresse e-mail</label>
+          <input class="input" id="email" type="email" formControlName="email" placeholder="admin@miccite.sn">
+          @if (form.controls.email.touched && form.controls.email.invalid) {
+            <span class="hint hint-error">Saisissez une adresse e-mail valide.</span>
+          }
+        </div>
+        <div class="field">
+          <label for="password">Mot de passe</label>
+          <input class="input" id="password" type="password" formControlName="password" placeholder="••••••••">
+          @if (form.controls.password.touched && form.controls.password.invalid) {
+            <span class="hint hint-error">Le mot de passe est obligatoire.</span>
+          }
+        </div>
+
+        @if (erreur()) {
+          <div class="form-error">{{ erreur() }}</div>
+        }
+
+        <button type="submit" class="btn-primary btn-full" [disabled]="loading()">
+          {{ loading() ? 'Connexion…' : 'Se connecter' }}
+        </button>
+      </form>
+
+      <div class="login-foot">Besoin d'aide ? Contactez l'administrateur YombalEdu de votre école.</div>
+    </div>
+  </div>
+</div>

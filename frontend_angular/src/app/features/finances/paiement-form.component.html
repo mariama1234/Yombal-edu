@@ -1,0 +1,60 @@
+@if (recuGenere()) {
+  <div class="page-head">
+    <div><h1>Paiement enregistré ✅</h1><p>Le reçu a été généré automatiquement.</p></div>
+  </div>
+  <div class="panel" style="max-width:460px;">
+    <div class="panel-title" style="margin-bottom:14px;">Reçu</div>
+    <table class="simple">
+      <tbody>
+        <tr><td>Élève</td><td class="mono">{{ frais()?.eleve_prenom }} {{ frais()?.eleve_nom }}</td></tr>
+        <tr><td>Montant</td><td class="mono">{{ recuGenere()?.montant }} F CFA</td></tr>
+        <tr><td>Méthode</td><td class="mono">{{ recuGenere()?.methode }}</td></tr>
+        <tr><td>Date</td><td class="mono">{{ recuGenere()?.date_paiement | date:'short' }}</td></tr>
+      </tbody>
+    </table>
+    <div class="form-actions">
+      <a class="btn-ghost" routerLink="/finances">Retour aux impayés</a>
+      <button class="btn-primary" (click)="window.print()">Imprimer</button>
+    </div>
+  </div>
+} @else if (frais()) {
+  <div class="page-head">
+    <div>
+      <h1>Encaisser un paiement</h1>
+      <p>{{ frais()!.eleve_prenom }} {{ frais()!.eleve_nom }} — solde restant : <strong class="mono">{{ frais()!.solde_restant ?? frais()!.montant_du }} F CFA</strong></p>
+    </div>
+    <a class="btn-ghost" routerLink="/finances">Annuler</a>
+  </div>
+
+  <div class="form-section" style="max-width:520px;">
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      <div class="field">
+        <label for="montant">Montant à encaisser (F CFA)</label>
+        <input class="input" id="montant" type="number" formControlName="montant">
+      </div>
+
+      <div class="field">
+        <label>Méthode de paiement</label>
+        <div class="radio-pills" style="flex-wrap:wrap;">
+          @for (m of methodes; track m.value) {
+            <label class="radio-pill" [class.checked]="form.get('methode')?.value === m.value" style="flex:0 0 calc(50% - 4px); margin-bottom:8px;">
+              <input type="radio" formControlName="methode" [value]="m.value"> {{ m.label }}
+            </label>
+          }
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="reference_transaction">Référence de transaction <span class="hint">(optionnel, mobile money)</span></label>
+        <input class="input" id="reference_transaction" formControlName="reference_transaction" placeholder="Ex: TXN-88213">
+      </div>
+
+      <div class="form-actions">
+        <a class="btn-ghost" routerLink="/finances">Annuler</a>
+        <button type="submit" class="btn-primary" [disabled]="form.invalid || enregistrement()">
+          {{ enregistrement() ? 'Encaissement…' : 'Encaisser' }}
+        </button>
+      </div>
+    </form>
+  </div>
+}

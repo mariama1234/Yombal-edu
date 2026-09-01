@@ -1,0 +1,14 @@
+@if (data()) {
+  <div class="page-head">
+    <div>
+      <p class="module-eyebrow">{{ data()!.eyebrow }}</p>
+      <h1>{{ data()!.title }}</h1>
+      <p>{{ data()!.lead }}</p>
+    </div>
+  </div>
+
+  <div class="panel" style="border-left:3px solid var(--orange-500);">
+    <div class="panel-title" style="margin-bottom:8px;">Pas encore branché à l'API</div>
+    <p style="font-size:13px; color:var(--ink-600); margin:0;">{{ data()!.note }}</p>
+  </div>
+}

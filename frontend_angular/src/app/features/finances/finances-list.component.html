@@ -1,0 +1,35 @@
+<div class="page-head">
+  <div>
+    <h1>Finances</h1>
+    <p>Frais dus et impayés — clique sur "Encaisser" pour enregistrer un paiement.</p>
+  </div>
+  <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse →</a>
+</div>
+
+<div class="panel">
+  @if (loading()) {
+    <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
+  } @else if (frais().length === 0) {
+    <p style="color:var(--ink-400); font-size:13px;">Aucun impayé 🎉</p>
+  } @else {
+    <table class="simple">
+      <thead>
+        <tr><th>Élève</th><th>Montant dû</th><th>Payé</th><th>Solde</th><th>Statut</th><th></th></tr>
+      </thead>
+      <tbody>
+        @for (f of frais(); track f.id) {
+          <tr>
+            <td>{{ f.eleve_prenom }} {{ f.eleve_nom }}</td>
+            <td class="mono">{{ f.montant_du }} F</td>
+            <td class="mono">{{ f.montant_paye ?? 0 }} F</td>
+            <td class="mono">{{ f.solde_restant ?? f.montant_du }} F</td>
+            <td><span class="pill" [class]="f.statut">{{ f.statut }}</span></td>
+            <td style="text-align:right;">
+              <a class="btn-primary" style="padding:6px 12px; font-size:12px;" [routerLink]="['/finances/encaisser', f.id]">Encaisser</a>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>

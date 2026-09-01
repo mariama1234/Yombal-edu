@@ -1,0 +1,27 @@
+<div class="page-head">
+  <div><h1>Journal de caisse</h1><p>Historique des mouvements (paiements et dépenses).</p></div>
+  <a class="btn-ghost" routerLink="/finances">← Retour aux impayés</a>
+</div>
+
+<div class="panel">
+  @if (loading()) {
+    <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
+  } @else if (mouvements().length === 0) {
+    <p style="color:var(--ink-400); font-size:13px;">Aucun mouvement enregistré.</p>
+  } @else {
+    <table class="simple">
+      <thead><tr><th>Date</th><th>Libellé</th><th>Type</th><th>Débit</th><th>Crédit</th></tr></thead>
+      <tbody>
+        @for (m of mouvements(); track m.id) {
+          <tr>
+            <td class="mono">{{ m.date_mouvement | date:'dd/MM/yyyy' }}</td>
+            <td>{{ m.libelle }}</td>
+            <td>{{ m.type_journal }}</td>
+            <td class="mono">{{ m.debit || '—' }}</td>
+            <td class="mono">{{ m.credit || '—' }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>

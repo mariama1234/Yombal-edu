@@ -1,0 +1,48 @@
+<div class="page-head">
+  <div>
+    <h1>Élèves</h1>
+    <p>{{ total() }} élèves inscrits.</p>
+  </div>
+  <a class="btn-primary" routerLink="nouveau">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    Inscrire un élève
+  </a>
+</div>
+
+<div class="filters">
+  <div class="chip" [class.active]="filtreStatut() === ''" (click)="filtrer('')">Tous</div>
+  <div class="chip" [class.active]="filtreStatut() === 'actif'" (click)="filtrer('actif')">Actifs</div>
+  <div class="chip" [class.active]="filtreStatut() === 'transfere'" (click)="filtrer('transfere')">Transférés</div>
+  <div class="chip" [class.active]="filtreStatut() === 'radie'" (click)="filtrer('radie')">Radiés</div>
+</div>
+
+<div class="panel">
+  @if (loading()) {
+    <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
+  } @else if (eleves().length === 0) {
+    <p style="color:var(--ink-400); font-size:13px;">Aucun élève pour ce filtre.</p>
+  } @else {
+    <table class="simple">
+      <thead>
+        <tr><th>Élève</th><th>Matricule</th><th>Sexe</th><th>Statut</th><th></th></tr>
+      </thead>
+      <tbody>
+        @for (e of eleves(); track e.id) {
+          <tr>
+            <td>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <div class="avatar" style="width:30px;height:30px;font-size:11px;">{{ initiales(e) }}</div>
+                <strong>{{ e.prenom }} {{ e.nom }}</strong>
+              </div>
+            </td>
+            <td class="mono">{{ e.matricule }}</td>
+            <td>{{ e.sexe ?? '—' }}</td>
+            <td><span class="pill" [class]="e.statut">{{ e.statut }}</span></td>
+            <td style="text-align:right;"><a class="panel-link" [routerLink]="[e.id]">Voir</a></td>
+          </tr>
+        }
+      </tbody>
+    </table>
+    <div class="pagination"><span>{{ total() }} résultat(s)</span></div>
+  }
+</div>

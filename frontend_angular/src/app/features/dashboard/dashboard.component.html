@@ -1,0 +1,52 @@
+<div class="page-head">
+  <div>
+    <h1>Bonjour {{ auth.currentUser()?.prenom }} 👋</h1>
+    <p>Voici la situation de l'école aujourd'hui.</p>
+  </div>
+  <a class="btn-primary" routerLink="/eleves/nouveau">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    Nouvelle inscription
+  </a>
+</div>
+
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-top">
+      <span class="kpi-label">Élèves inscrits</span>
+      <div class="kpi-icon" style="background:var(--navy-900);">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 12a4 4 0 100-8 4 4 0 000 8z"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      </div>
+    </div>
+    <div class="kpi-value">{{ nbEleves() ?? '—' }}</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-top">
+      <span class="kpi-label">Classes actives</span>
+      <div class="kpi-icon" style="background:var(--green);">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M4 19V6a2 2 0 012-2h8l6 6v9a2 2 0 01-2 2H6a2 2 0 01-2-2z"/></svg>
+      </div>
+    </div>
+    <div class="kpi-value">{{ nbClasses() ?? '—' }}</div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-top">
+      <span class="kpi-label">Impayés en cours</span>
+      <div class="kpi-icon" style="background:var(--red);">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+      </div>
+    </div>
+    <div class="kpi-value">{{ nbImpayes() ?? '—' }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><div class="panel-title">Accès rapides</div></div>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <a class="btn-ghost" routerLink="/eleves">Élèves</a>
+    <a class="btn-ghost" routerLink="/finances">Finances</a>
+    <a class="btn-ghost" routerLink="/emploi-du-temps">Emploi du temps</a>
+    <a class="btn-ghost" routerLink="/classes">Classes</a>
+  </div>
+</div>

@@ -1,0 +1,852 @@
+import re
+
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from django.db import transaction
+from . import models
+
+Utilisateur = get_user_model()
+
+
+def prochain_matricule(ecole, annee):
+    """
+    Matricule suivant pour une école et une année données, au format
+    PREFIXE-ANNEE-0001.
+
+    La numérotation est propre à chaque école — un compteur global ferait
+    dépendre les matricules d'une école de ceux des autres. Elle repose sur
+    le plus grand numéro déjà attribué et non sur un décompte, pour qu'une
+    suppression au milieu de la liste ne provoque pas de collision.
+
+    Limite assumée : supprimer le dernier élève inscrit libère son numéro,
+    qui sera réattribué. Tenir une séquence persistante coûterait une table
+    de plus pour un cas qui ne devrait pas se produire — un départ se
+    matérialise par `statut` (radié, transféré, diplômé), pas par une
+    suppression de ligne, qui effacerait au passage notes et paiements.
+    """
+    prefixe = (
+        models.ParametreEcole.objects
+        .filter(id_ecole=ecole, cle="prefixe_matricule")
+        .values_list("valeur", flat=True)
+        .first()
+    ) or "ELV"
+
+    debut = re.sub(r"\D", "", annee.libelle)[:4] or str(annee.date_debut.year)
+    base = f"{prefixe}-{debut}-"
+
+    # select_for_update sérialise les inscriptions simultanées dans la même
+    # école, sinon deux requêtes concurrentes calculeraient le même numéro.
+    existants = (
+        models.Eleve.objects
+        .select_for_update()
+        .filter(id_ecole=ecole, matricule__startswith=base)
+        .values_list("matricule", flat=True)
+    )
+
+    dernier = 0
+    for matricule in existants:
+        suffixe = matricule[len(base):]
+        if suffixe.isdigit():
+            dernier = max(dernier, int(suffixe))
+
+    return f"{base}{dernier + 1:04d}"
+
+
+# ---------- Auth / utilisateur ----------
+
+class UtilisateurSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Utilisateur
+        fields = ["id", "id_ecole", "nom", "prenom", "email", "role", "telephone", "statut", "date_creation"]
+        read_only_fields = ["id", "date_creation"]
+
+
+class UtilisateurCreateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    class Meta:
+        model = Utilisateur
+        fields = ["id", "id_ecole", "nom", "prenom", "email", "role", "telephone", "password"]
+
+    def create(self, validated_data):
+        password = validated_data.pop("password")
+        user = Utilisateur(**validated_data)
+        user.set_password(password)
+        user.save()
+        return user
+
+
+class UtilisateurAdminSerializer(serializers.ModelSerializer):
+    """
+    Gestion des comptes par un administrateur.
+
+    `id_ecole` est imposé par la vue, jamais par le client : un admin ne peut
+    créer de compte que dans sa propre école. `is_staff` et `is_superuser`
+    ne sont pas exposés — ils ne s'accordent pas par l'API.
+    """
+    # allow_blank : le formulaire de modification renvoie une chaîne vide quand
+    # l'utilisateur ne touche pas au mot de passe.
+    password = serializers.CharField(write_only=True, min_length=8, required=False,
+                                     allow_blank=True,
+                                     help_text="Laisser vide pour conserver le mot de passe actuel.")
+
+    class Meta:
+        model = Utilisateur
+        fields = ["id", "id_ecole", "nom", "prenom", "email", "role", "telephone",
+                  "statut", "date_creation", "password"]
+        read_only_fields = ["id", "id_ecole", "date_creation"]
+
+    def validate(self, attrs):
+        """
+        Une école doit toujours garder un administrateur actif : sans cela,
+        plus personne ne peut gérer les comptes et l'école est verrouillée.
+        Le cas se produit quand l'unique admin se rétrograde ou se désactive.
+        """
+        if not self.instance or self.instance.role != Utilisateur.Role.ADMIN:
+            return attrs
+
+        role = attrs.get("role", self.instance.role)
+        statut = attrs.get("statut", self.instance.statut)
+        reste_admin_actif = (
+            role == Utilisateur.Role.ADMIN and statut == Utilisateur.Statut.ACTIF
+        )
+        if reste_admin_actif:
+            return attrs
+
+        autres = Utilisateur.objects.filter(
+            id_ecole_id=self.instance.id_ecole_id,
+            role=Utilisateur.Role.ADMIN,
+            statut=Utilisateur.Statut.ACTIF,
+        ).exclude(pk=self.instance.pk)
+        if not autres.exists():
+            raise serializers.ValidationError(
+                "Cette école n'aurait plus d'administrateur actif. "
+                "Nommez d'abord un autre administrateur."
+            )
+        return attrs
+
+    def validate_email(self, value):
+        """
+        L'e-mail sert d'identifiant de connexion : il doit être unique sur
+        toute l'instance, pas seulement dans l'école, sinon l'authentification
+        serait ambiguë entre deux écoles.
+        """
+        qs = Utilisateur.objects.filter(email__iexact=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Cette adresse e-mail est déjà utilisée.")
+        return value
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+        if not password:
+            raise serializers.ValidationError(
+                {"password": "Un mot de passe est obligatoire à la création."}
+            )
+        utilisateur = Utilisateur(**validated_data)
+        utilisateur.set_password(password)
+        utilisateur.save()
+        return utilisateur
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("password", None)
+        for champ, valeur in validated_data.items():
+            setattr(instance, champ, valeur)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
+
+
+# ---------- Cœur ----------
+
+class EcoleSerializer(serializers.ModelSerializer):
+    """
+    Fiche de l'établissement, modifiable par son administrateur.
+
+    L'abonnement et le statut relèvent de la plateforme, pas du client : sans
+    cela, une école pourrait passer seule en plan premium ou se réactiver
+    après suspension.
+    """
+    class Meta:
+        model = models.Ecole
+        fields = "__all__"
+        read_only_fields = ["plan_abonnement", "statut", "date_activation", "date_creation"]
+
+
+# ---------- Module élèves ----------
+
+class AnneeScolaireSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.AnneeScolaire
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class PeriodeScolaireSerializer(serializers.ModelSerializer):
+    annee_libelle = serializers.CharField(source="id_annee_scolaire.libelle", read_only=True)
+
+    class Meta:
+        model = models.PeriodeScolaire
+        fields = "__all__"
+
+    def validate(self, attrs):
+        debut = attrs.get("date_debut", getattr(self.instance, "date_debut", None))
+        fin = attrs.get("date_fin", getattr(self.instance, "date_fin", None))
+        if debut and fin and fin <= debut:
+            raise serializers.ValidationError(
+                {"date_fin": "La fin de la période doit suivre son début."}
+            )
+
+        annee = attrs.get("id_annee_scolaire", getattr(self.instance, "id_annee_scolaire", None))
+        if annee and debut and fin and (debut < annee.date_debut or fin > annee.date_fin):
+            raise serializers.ValidationError(
+                "La période doit tenir dans les dates de l'année scolaire "
+                f"({annee.date_debut:%d/%m/%Y} — {annee.date_fin:%d/%m/%Y})."
+            )
+        return attrs
+
+
+class NiveauSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Niveau
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class ClasseSerializer(serializers.ModelSerializer):
+    niveau_libelle = serializers.CharField(source="id_niveau.libelle", read_only=True)
+    enseignant_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.Classe
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+    def get_enseignant_nom(self, obj) -> str | None:
+        if obj.id_enseignant_principal:
+            return f"{obj.id_enseignant_principal.prenom if hasattr(obj.id_enseignant_principal,'prenom') else ''} {obj.id_enseignant_principal.nom if hasattr(obj.id_enseignant_principal,'nom') else obj.id_enseignant_principal.matricule}"
+        return None
+
+
+class ParentTuteurSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.ParentTuteur
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class EleveParentSerializer(serializers.ModelSerializer):
+    eleve_nom = serializers.SerializerMethodField()
+    parent_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.EleveParent
+        fields = "__all__"
+
+    def get_eleve_nom(self, obj) -> str:
+        return f"{obj.id_eleve.prenom} {obj.id_eleve.nom}"
+
+    def get_parent_nom(self, obj) -> str:
+        return f"{obj.id_parent.prenom} {obj.id_parent.nom}"
+
+    def validate(self, attrs):
+        eleve = attrs.get("id_eleve", getattr(self.instance, "id_eleve", None))
+        parent = attrs.get("id_parent", getattr(self.instance, "id_parent", None))
+
+        if eleve and parent and eleve.id_ecole_id != parent.id_ecole_id:
+            raise serializers.ValidationError(
+                "L'élève et le parent doivent appartenir à la même école."
+            )
+
+        # La table a une contrainte d'unicité sur le couple : on la contrôle
+        # ici pour renvoyer un 400 plutôt qu'une erreur d'intégrité en 500.
+        if eleve and parent:
+            doublons = models.EleveParent.objects.filter(id_eleve=eleve, id_parent=parent)
+            if self.instance:
+                doublons = doublons.exclude(pk=self.instance.pk)
+            if doublons.exists():
+                raise serializers.ValidationError("Ce parent est déjà rattaché à cet élève.")
+        return attrs
+
+
+class DossierAdministratifSerializer(serializers.ModelSerializer):
+    eleve_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.DossierAdministratif
+        fields = "__all__"
+        read_only_fields = ["date_ajout"]
+
+    def get_eleve_nom(self, obj) -> str:
+        return f"{obj.id_eleve.prenom} {obj.id_eleve.nom}"
+
+
+class HistoriqueScolaireSerializer(serializers.ModelSerializer):
+    eleve_nom = serializers.SerializerMethodField()
+    evenement_libelle = serializers.CharField(source="get_type_evenement_display", read_only=True)
+    ancienne_classe_nom = serializers.CharField(source="id_ancienne_classe.nom", read_only=True)
+    nouvelle_classe_nom = serializers.CharField(source="id_nouvelle_classe.nom", read_only=True)
+
+    class Meta:
+        model = models.HistoriqueScolaire
+        fields = "__all__"
+
+    def get_eleve_nom(self, obj) -> str:
+        return f"{obj.id_eleve.prenom} {obj.id_eleve.nom}"
+
+
+class EleveSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Eleve
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class EleveInscriptionSerializer(serializers.Serializer):
+    """
+    Serializer composite pour le formulaire "Inscrire un élève" :
+    crée en une seule opération l'élève + son inscription + (optionnel) son parent/tuteur.
+    Reflète exactement les 3 sections du formulaire Angular.
+    """
+    # Section "Informations de l'élève"
+    id_ecole = serializers.PrimaryKeyRelatedField(queryset=models.Ecole.objects.all())
+    nom = serializers.CharField(max_length=100)
+    prenom = serializers.CharField(max_length=100)
+    date_naissance = serializers.DateField(required=False, allow_null=True)
+    sexe = serializers.ChoiceField(choices=models.Eleve.Sexe.choices, required=False, allow_null=True)
+    adresse = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    photo_url = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+    # Section "Scolarité"
+    id_classe = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all())
+    id_annee_scolaire = serializers.PrimaryKeyRelatedField(queryset=models.AnneeScolaire.objects.all())
+    date_inscription = serializers.DateField()
+
+    # Section "Parent / Tuteur" (optionnelle)
+    parent_nom_complet = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    parent_telephone = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    parent_email = serializers.EmailField(required=False, allow_blank=True)
+    parent_lien = serializers.ChoiceField(choices=models.EleveParent.LienParente.choices, required=False)
+
+    def validate(self, attrs):
+        """La classe et l'année visées doivent relever de l'école de l'élève."""
+        ecole = attrs["id_ecole"]
+        classe = attrs["id_classe"]
+        annee = attrs["id_annee_scolaire"]
+
+        if classe.id_ecole_id != ecole.pk:
+            raise serializers.ValidationError(
+                {"id_classe": "Cette classe n'appartient pas à votre école."}
+            )
+        if annee.id_ecole_id != ecole.pk:
+            raise serializers.ValidationError(
+                {"id_annee_scolaire": "Cette année scolaire n'appartient pas à votre école."}
+            )
+        if classe.id_annee_scolaire_id != annee.pk:
+            raise serializers.ValidationError(
+                {"id_classe": "Cette classe relève d'une autre année scolaire."}
+            )
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        matricule = prochain_matricule(
+            validated_data["id_ecole"], validated_data["id_annee_scolaire"]
+        )
+
+        eleve = models.Eleve.objects.create(
+            id_ecole=validated_data["id_ecole"],
+            matricule=matricule,
+            nom=validated_data["nom"],
+            prenom=validated_data["prenom"],
+            date_naissance=validated_data.get("date_naissance"),
+            sexe=validated_data.get("sexe"),
+            adresse=validated_data.get("adresse", ""),
+            photo_url=validated_data.get("photo_url", ""),
+            date_premiere_inscription=validated_data["date_inscription"],
+        )
+
+        models.Inscription.objects.create(
+            id_eleve=eleve,
+            id_classe=validated_data["id_classe"],
+            id_annee_scolaire=validated_data["id_annee_scolaire"],
+            date_inscription=validated_data["date_inscription"],
+        )
+
+        if validated_data.get("parent_nom_complet"):
+            nom_complet = validated_data["parent_nom_complet"].split(" ", 1)
+            parent = models.ParentTuteur.objects.create(
+                id_ecole=validated_data["id_ecole"],
+                nom=nom_complet[-1],
+                prenom=nom_complet[0] if len(nom_complet) > 1 else "",
+                telephone=validated_data.get("parent_telephone", ""),
+                email=validated_data.get("parent_email", ""),
+            )
+            models.EleveParent.objects.create(
+                id_eleve=eleve,
+                id_parent=parent,
+                lien_parente=validated_data.get("parent_lien", models.EleveParent.LienParente.AUTRE),
+                contact_principal=True,
+            )
+
+        return eleve
+
+    def to_representation(self, instance):
+        return EleveSerializer(instance).data
+
+
+class InscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Inscription
+        fields = "__all__"
+
+
+# ---------- Module pédagogique ----------
+
+class EnseignantSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Enseignant
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class MatiereSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Matiere
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class EvaluationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Evaluation
+        fields = "__all__"
+
+
+class NoteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Note
+        fields = "__all__"
+        read_only_fields = ["id_utilisateur"]
+
+    def create(self, validated_data):
+        validated_data["id_utilisateur"] = self.context["request"].user
+        return super().create(validated_data)
+
+
+class BulletinSerializer(serializers.ModelSerializer):
+    eleve_nom = serializers.SerializerMethodField()
+    classe_nom = serializers.CharField(source="id_classe.nom", read_only=True)
+    periode_libelle = serializers.CharField(source="id_periode.libelle", read_only=True)
+
+    class Meta:
+        model = models.Bulletin
+        fields = "__all__"
+
+    def get_eleve_nom(self, obj) -> str:
+        return f"{obj.id_eleve.prenom} {obj.id_eleve.nom}"
+
+
+
+class AbsenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Absence
+        fields = "__all__"
+
+
+# ---------- Emploi du temps ----------
+
+class SalleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Salle
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class EmploiDuTempsSerializer(serializers.ModelSerializer):
+    matiere_nom = serializers.CharField(source="id_matiere.nom", read_only=True)
+    enseignant_matricule = serializers.CharField(source="id_enseignant.matricule", read_only=True)
+    salle_nom = serializers.CharField(source="id_salle.nom", read_only=True)
+
+    class Meta:
+        model = models.EmploiDuTemps
+        fields = "__all__"
+
+    def validate(self, attrs):
+        """
+        Sans ce contrôle, la contrainte `chk_seance_horaire` remonte en erreur
+        serveur : la base refuse l'insertion, mais après le serializer.
+        """
+        debut = attrs.get("heure_debut", getattr(self.instance, "heure_debut", None))
+        fin = attrs.get("heure_fin", getattr(self.instance, "heure_fin", None))
+        if debut and fin and fin <= debut:
+            raise serializers.ValidationError(
+                {"heure_fin": "La fin du cours doit suivre son début."}
+            )
+        return attrs
+
+
+# ---------- Module financier ----------
+
+class TypeFraisSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.TypeFrais
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class FraisEleveSerializer(serializers.ModelSerializer):
+    montant_paye = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    solde_restant = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    eleve_nom = serializers.CharField(source="id_eleve.nom", read_only=True)
+    eleve_prenom = serializers.CharField(source="id_eleve.prenom", read_only=True)
+
+    class Meta:
+        model = models.FraisEleve
+        fields = "__all__"
+
+
+class PaiementSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Paiement
+        fields = "__all__"
+        read_only_fields = ["id_utilisateur_caissier"]
+
+    def validate(self, attrs):
+        """
+        Deux garde-fous de caisse. Un montant négatif passerait au crédit du
+        journal et fausserait le solde ; un encaissement supérieur au dû
+        solderait un frais pour un montant que l'école n'a pas reçu.
+        """
+        if self.instance is not None:
+            return attrs
+
+        montant = attrs.get("montant")
+        frais = attrs.get("id_frais_eleve")
+        if montant is not None and montant <= 0:
+            raise serializers.ValidationError(
+                {"montant": "Le montant encaissé doit être strictement positif."}
+            )
+        if frais is not None and montant is not None and montant > frais.solde_restant:
+            raise serializers.ValidationError({
+                "montant": "Montant supérieur au solde restant "
+                           f"({frais.solde_restant} sur {frais.montant_du} dus)."
+            })
+        return attrs
+
+    def create(self, validated_data):
+        validated_data["id_utilisateur_caissier"] = self.context["request"].user
+        paiement = super().create(validated_data)
+
+        # Met à jour le statut du frais concerné
+        frais = paiement.id_frais_eleve
+        if frais.solde_restant <= 0:
+            frais.statut = models.FraisEleve.Statut.PAYE
+        else:
+            frais.statut = models.FraisEleve.Statut.PARTIEL
+        frais.save()
+
+        # Génère automatiquement le reçu
+        numero = f"REC-{paiement.id:06d}"
+        models.Recu.objects.create(id_paiement=paiement, numero_recu=numero)
+
+        # Enregistre le mouvement au journal de caisse
+        models.JournalCaisse.objects.create(
+            id_ecole=frais.id_eleve.id_ecole,
+            id_paiement=paiement,
+            type_journal=models.JournalCaisse.TypeJournal.CAISSE if paiement.methode == models.Paiement.Methode.ESPECES else models.JournalCaisse.TypeJournal.BANQUE,
+            date_mouvement=paiement.date_paiement.date(),
+            libelle=f"Paiement {frais.id_type_frais.get_libelle_display()} — {frais.id_eleve}",
+            credit=paiement.montant,
+            id_utilisateur=validated_data["id_utilisateur_caissier"],
+        )
+        return paiement
+
+
+class CoefficientMatiereSerializer(serializers.ModelSerializer):
+    matiere_nom = serializers.CharField(source="id_matiere.nom", read_only=True)
+    classe_nom = serializers.CharField(source="id_classe.nom", read_only=True)
+
+    class Meta:
+        model = models.CoefficientMatiere
+        fields = "__all__"
+
+    def validate_coefficient(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Le coefficient doit être strictement positif.")
+        return value
+
+    def validate(self, attrs):
+        matiere = attrs.get("id_matiere", getattr(self.instance, "id_matiere", None))
+        classe = attrs.get("id_classe", getattr(self.instance, "id_classe", None))
+        annee = attrs.get("id_annee_scolaire", getattr(self.instance, "id_annee_scolaire", None))
+
+        if matiere and classe and matiere.id_ecole_id != classe.id_ecole_id:
+            raise serializers.ValidationError(
+                "La matière et la classe doivent appartenir à la même école."
+            )
+        if classe and annee and classe.id_annee_scolaire_id != annee.pk:
+            raise serializers.ValidationError(
+                {"id_annee_scolaire": "Cette classe relève d'une autre année scolaire."}
+            )
+
+        if matiere and classe and annee:
+            doublons = models.CoefficientMatiere.objects.filter(
+                id_matiere=matiere, id_classe=classe, id_annee_scolaire=annee
+            )
+            if self.instance:
+                doublons = doublons.exclude(pk=self.instance.pk)
+            if doublons.exists():
+                raise serializers.ValidationError(
+                    "Un coefficient est déjà défini pour cette matière dans cette classe."
+                )
+        return attrs
+
+
+class AffectationEnseignantSerializer(serializers.ModelSerializer):
+    enseignant_matricule = serializers.CharField(source="id_enseignant.matricule", read_only=True)
+    matiere_nom = serializers.CharField(source="id_matiere.nom", read_only=True)
+    classe_nom = serializers.CharField(source="id_classe.nom", read_only=True)
+
+    class Meta:
+        model = models.AffectationEnseignant
+        fields = "__all__"
+
+    def validate(self, attrs):
+        enseignant = attrs.get("id_enseignant", getattr(self.instance, "id_enseignant", None))
+        classe = attrs.get("id_classe", getattr(self.instance, "id_classe", None))
+        matiere = attrs.get("id_matiere", getattr(self.instance, "id_matiere", None))
+        annee = attrs.get("id_annee_scolaire", getattr(self.instance, "id_annee_scolaire", None))
+
+        ecoles = {o.id_ecole_id for o in (enseignant, classe, matiere) if o is not None}
+        if len(ecoles) > 1:
+            raise serializers.ValidationError(
+                "Enseignant, matière et classe doivent appartenir à la même école."
+            )
+        if classe and annee and classe.id_annee_scolaire_id != annee.pk:
+            raise serializers.ValidationError(
+                {"id_annee_scolaire": "Cette classe relève d'une autre année scolaire."}
+            )
+
+        # Pas de contrainte d'unicité en base sur ce quadruplet : on évite au
+        # moins de créer deux fois la même affectation.
+        if enseignant and matiere and classe and annee:
+            doublons = models.AffectationEnseignant.objects.filter(
+                id_enseignant=enseignant, id_matiere=matiere,
+                id_classe=classe, id_annee_scolaire=annee,
+            )
+            if self.instance:
+                doublons = doublons.exclude(pk=self.instance.pk)
+            if doublons.exists():
+                raise serializers.ValidationError("Cette affectation existe déjà.")
+        return attrs
+
+
+class ConseilClasseSerializer(serializers.ModelSerializer):
+    classe_nom = serializers.CharField(source="id_classe.nom", read_only=True)
+    periode_libelle = serializers.CharField(source="id_periode.libelle", read_only=True)
+
+    class Meta:
+        model = models.ConseilClasse
+        fields = "__all__"
+
+
+class RecuSerializer(serializers.ModelSerializer):
+    montant = serializers.DecimalField(source="id_paiement.montant", max_digits=12,
+                                       decimal_places=2, read_only=True)
+    methode = serializers.CharField(source="id_paiement.get_methode_display", read_only=True)
+    eleve_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.Recu
+        fields = "__all__"
+
+    def get_eleve_nom(self, obj) -> str:
+        eleve = obj.id_paiement.id_frais_eleve.id_eleve
+        return f"{eleve.prenom} {eleve.nom}"
+
+
+class RelanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Relance
+        fields = "__all__"
+
+
+class TypeDepenseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.TypeDepense
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class DepenseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Depense
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class BudgetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Budget
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+class JournalCaisseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.JournalCaisse
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+
+# ---------- Communications ----------
+
+class CommunicationDestinataireSerializer(serializers.ModelSerializer):
+    destinataire_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.CommunicationDestinataire
+        fields = "__all__"
+        read_only_fields = ["statut_envoi", "erreur", "lu", "date_lecture"]
+
+    def get_destinataire_nom(self, obj) -> str | None:
+        cible = obj.id_utilisateur or obj.id_parent
+        return f"{cible.prenom} {cible.nom}" if cible else obj.contact
+
+    def validate(self, attrs):
+        if not attrs.get("id_utilisateur") and not attrs.get("id_parent"):
+            raise serializers.ValidationError(
+                "Renseignez un destinataire : un compte utilisateur ou un parent/tuteur."
+            )
+        return attrs
+
+
+class CommunicationSerializer(serializers.ModelSerializer):
+    auteur_nom = serializers.SerializerMethodField()
+    nb_destinataires = serializers.SerializerMethodField()
+    nb_lus = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.Communication
+        fields = "__all__"
+        read_only_fields = ["id_ecole", "id_utilisateur_auteur", "date_creation", "date_envoi"]
+
+    def get_auteur_nom(self, obj) -> str | None:
+        if not obj.id_utilisateur_auteur:
+            return None
+        return f"{obj.id_utilisateur_auteur.prenom} {obj.id_utilisateur_auteur.nom}"
+
+    def get_nb_destinataires(self, obj) -> int:
+        return obj.destinataires.count()
+
+    def get_nb_lus(self, obj) -> int:
+        return obj.destinataires.filter(lu=True).count()
+
+    def validate(self, attrs):
+        """La cible détermine quel champ complémentaire est obligatoire."""
+        cible = attrs.get("cible", getattr(self.instance, "cible", None))
+        id_classe = attrs.get("id_classe", getattr(self.instance, "id_classe", None))
+        role_cible = attrs.get("role_cible", getattr(self.instance, "role_cible", None))
+
+        if cible == models.Communication.Cible.CLASSE and not id_classe:
+            raise serializers.ValidationError({"id_classe": "Obligatoire pour une communication ciblant une classe."})
+        if cible == models.Communication.Cible.ROLE and not role_cible:
+            raise serializers.ValidationError({"role_cible": "Obligatoire pour une communication ciblant un rôle."})
+        return attrs
+
+
+# ---------- Documents & rapports ----------
+
+class DocumentSerializer(serializers.ModelSerializer):
+    deposant_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.Document
+        fields = "__all__"
+        read_only_fields = ["id_ecole", "id_utilisateur_depot", "date_ajout"]
+
+    def get_deposant_nom(self, obj) -> str | None:
+        if not obj.id_utilisateur_depot:
+            return None
+        return f"{obj.id_utilisateur_depot.prenom} {obj.id_utilisateur_depot.nom}"
+
+
+class RapportSerializer(serializers.ModelSerializer):
+    type_rapport_libelle = serializers.CharField(source="get_type_rapport_display", read_only=True)
+
+    class Meta:
+        model = models.Rapport
+        fields = "__all__"
+        read_only_fields = ["id_ecole", "id_utilisateur", "statut", "fichier_url", "erreur",
+                            "date_demande", "date_generation"]
+
+
+# ---------- Paramètres ----------
+
+class ParametreEcoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.ParametreEcole
+        fields = "__all__"
+        read_only_fields = ["id_ecole", "date_maj"]
+
+    def validate(self, attrs):
+        instance = self.instance
+        if instance and not instance.modifiable:
+            raise serializers.ValidationError("Ce paramètre est verrouillé et ne peut pas être modifié.")
+
+        # id_ecole étant renseigné par la vue, il est absent des données validées :
+        # le UniqueTogetherValidator de DRF ne peut pas s'appliquer et l'unicité
+        # (id_ecole, cle) remonterait en erreur 500. On la contrôle ici.
+        cle = attrs.get("cle", getattr(instance, "cle", None))
+        requete = self.context.get("request")
+        if cle and requete is not None:
+            doublons = models.ParametreEcole.objects.filter(
+                id_ecole_id=requete.user.id_ecole_id, cle=cle
+            )
+            if instance:
+                doublons = doublons.exclude(pk=instance.pk)
+            if doublons.exists():
+                raise serializers.ValidationError(
+                    {"cle": "Un paramètre portant cette clé existe déjà pour cette école."}
+                )
+
+        type_valeur = attrs.get("type_valeur", getattr(instance, "type_valeur", None))
+        valeur = attrs.get("valeur", getattr(instance, "valeur", None))
+        if valeur in (None, ""):
+            return attrs
+
+        if type_valeur == models.ParametreEcole.TypeValeur.NOMBRE:
+            try:
+                float(valeur)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({"valeur": "Doit être un nombre."})
+        elif type_valeur == models.ParametreEcole.TypeValeur.BOOLEEN:
+            if str(valeur).lower() not in ("true", "false", "0", "1", "oui", "non"):
+                raise serializers.ValidationError({"valeur": "Doit être un booléen (true/false)."})
+        elif type_valeur == models.ParametreEcole.TypeValeur.JSON:
+            import json
+            try:
+                json.loads(valeur)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({"valeur": "JSON invalide."})
+        return attrs
+
+
+# ---------- Journal d'activité ----------
+
+class JournalActiviteSerializer(serializers.ModelSerializer):
+    utilisateur_nom = serializers.SerializerMethodField()
+    action_libelle = serializers.CharField(source="get_action_display", read_only=True)
+
+    class Meta:
+        model = models.JournalActivite
+        fields = "__all__"
+        read_only_fields = ["id_ecole"]
+
+    def get_utilisateur_nom(self, obj) -> str | None:
+        if not obj.id_utilisateur:
+            return None
+        return f"{obj.id_utilisateur.prenom} {obj.id_utilisateur.nom}"

@@ -1,0 +1,19 @@
+# Python / Django
+__pycache__/
+*.pyc
+*.pyo
+db.sqlite3
+venv/
+.env
+*.log
+
+# Angular / Node
+node_modules/
+dist/
+.angular/
+
+# Editeurs / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
