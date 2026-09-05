@@ -2,8 +2,9 @@ import re
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from . import models
+from . import finances, models
 
 Utilisateur = get_user_model()
 
@@ -403,6 +404,55 @@ class InscriptionSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+# ---------- Mouvements de l'élève (changement de classe, radiation,
+#            transfert, réinscription) ----------
+#
+# Ces quatre entrées ne portent que les champs du geste : l'élève vient de
+# l'URL et l'école du compte connecté, jamais du corps de la requête.
+
+class ChangementClasseSerializer(serializers.Serializer):
+    """Entrée de POST /api/eleves/{id}/changer-classe/."""
+    id_classe = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all())
+    date_effet = serializers.DateField(required=False, allow_null=True)
+    motif = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    commentaire = serializers.CharField(required=False, allow_blank=True)
+
+
+class RadiationSerializer(serializers.Serializer):
+    """
+    Entrée de POST /api/eleves/{id}/radier/.
+
+    Le motif est obligatoire ici comme dans `scolarite.radier()` : une
+    radiation sans motif écrit devient indéfendable dès qu'on la conteste.
+    """
+    date_effet = serializers.DateField(required=False, allow_null=True)
+    motif = serializers.CharField(max_length=255)
+    commentaire = serializers.CharField(required=False, allow_blank=True)
+
+
+class TransfertSerializer(serializers.Serializer):
+    """Entrée de POST /api/eleves/{id}/transferer/."""
+    etablissement = serializers.CharField(max_length=200)
+    date_effet = serializers.DateField(required=False, allow_null=True)
+    commentaire = serializers.CharField(required=False, allow_blank=True)
+
+
+class ReinscriptionSerializer(serializers.Serializer):
+    """
+    Entrée de POST /api/inscriptions/reinscrire/.
+
+    Même contrat que la génération des frais : `valider` à false renvoie
+    l'aperçu, à true écrit les inscriptions.
+    """
+    id_annee_source = serializers.PrimaryKeyRelatedField(queryset=models.AnneeScolaire.objects.all())
+    id_annee_cible = serializers.PrimaryKeyRelatedField(queryset=models.AnneeScolaire.objects.all())
+    id_classe_cible = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all())
+    id_classe_source = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all(),
+                                                          required=False, allow_null=True)
+    date_inscription = serializers.DateField(required=False, allow_null=True)
+    valider = serializers.BooleanField(default=False)
+
+
 # ---------- Module pédagogique ----------
 
 class EnseignantSerializer(serializers.ModelSerializer):
@@ -448,6 +498,34 @@ class BulletinSerializer(serializers.ModelSerializer):
     def get_eleve_nom(self, obj) -> str:
         return f"{obj.id_eleve.prenom} {obj.id_eleve.nom}"
 
+
+
+class LigneSaisieNoteSerializer(serializers.Serializer):
+    """Une case de la grille de saisie."""
+    id_eleve = serializers.IntegerField()
+    # `allow_null` : effacer une note est un geste légitime (élève absent,
+    # saisie erronée). Sans lui, une note fausse serait indélébile.
+    valeur = serializers.DecimalField(max_digits=5, decimal_places=2,
+                                      required=False, allow_null=True)
+    appreciation = serializers.CharField(max_length=255, required=False,
+                                         allow_blank=True, allow_null=True)
+
+
+class SaisieNotesSerializer(serializers.Serializer):
+    """
+    Entrée de POST /api/evaluations/{id}/notes/.
+
+    Toute la grille part en une requête : le CRUD imposait un aller-retour par
+    élève, soit soixante requêtes pour un devoir de 6ème.
+    """
+    notes = LigneSaisieNoteSerializer(many=True, allow_empty=False)
+
+
+class GenerationBulletinsSerializer(serializers.Serializer):
+    """Entrée de POST /api/bulletins/generer/."""
+    id_classe = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all())
+    id_periode = serializers.PrimaryKeyRelatedField(queryset=models.PeriodeScolaire.objects.all())
+    valider = serializers.BooleanField(default=False)
 
 
 class AbsenceSerializer(serializers.ModelSerializer):
@@ -509,10 +587,38 @@ class FraisEleveSerializer(serializers.ModelSerializer):
 
 
 class PaiementSerializer(serializers.ModelSerializer):
+    # Le reçu est créé dans la foulée de l'encaissement : le renvoyer ici évite
+    # à l'écran caissier une seconde requête pour proposer l'impression.
+    # Champs calculés plutôt que `source="recu.…"` : un paiement importé sans
+    # reçu ferait alors échouer toute la sérialisation de la liste.
+    id_recu = serializers.SerializerMethodField()
+    numero_recu = serializers.SerializerMethodField()
+    eleve_nom = serializers.SerializerMethodField()
+
     class Meta:
         model = models.Paiement
         fields = "__all__"
         read_only_fields = ["id_utilisateur_caissier"]
+
+    @staticmethod
+    def _recu(obj):
+        # Le ViewSet fait un select_related("recu") : pas de requête en plus.
+        try:
+            return obj.recu
+        except ObjectDoesNotExist:
+            return None
+
+    def get_id_recu(self, obj) -> int | None:
+        recu = self._recu(obj)
+        return recu.pk if recu else None
+
+    def get_numero_recu(self, obj) -> str | None:
+        recu = self._recu(obj)
+        return recu.numero_recu if recu else None
+
+    def get_eleve_nom(self, obj) -> str:
+        eleve = obj.id_frais_eleve.id_eleve
+        return f"{eleve.prenom} {eleve.nom}"
 
     def validate(self, attrs):
         """
@@ -536,32 +642,18 @@ class PaiementSerializer(serializers.ModelSerializer):
             })
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
-        validated_data["id_utilisateur_caissier"] = self.context["request"].user
+        """
+        Un encaissement entraîne trois écritures — statut du frais, reçu,
+        mouvement de caisse — regroupées dans `finances.enregistrer_paiement`
+        pour que le parcours caissier et un éventuel import de paiements
+        produisent exactement les mêmes conséquences.
+        """
+        caissier = self.context["request"].user
+        validated_data["id_utilisateur_caissier"] = caissier
         paiement = super().create(validated_data)
-
-        # Met à jour le statut du frais concerné
-        frais = paiement.id_frais_eleve
-        if frais.solde_restant <= 0:
-            frais.statut = models.FraisEleve.Statut.PAYE
-        else:
-            frais.statut = models.FraisEleve.Statut.PARTIEL
-        frais.save()
-
-        # Génère automatiquement le reçu
-        numero = f"REC-{paiement.id:06d}"
-        models.Recu.objects.create(id_paiement=paiement, numero_recu=numero)
-
-        # Enregistre le mouvement au journal de caisse
-        models.JournalCaisse.objects.create(
-            id_ecole=frais.id_eleve.id_ecole,
-            id_paiement=paiement,
-            type_journal=models.JournalCaisse.TypeJournal.CAISSE if paiement.methode == models.Paiement.Methode.ESPECES else models.JournalCaisse.TypeJournal.BANQUE,
-            date_mouvement=paiement.date_paiement.date(),
-            libelle=f"Paiement {frais.id_type_frais.get_libelle_display()} — {frais.id_eleve}",
-            credit=paiement.montant,
-            id_utilisateur=validated_data["id_utilisateur_caissier"],
-        )
+        finances.enregistrer_paiement(paiement, utilisateur=caissier)
         return paiement
 
 
@@ -669,9 +761,62 @@ class RecuSerializer(serializers.ModelSerializer):
 
 
 class RelanceSerializer(serializers.ModelSerializer):
+    eleve_nom = serializers.SerializerMethodField()
+    type_frais = serializers.CharField(source="id_frais_eleve.id_type_frais.get_libelle_display",
+                                       read_only=True)
+
     class Meta:
         model = models.Relance
         fields = "__all__"
+
+    def get_eleve_nom(self, obj) -> str:
+        eleve = obj.id_frais_eleve.id_eleve
+        return f"{eleve.prenom} {eleve.nom}"
+
+
+class GenerationFraisSerializer(serializers.Serializer):
+    """
+    Entrée de POST /api/frais-eleves/generer/.
+
+    Deux façons de décrire les échéances : une liste explicite, ou une
+    première échéance et un nombre de mensualités. La seconde couvre le cas
+    courant — dix mensualités au 5 du mois — sans faire saisir dix dates.
+    """
+    id_type_frais = serializers.PrimaryKeyRelatedField(queryset=models.TypeFrais.objects.all())
+    id_annee_scolaire = serializers.PrimaryKeyRelatedField(queryset=models.AnneeScolaire.objects.all())
+    id_classe = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all(),
+                                                   required=False, allow_null=True)
+    montant = serializers.DecimalField(max_digits=12, decimal_places=2, required=False,
+                                       allow_null=True)
+    echeances = serializers.ListField(child=serializers.DateField(), required=False,
+                                      allow_empty=False, max_length=24)
+    premiere_echeance = serializers.DateField(required=False)
+    nombre_echeances = serializers.IntegerField(required=False, min_value=1, max_value=24)
+    valider = serializers.BooleanField(default=False)
+
+    def validate(self, attrs):
+        echeances = attrs.get("echeances")
+        premiere = attrs.get("premiere_echeance")
+        if not echeances:
+            if premiere is None:
+                raise serializers.ValidationError({
+                    "echeances": "Indiquez une liste d'échéances, ou une première "
+                                 "échéance et un nombre de mensualités."
+                })
+            echeances = finances.echeances_mensuelles(
+                premiere, attrs.get("nombre_echeances", 1))
+        attrs["echeances"] = sorted(set(echeances))
+        return attrs
+
+
+class GenerationRelancesSerializer(serializers.Serializer):
+    """Entrée de POST /api/relances/generer/."""
+    canal = serializers.ChoiceField(choices=models.Relance.Canal.choices)
+    jours_retard = serializers.IntegerField(required=False, min_value=0, max_value=365,
+                                            default=0)
+    delai_min = serializers.IntegerField(required=False, min_value=0, max_value=365,
+                                         default=7)
+    valider = serializers.BooleanField(default=False)
 
 
 class TypeDepenseSerializer(serializers.ModelSerializer):
@@ -682,6 +827,8 @@ class TypeDepenseSerializer(serializers.ModelSerializer):
 
 
 class DepenseSerializer(serializers.ModelSerializer):
+    categorie = serializers.CharField(source="id_type_depense.libelle", read_only=True)
+
     class Meta:
         model = models.Depense
         fields = "__all__"
@@ -689,13 +836,24 @@ class DepenseSerializer(serializers.ModelSerializer):
 
 
 class BudgetSerializer(serializers.ModelSerializer):
+    categorie_depense = serializers.CharField(source="id_type_depense.libelle", read_only=True)
+    # Le réalisé est recalculé à partir des dépenses (`finances.imputer_au_budget`) :
+    # le laisser modifiable permettrait d'afficher un budget tenu sans l'avoir tenu.
+    montant_realise = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    ecart = serializers.SerializerMethodField()
+
     class Meta:
         model = models.Budget
         fields = "__all__"
         read_only_fields = ["id_ecole"]
 
+    def get_ecart(self, obj) -> float:
+        return float(obj.montant_prevu - obj.montant_realise)
+
 
 class JournalCaisseSerializer(serializers.ModelSerializer):
+    journal = serializers.CharField(source="get_type_journal_display", read_only=True)
+
     class Meta:
         model = models.JournalCaisse
         fields = "__all__"

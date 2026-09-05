@@ -1,0 +1,127 @@
+<p class="module-eyebrow">Gestion financière</p>
+<div class="page-head">
+  <div>
+    <h1>Générer les frais</h1>
+    <p>Crée un frais par élève inscrit et par échéance — inscription, mensualités, transport…</p>
+  </div>
+  <a class="btn-ghost" routerLink="/finances">← Retour aux finances</a>
+</div>
+
+@if (resultat()) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Génération terminée ✅</div>
+      <a class="panel-link" routerLink="/finances">Voir les frais →</a>
+    </div>
+    <table class="simple">
+      <tbody>
+        <tr><td>Type de frais</td><td class="mono">{{ resultat()!.type_frais }}</td></tr>
+        <tr><td>Périmètre</td><td class="mono">{{ resultat()!.classe }} — {{ resultat()!.eleves }} élèves</td></tr>
+        <tr><td>Frais créés</td><td class="mono">{{ resultat()!.crees }}</td></tr>
+        <tr><td>Déjà existants (ignorés)</td><td class="mono">{{ resultat()!.ignores }}</td></tr>
+        <tr><td>Montant total facturé</td><td class="mono">{{ resultat()!.total_genere | number:'1.0-0' }} F CFA</td></tr>
+      </tbody>
+    </table>
+  </div>
+} @else {
+  <form class="form-section" [formGroup]="form" style="max-width:720px;">
+    <div class="form-section-title">Paramètres de facturation</div>
+    <div class="form-section-sub">
+      Les frais sont créés pour tous les élèves actifs inscrits sur l'année choisie.
+    </div>
+
+    @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+    <div class="form-grid">
+      <div class="field">
+        <label for="type">Type de frais</label>
+        <select class="input" id="type" formControlName="id_type_frais">
+          <option [ngValue]="null">— choisir —</option>
+          @for (t of typesFrais(); track t.id) {
+            <option [ngValue]="t.id">{{ t.libelle }} ({{ t.montant_defaut | number:'1.0-0' }} F)</option>
+          }
+        </select>
+        @if (typesFrais().length === 0) {
+          <span class="hint hint-error">Aucun type de frais : crée-le d'abord dans « Types de frais ».</span>
+        }
+      </div>
+
+      <div class="field">
+        <label for="annee">Année scolaire</label>
+        <select class="input" id="annee" formControlName="id_annee_scolaire">
+          <option [ngValue]="null">— choisir —</option>
+          @for (a of annees(); track a.id) { <option [ngValue]="a.id">{{ a.libelle }}</option> }
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="classe">Classe</label>
+        <select class="input" id="classe" formControlName="id_classe">
+          <option [ngValue]="null">Toutes les classes</option>
+          @for (c of classes(); track c.id) { <option [ngValue]="c.id">{{ c.nom }}</option> }
+        </select>
+        <span class="hint">Laisse vide pour facturer toute l'école.</span>
+      </div>
+
+      <div class="field">
+        <label for="montant">Montant par échéance (F CFA)</label>
+        <input class="input" id="montant" type="number" formControlName="montant" placeholder="Montant par défaut du type">
+        <span class="hint">Vide = montant par défaut du type de frais.</span>
+      </div>
+
+      <div class="field">
+        <label for="premiere">Première échéance</label>
+        <input class="input" id="premiere" type="date" formControlName="premiere_echeance">
+      </div>
+
+      <div class="field">
+        <label for="nombre">Nombre d'échéances</label>
+        <input class="input" id="nombre" type="number" min="1" max="24" formControlName="nombre_echeances">
+        <span class="hint">1 pour un frais unique, 10 pour des mensualités.</span>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <a class="btn-ghost" routerLink="/finances">Annuler</a>
+      <button type="button" class="btn-primary" (click)="previsualiser()" [disabled]="occupe()">
+        {{ occupe() ? 'Calcul…' : 'Prévisualiser' }}
+      </button>
+    </div>
+  </form>
+
+  @if (apercu()) {
+    <div class="panel" style="max-width:720px;">
+      <div class="panel-head"><div class="panel-title">Aperçu — rien n'est encore écrit</div></div>
+      <div class="tile-grid-generic" style="margin-bottom:16px;">
+        <div class="tile-generic">
+          <div class="tile-generic-label">Frais à créer</div>
+          <div class="tile-generic-value">{{ apercu()!.crees }}</div>
+          <div class="tile-generic-meta">{{ apercu()!.eleves }} élèves × {{ apercu()!.echeances.length }} échéance(s)</div>
+        </div>
+        <div class="tile-generic">
+          <div class="tile-generic-label">Montant total</div>
+          <div class="tile-generic-value">{{ apercu()!.total_genere | number:'1.0-0' }}</div>
+          <div class="tile-generic-meta">{{ apercu()!.montant | number:'1.0-0' }} F par échéance</div>
+        </div>
+        <div class="tile-generic">
+          <div class="tile-generic-label">Déjà existants</div>
+          <div class="tile-generic-value">{{ apercu()!.ignores }}</div>
+          <div class="tile-generic-meta">ne seront pas dupliqués</div>
+        </div>
+      </div>
+
+      <div style="font-size:12.5px; color:var(--ink-600);">
+        Échéances :
+        @for (e of apercu()!.echeances; track e) {
+          <span class="chip" style="margin:0 4px 4px 0; display:inline-block;">{{ e | date:'dd/MM/yyyy' }}</span>
+        }
+      </div>
+
+      <div class="form-actions">
+        <button class="btn-primary" (click)="valider()" [disabled]="occupe() || apercu()!.crees === 0">
+          {{ occupe() ? 'Génération…' : 'Générer ' + apercu()!.crees + ' frais' }}
+        </button>
+      </div>
+    </div>
+  }
+}

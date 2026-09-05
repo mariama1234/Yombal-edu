@@ -1,0 +1,139 @@
+<p class="module-eyebrow">Gestion pédagogique</p>
+<div class="page-head">
+  <div>
+    <h1>Bulletins</h1>
+    <p>Moyennes pondérées, rang et appréciation, calculés pour toute une classe.</p>
+  </div>
+  <div class="form-actions" style="margin:0;">
+    <a class="btn-ghost" routerLink="/pedagogie/notes">Saisir des notes</a>
+    <a class="btn-ghost" routerLink="/pedagogie/palmares">Palmarès</a>
+  </div>
+</div>
+
+<form class="form-section" [formGroup]="form">
+  <div class="form-section-title">Classe et période</div>
+  <div class="form-section-sub">
+    Les moyennes de matière sont pondérées par le coefficient de chaque évaluation,
+    la moyenne générale par le coefficient de chaque matière.
+  </div>
+
+  @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+  <div class="form-grid">
+    <div class="field">
+      <label for="classe">Classe</label>
+      <select class="input" id="classe" formControlName="id_classe">
+        <option [ngValue]="null">— choisir —</option>
+        @for (c of classes(); track c.id) {
+          <option [ngValue]="c.id">{{ c.nom }} ({{ c.effectif }} élèves)</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="periode">Période</label>
+      <select class="input" id="periode" formControlName="id_periode">
+        <option [ngValue]="null">— choisir —</option>
+        @for (p of periodes(); track p.id) { <option [ngValue]="p.id">{{ p.libelle }}</option> }
+      </select>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button type="button" class="btn-primary" (click)="previsualiser()" [disabled]="occupe()">
+      {{ occupe() ? 'Calcul…' : 'Calculer les moyennes' }}
+    </button>
+  </div>
+</form>
+
+@if (affichage(); as r) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        {{ r.classe }} — {{ r.periode }}
+        @if (apercu()) { <span class="chip">aperçu, rien n'est écrit</span> }
+        @if (resultat()) { <span class="chip">bulletins enregistrés ✅</span> }
+      </div>
+      <div class="form-actions" style="margin:0;">
+        <button type="button" class="btn-ghost" (click)="exporterMoyennes('xlsx')">Excel</button>
+        <button type="button" class="btn-ghost" (click)="exporterMoyennes('pdf')">PDF</button>
+      </div>
+    </div>
+
+    <div class="tile-grid-generic" style="margin-bottom:16px;">
+      <div class="tile-generic">
+        <div class="tile-generic-label">Bulletins</div>
+        <div class="tile-generic-value">{{ r.bulletins }}</div>
+        <div class="tile-generic-meta">sur {{ r.eleves }} élèves</div>
+      </div>
+      <div class="tile-generic">
+        <div class="tile-generic-label">Moyenne de classe</div>
+        <div class="tile-generic-value">
+          {{ r.moyenne_classe !== null ? (r.moyenne_classe | number:'1.2-2') : '—' }}
+        </div>
+        <div class="tile-generic-meta">sur 20</div>
+      </div>
+      <div class="tile-generic">
+        <div class="tile-generic-label">Sans note</div>
+        <div class="tile-generic-value">{{ r.sans_note }}</div>
+        <div class="tile-generic-meta">non classés, pas de bulletin</div>
+      </div>
+      @if (resultat()) {
+        <div class="tile-generic">
+          <div class="tile-generic-label">Écriture</div>
+          <div class="tile-generic-value">{{ r.crees }} / {{ r.mis_a_jour }}</div>
+          <div class="tile-generic-meta">créés / mis à jour</div>
+        </div>
+      }
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table class="simple">
+        <thead>
+          <tr>
+            <th>Rang</th>
+            <th>Élève</th>
+            @for (m of matieres(); track m) { <th>{{ m }}</th> }
+            <th>Moyenne</th>
+            <th>Appréciation</th>
+            @if (resultat()) { <th>Bulletin</th> }
+          </tr>
+        </thead>
+        <tbody>
+          @for (l of r.lignes; track l.id_eleve) {
+            <tr>
+              <td class="mono">{{ l.rang ?? '—' }}</td>
+              <td>{{ l.nom }} {{ l.prenom }}<br><span class="mono hint">{{ l.matricule }}</span></td>
+              @for (m of l.matieres; track m.id_matiere) {
+                <td class="mono">{{ m.moyenne !== null ? (m.moyenne | number:'1.2-2') : '—' }}</td>
+              }
+              <td class="mono"><strong>{{ l.moyenne_generale !== null ? (l.moyenne_generale | number:'1.2-2') : '—' }}</strong></td>
+              <td>{{ l.appreciation ?? '—' }}</td>
+              @if (resultat()) {
+                <td>
+                  @if (idBulletin(l.id_eleve)) {
+                    <button type="button" class="btn-ghost" style="padding:4px 10px; font-size:12px;"
+                            (click)="telechargerBulletin(l.id_eleve)">PDF</button>
+                  } @else { <span class="hint">—</span> }
+                </td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    @if (apercu(); as a) {
+      <div class="form-actions">
+        <button class="btn-primary" (click)="valider()" [disabled]="occupe() || a.bulletins === 0">
+          {{ occupe() ? 'Génération…' : 'Enregistrer ' + a.bulletins + ' bulletin(s)' }}
+        </button>
+      </div>
+      @if (a.sans_note > 0) {
+        <p class="hint">
+          {{ a.sans_note }} élève(s) sans aucune note ne recevront pas de bulletin :
+          une moyenne vide se lirait comme un zéro.
+        </p>
+      }
+    }
+  </div>
+}

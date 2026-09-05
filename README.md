@@ -11,6 +11,15 @@ yombaledu_fullstack/
 
 ## Ce qui est réellement testé, pas juste généré
 
+- **234 tests automatisés** passent en une dizaine de secondes :
+  `DB_ENGINE=sqlite python manage.py test gestion_scolaire`. Ils couvrent
+  l'isolation multi-écoles, l'audit, le parcours élève (mouvements,
+  réinscription, dossier), la pédagogie (pondérations, rang, bulletins,
+  palmarès), l'import de listes et tout le module financier (facturation en
+  masse, encaissement, relances, journal, bilan, exports Excel et PDF).
+  Les tests utilisent un hachage de mot de passe rapide (`settings.py`,
+  actif uniquement sous `manage.py test`) : avec PBKDF2 la suite prenait
+  une demi-heure, au point qu'on renonçait à la lancer.
 - Les modèles Django ont été validés avec `manage.py check` et
   `manage.py makemigrations` / `migrate` (SQLite en local, MySQL en prod).
 - L'API a été testée en conditions réelles : obtention d'un token JWT,
@@ -28,22 +37,157 @@ un premier tour toi-même une fois lancé en local — voir plus bas.
 ## Portée du travail — sois au clair là-dessus avant de présenter ça
 
 **Modules avec formulaire réel, câblé de bout en bout au backend :**
-Tableau de bord, Élèves (liste + inscription 3 sections), Classes,
-Parents & tuteurs, Matières, Présences, Notes, Enseignants & personnel,
-Emploi du temps, Périodes scolaires, Coefficients, Affectations,
-Comptes & rôles, Finances (impayés → encaissement → reçu automatique →
-journal de caisse), Communications, Documents, Paramètres.
+Tableau de bord, Élèves (liste, inscription 3 sections, import, dossier
+numérique, mouvements, réinscription), Classes, Parents & tuteurs, Matières,
+Présences, Évaluations, Saisie des notes en grille, Bulletins, Palmarès &
+statistiques, Enseignants & personnel, Emploi du temps, Périodes scolaires,
+Coefficients, Affectations, Comptes & rôles, Gestion financière (voir
+ci-dessous), Communications, Documents, Paramètres.
 
-**Écrans en consultation seule :** Bulletins, Reçus, Journal d'activité —
-leur contenu est produit par l'application, pas saisi à la main.
+**Écrans en consultation seule :** Reçus, Journal d'activité — leur contenu
+est produit par l'application, pas saisi à la main.
 
 **Les 38 tables ont toutes un endpoint REST.** Voir « Les tables ajoutées »
 plus bas pour celles absentes du dump initial.
 
 **Ce qui reste à faire :** l'expédition réelle des SMS et e-mails
-(les destinataires sont calculés, il manque le prestataire), la génération
-des fichiers de rapport, et le calcul automatique des bulletins à partir
-des notes et des coefficients.
+(les destinataires et les relances sont calculés, il manque le
+prestataire), le branchement des API Orange Money / Wave / Free Money
+(la méthode et la référence de transaction sont déjà enregistrées, mais
+l'encaissement se saisit à la caisse), la génération des fichiers de
+rapport, les portails Parents et Élève, et la gestion des ressources
+humaines.
+
+## Module 7 — Gestion financière
+
+Le module couvre le cycle complet décrit dans le TDR : facturer, encaisser,
+justifier, relancer, piloter.
+
+| Étape | Écran | API |
+|---|---|---|
+| Facturer une classe ou toute l'école | `/finances/generer` | `POST /api/frais-eleves/generer/` |
+| Suivre les impayés | `/finances` | `GET /api/frais-eleves/impayes/` |
+| Encaisser (espèces, Orange Money, Wave, Free Money, carte) | `/finances/encaisser/:id` | `POST /api/paiements/` |
+| Reçu PDF remis à la famille | bouton après encaissement | `GET /api/recus/{id}/pdf/` |
+| Relancer les échéances dépassées | `/finances/relances` | `POST /api/relances/generer/` |
+| Journal caisse & banque | `/finances/journal` | `GET /api/journal-caisse/` |
+| Dépenses et budgets | `/depenses`, `/budgets` | CRUD `depenses`, `budgets` |
+| Bilan et pilotage | `/finances/bilan` | `GET /api/finances/bilan/` |
+
+Trois principes structurent le module :
+
+- **Facturation et relances passent par un aperçu.** Le premier appel, sans
+  `valider`, dit combien de frais seraient créés (ou de familles relancées)
+  et pour quel montant ; rien n'est écrit. Le second applique. Générer dix
+  mensualités pour six cents élèves ne se défait pas d'un clic. La
+  génération est de plus idempotente : un frais déjà présent pour le même
+  élève, le même type et la même échéance est ignoré, jamais dupliqué —
+  on peut donc relancer l'opération après l'arrivée de nouveaux inscrits.
+
+- **Le journal de caisse est la seule source du solde.** Chaque encaissement
+  y écrit un crédit, chaque dépense un débit, et `solde_apres` est calculé à
+  l'insertion. Les espèces vont au journal *caisse*, le mobile money et la
+  carte au journal *banque*. Modifier ou supprimer une dépense corrige son
+  mouvement et réimpute le budget concerné : le réalisé d'un budget ne se
+  saisit pas, il se constate à partir des dépenses.
+
+- **Les exports ne coûtent aucune dépendance.** Le `.xlsx` s'appuie sur
+  `openpyxl`, déjà là pour l'import des listes d'élèves ; le PDF est écrit
+  directement dans `gestion_scolaire/exports.py` (polices standard PDF,
+  encodage WinAnsi, pagination et table xref). Une école n'a pas à installer
+  un moteur de rendu pour imprimer un reçu.
+
+Tous les exports s'obtiennent avec `?format_export=xlsx` ou `pdf` :
+
+```bash
+GET /api/frais-eleves/impayes/export/?format_export=pdf
+GET /api/journal-caisse/export/?format_export=xlsx&journal=caisse
+GET /api/paiements/export/?format_export=xlsx&debut=2026-10-01
+GET /api/depenses/export/?format_export=pdf
+GET /api/finances/bilan/?format_export=xlsx
+```
+
+Le paramètre s'appelle `format_export` et non `format` : DRF réserve `format`
+à la négociation de contenu et répond 404 sur une valeur qu'il ne connaît pas.
+
+## Module 2 — Gestion des élèves
+
+Le parcours complet de l'élève, de l'inscription à la sortie.
+
+| Étape | Écran | API |
+|---|---|---|
+| Inscrire (élève + inscription + parent) | `/eleves/nouveau` | `POST /api/eleves/inscrire/` |
+| Importer une liste (.xlsx, .csv, .docx) | `/eleves/importer` | `POST /api/eleves/importer/` |
+| Dossier numérique complet | `/eleves/:id/dossier` | `GET /api/eleves/{id}/dossier/` |
+| Changer de classe | dossier → Mouvements | `POST /api/eleves/{id}/changer-classe/` |
+| Radier | dossier → Mouvements | `POST /api/eleves/{id}/radier/` |
+| Transférer | dossier → Mouvements | `POST /api/eleves/{id}/transferer/` |
+| Réinscrire une promotion | `/eleves/reinscrire` | `POST /api/inscriptions/reinscrire/` |
+
+Trois principes, tenus dans `gestion_scolaire/scolarite.py` :
+
+- **Aucun mouvement sans trace.** Chaque geste écrit une ligne d'historique
+  scolaire au bon type d'événement. L'inscription initiale est tracée par
+  `Inscription.save()` ; les mouvements ultérieurs le sont dans `scolarite`,
+  parce qu'eux seuls connaissent la classe quittée.
+
+- **L'effectif suit le mouvement.** `Classe.effectif` est dénormalisé. Il
+  n'était recalé que par l'import de listes : une radiation laissait donc un
+  effectif faux sur le tableau de bord. Tous les chemins d'écriture passent
+  désormais par `recaler_effectif()`, qui recompte plutôt qu'incrémente.
+
+- **La réinscription passe par un aperçu**, comme la facturation : « 42 élèves
+  passeraient de 6ème A en 5ème A » avant d'écrire. L'opération est idempotente
+  et ignore les élèves radiés ou transférés. Un dépassement de capacité est
+  signalé, pas bloqué — une classe surchargée en début d'année est une réalité.
+
+Le dossier numérique assemble en une réponse l'identité, les parents, le
+parcours, les pièces, les résultats, la situation financière et l'assiduité :
+six appels distincts obligeraient le front à recoudre des données qui n'ont de
+sens qu'ensemble.
+
+## Module 5 — Gestion pédagogique
+
+| Étape | Écran | API |
+|---|---|---|
+| Créer une évaluation (barème, coefficient) | `/evaluations` | CRUD `evaluations` |
+| Saisir les notes d'une classe en grille | `/pedagogie/notes` | `GET/POST /api/evaluations/{id}/grille/` puis `/notes/` |
+| Calculer les moyennes d'une classe | `/pedagogie/bulletins` | `GET /api/bulletins/moyennes/` |
+| Générer les bulletins | `/pedagogie/bulletins` | `POST /api/bulletins/generer/` |
+| Bulletin PDF d'un élève | bouton après génération | `GET /api/bulletins/{id}/pdf/` |
+| Relevé de notes détaillé | dossier de l'élève | `GET /api/eleves/{id}/releve/` |
+| Palmarès et statistiques | `/pedagogie/palmares` | `GET /api/bulletins/palmares/`, `/statistiques/` |
+
+Les règles de calcul vivent dans `gestion_scolaire/pedagogie.py`, écrites une
+seule fois :
+
+- **Les notes sont ramenées sur 20 avant d'être moyennées**, via le `bareme` de
+  leur évaluation. Une interrogation sur 10 et une composition sur 20 ne se
+  moyennent pas telles quelles. L'enseignant continue de saisir la note portée
+  sur la copie ; la conversion est l'affaire du calcul.
+
+- **Deux pondérations distinctes.** À l'intérieur d'une matière, les
+  évaluations pèsent par leur `coefficient` ; entre matières, ce sont les
+  `CoefficientMatiere` de la classe. Une matière sans coefficient déclaré
+  compte pour 1.
+
+- **Une matière sans note ne compte pas**, plutôt que de compter zéro : un
+  élève non évalué en sport n'a pas à voir sa moyenne s'effondrer. De même, un
+  élève sans aucune note n'est pas classé dernier — il n'est pas classé, et ne
+  reçoit pas de bulletin vide.
+
+- **Le rang suit la convention des établissements** : ex æquo au même rang, et
+  le rang suivant saute d'autant (1, 2, 2, 4).
+
+La saisie se fait en grille et part en une requête : le CRUD imposait un
+aller-retour par élève, soit soixante requêtes pour un devoir de 6ème. Elle est
+transactionnelle — une seule note hors barème et rien n'est écrit, plutôt
+qu'une grille à moitié saisie. Une case laissée vide efface la note (élève
+absent, saisie erronée) au lieu de valoir zéro.
+
+La génération des bulletins passe par le même aperçu que la facturation, et
+régénérer met à jour les bulletins existants : une note corrigée après le
+conseil de classe doit pouvoir se répercuter.
 
 ## Démarrage rapide
 
@@ -245,6 +389,62 @@ TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/token/ \
 
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/eleves/
 ```
+
+## Importer une liste d'élèves
+
+Écran : **Élèves → Importer une liste** (`/eleves/importer`, réservé aux admins).
+Endpoint : `POST /api/eleves/importer/` en `multipart/form-data`.
+
+| Champ | Rôle |
+|---|---|
+| `fichier` | La liste, en `.xlsx`, `.csv` ou `.docx` |
+| `classe` | Facultatif — force la classe de tout le fichier |
+| `valider` | Absent : aperçu seul. `true` : écrit en base |
+
+L'import se fait **en deux appels avec le même fichier** : le premier renvoie
+un aperçu de ce qui serait créé, le second écrit. Le fichier est ré-analysé
+côté serveur à la validation, plutôt que de faire revenir le plan par le
+navigateur — un plan renvoyé par le client serait un moyen d'écrire des élèves
+qu'aucun fichier ne contenait.
+
+**Le format Word est accepté volontairement.** Les écoles produisent leurs
+listes nominatives sous Word, un tableau par classe ; n'accepter que l'Excel
+imposerait de tout ressaisir. Le nom de la classe est lu dans le titre au-dessus
+du tableau (« Liste nominative CE1 A 2025 / 2026 Mme NDIAYE » → classe `CE1 A`,
+niveau `CE1`). Un document qui empile plusieurs tableaux devient plusieurs
+classes. Les anciens `.doc` et `.xls` ne sont pas lus — il faut les
+réenregistrer en `.docx` / `.xlsx`.
+
+Colonnes reconnues, quel que soit l'intitulé exact : `nom`, `prenom`, `classe`,
+`telephone`, `sexe`, `matricule`. Dans un tableau Word sans en-tête, la
+disposition `N° | PRÉNOMS | NOMS` des listes d'école est supposée.
+
+Ce que l'import décide, ligne par ligne :
+
+- **création** — l'élève est créé, inscrit dans sa classe pour l'année scolaire
+  active, et reçoit un matricule `PREFIXE-ANNEE-0001` (le préfixe vient du
+  paramètre `prefixe_matricule`) ;
+- **doublon** — un élève de même nom et prénom est déjà inscrit *dans cette
+  école et dans cette classe* : rien n'est écrit. C'est le cas du fichier
+  réimporté par erreur. Le contrôle est borné à l'école, sinon deux écoles
+  clientes se bloqueraient mutuellement des inscriptions ;
+- **ignorée** — ligne vide, sans nom, ou sans classe identifiable.
+
+Faute de date de naissance dans les listes, un élève est identifié par
+**nom + prénom + classe**. La classe fait partie de l'identité parce que les
+homonymes sont fréquents : dans les listes de Mic Cité, treize noms
+apparaissent dans deux classes différentes — un élève de CI A et un élève de
+CM2 A ne sont pas le même enfant. Ces homonymes sont créés, et signalés dans
+l'aperçu pour vérification.
+
+Les classes et niveaux absents sont créés au passage. Les annotations
+d'enseignant entre parenthèses (`LO (NN)`) sont sorties de l'état civil et
+affichées à part, pour que rien ne disparaisse en silence. Toute l'écriture
+est dans une transaction : un import à moitié appliqué laisserait des élèves
+sans inscription.
+
+`openpyxl` n'est nécessaire que pour le `.xlsx` ; le `.csv` et le `.docx` sont
+lus avec la bibliothèque standard.
 
 ## Isolation multi-écoles — la règle à ne pas casser
 

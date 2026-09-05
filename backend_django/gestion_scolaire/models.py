@@ -4,6 +4,8 @@ Traduction fidèle du schéma MySQL validé (schema_gestion_scolaire.sql).
 Organisé dans le même ordre que le script SQL : cœur multi-écoles,
 module élèves, module pédagogique, emploi du temps, module financier.
 """
+from decimal import Decimal
+
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.core.validators import MinValueValidator
@@ -405,6 +407,13 @@ class Evaluation(models.Model):
     type = models.CharField(max_length=15, choices=Type.choices)
     date_evaluation = models.DateField()
     coefficient = models.DecimalField(max_digits=4, decimal_places=2, default=1.00)
+    # Barème de l'épreuve. Sans lui, une interrogation notée sur 10 et une
+    # composition sur 20 se moyenneraient telles quelles : toutes les moyennes
+    # seraient fausses dès qu'un enseignant sort du /20. Les notes sont
+    # ramenées sur 20 au calcul, jamais à la saisie — l'enseignant continue de
+    # saisir la note telle qu'il l'a mise sur la copie.
+    bareme = models.DecimalField(max_digits=5, decimal_places=2, default=20.00,
+                                 validators=[MinValueValidator(Decimal("0.01"))])
 
     class Meta:
         db_table = "evaluation"

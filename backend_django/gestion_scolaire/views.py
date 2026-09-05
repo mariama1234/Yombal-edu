@@ -1,20 +1,74 @@
 from rest_framework import mixins, viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Q, Sum
 from django.db.models import Model as DjangoModel
+from django.http import HttpResponse
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
 
-from . import models, serializers
+from . import (finances, finances_documents, imports_eleves, models, pedagogie,
+               pedagogie_documents, scolarite, serializers)
 from .audit import JournalisationMixin, journaliser
 from .permissions import EstAdmin, EstAdminOuCaissier, EstAdminOuEnseignant, LectureSeuleOuAdmin
 
 Utilisateur = get_user_model()
+
+# Les listes d'école pèsent quelques dizaines de Ko ; au-delà de 5 Mo il ne
+# s'agit plus d'une liste nominative, et le fichier serait lu entièrement en
+# mémoire avant d'être rejeté.
+TAILLE_MAX_IMPORT = 5 * 1024 * 1024
+
+FORMATS_EXPORT = ("xlsx", "pdf")
+
+# Le paramètre ne s'appelle pas `format` : DRF réserve ce nom à la négociation
+# de contenu et répond 404 dès qu'il ne reconnaît pas la valeur — un export
+# `?format=xlsx` n'atteignait jamais la vue.
+PARAM_FORMAT = "format_export"
+
+
+def _format_export(request):
+    demande = (request.query_params.get(PARAM_FORMAT) or "xlsx").lower()
+    if demande not in FORMATS_EXPORT:
+        raise ValidationError({
+            PARAM_FORMAT: f"Format inconnu : {demande}. "
+                          f"Attendu : {' ou '.join(FORMATS_EXPORT)}."
+        })
+    return demande
+
+
+def _date_param(request, nom):
+    """Lit une date de l'URL, en refusant explicitement les valeurs illisibles."""
+    brut = request.query_params.get(nom)
+    if not brut:
+        return None
+    valeur = parse_date(brut)
+    if valeur is None:
+        raise ValidationError({nom: "Date attendue au format AAAA-MM-JJ."})
+    return valeur
+
+
+def _fichier(request, document, description=None, entite="finances"):
+    """
+    Renvoie un export en téléchargement, et le trace.
+
+    Un export sort des données nominatives de l'établissement : il a autant sa
+    place au journal d'activité qu'une modification.
+    """
+    contenu, nom, type_mime = document
+    if description:
+        journaliser(request, models.JournalActivite.Action.EXPORT,
+                    entite=entite, description=description)
+    reponse = HttpResponse(contenu, content_type=type_mime)
+    reponse["Content-Disposition"] = f'attachment; filename="{nom}"'
+    reponse["Content-Length"] = str(len(contenu))
+    return reponse
 
 
 def ecole_de(instance, profondeur=0):
@@ -220,6 +274,9 @@ class EleveViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, 
         serializer = self.get_serializer(data=donnees)
         serializer.is_valid(raise_exception=True)
         eleve = serializer.save()
+        # L'effectif de la classe est dénormalisé : sans ce recalage, il
+        # n'était mis à jour que par l'import de listes.
+        scolarite.recaler_effectif(serializer.validated_data["id_classe"])
         journaliser(
             request,
             models.JournalActivite.Action.CREATION,
@@ -228,6 +285,200 @@ class EleveViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, 
             description=f"Inscription de {eleve.prenom} {eleve.nom} ({eleve.matricule})",
         )
         return Response(serializers.EleveSerializer(eleve).data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        request={"multipart/form-data": {
+            "type": "object",
+            "properties": {
+                "fichier": {"type": "string", "format": "binary",
+                            "description": "Liste des élèves (.xlsx, .csv ou .docx)."},
+                "classe": {"type": "string",
+                           "description": "Force la classe de tout le fichier. "
+                                          "Utile quand l'en-tête ne la mentionne pas."},
+                "valider": {"type": "boolean",
+                            "description": "false (défaut) : aperçu seul. true : écrit en base."},
+            },
+            "required": ["fichier"],
+        }},
+        responses={200: None, 201: None},
+    )
+    @action(detail=False, methods=["post"], url_path="importer",
+            parser_classes=[MultiPartParser, FormParser],
+            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    def importer(self, request):
+        """
+        Import d'une liste d'élèves : POST /api/eleves/importer/
+
+        L'appel se fait deux fois avec le même fichier — d'abord sans
+        `valider` pour obtenir l'aperçu, puis avec `valider=true` pour écrire.
+        Le fichier est ré-analysé à la validation plutôt que de faire revenir
+        le plan par le client : un plan renvoyé par le navigateur serait une
+        entrée modifiable, donc un moyen d'écrire des élèves qu'aucun fichier
+        ne contenait — ou de forcer une autre école.
+        """
+        fichier = request.FILES.get("fichier")
+        if fichier is None:
+            raise ValidationError({"fichier": "Aucun fichier reçu."})
+        if fichier.size > TAILLE_MAX_IMPORT:
+            raise ValidationError({
+                "fichier": f"Fichier trop volumineux (maximum "
+                           f"{TAILLE_MAX_IMPORT // (1024 * 1024)} Mo)."
+            })
+
+        ecole = request.user.id_ecole
+        annee = (models.AnneeScolaire.objects
+                 .filter(id_ecole=ecole, statut=models.AnneeScolaire.Statut.ACTIVE)
+                 .order_by("-date_debut").first())
+        if annee is None:
+            raise ValidationError({
+                "annee_scolaire": "Aucune année scolaire active : créez-la avant d'importer."
+            })
+
+        try:
+            lignes = imports_eleves.analyser_fichier(
+                fichier.name, fichier.read(), classe_defaut=request.data.get("classe", "").strip(),
+            )
+        except imports_eleves.ErreurImport as exc:
+            raise ValidationError({"fichier": str(exc)})
+
+        plan = imports_eleves.construire_plan(ecole, annee, lignes)
+        plan["fichier"] = fichier.name
+
+        if str(request.data.get("valider", "")).lower() not in ("true", "1", "oui"):
+            plan["valide"] = False
+            return Response(plan)
+
+        if not plan["a_creer"]:
+            raise ValidationError({
+                "fichier": "Aucun élève à créer : tout le fichier est déjà en base ou illisible."
+            })
+
+        resultat = imports_eleves.appliquer_plan(ecole, annee, plan)
+        journaliser(
+            request,
+            models.JournalActivite.Action.CREATION,
+            entite="eleve",
+            description=f"Import de {resultat['eleves_crees']} élèves depuis {fichier.name}",
+        )
+        plan.update(valide=True, resultat=resultat)
+        return Response(plan, status=status.HTTP_201_CREATED)
+
+    # -- Dossier et mouvements -------------------------------------------
+    #
+    # Les trois mouvements passent par `scolarite` plutôt que par un PATCH sur
+    # l'inscription : eux seuls écrivent la trace au bon type d'événement,
+    # recalent l'effectif de la classe quittée et mettent le statut de l'élève
+    # en accord avec celui de son inscription.
+
+    def _mouvement(self, request, serializer_class, operation, action_journal,
+                   description):
+        entree = serializer_class(data=request.data)
+        entree.is_valid(raise_exception=True)
+        eleve = self.get_object()
+        try:
+            operation(entree.validated_data, eleve)
+        except scolarite.ErreurScolarite as exc:
+            raise ValidationError({"detail": str(exc)})
+        eleve.refresh_from_db()
+        journaliser(request, action_journal, entite="eleve", id_entite=eleve.pk,
+                    description=description(eleve, entree.validated_data))
+        return Response(scolarite.dossier(request.user.id_ecole, eleve))
+
+    @extend_schema(responses=dict)
+    @action(detail=True, methods=["get"])
+    def dossier(self, request, pk=None):
+        """
+        Dossier numérique complet : GET /api/eleves/{id}/dossier/
+
+        Identité, parents, parcours, pièces, résultats, situation financière
+        et assiduité en une réponse — l'écran les affiche ensemble.
+        """
+        return Response(scolarite.dossier(request.user.id_ecole, self.get_object()))
+
+    def _periode(self, request):
+        try:
+            return models.PeriodeScolaire.objects.select_related("id_annee_scolaire").get(
+                pk=request.query_params.get("id_periode"),
+                id_annee_scolaire__id_ecole=request.user.id_ecole)
+        except (models.PeriodeScolaire.DoesNotExist, ValueError, TypeError):
+            raise ValidationError({"id_periode": "Période inconnue pour cette école."})
+
+    @extend_schema(responses=dict)
+    @action(detail=True, methods=["get"])
+    def releve(self, request, pk=None):
+        """
+        Relevé de notes détaillé : GET /api/eleves/{id}/releve/?id_periode=
+
+        Le bulletin donne les moyennes, le relevé donne les notes qui les
+        composent — ce qu'une famille demande quand elle conteste.
+        """
+        try:
+            return Response(pedagogie.releve_de_notes(
+                request.user.id_ecole, self.get_object(), self._periode(request)))
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
+    @extend_schema(responses=dict)
+    @action(detail=True, methods=["get"], url_path="releve/export")
+    def exporter_releve(self, request, pk=None):
+        """GET /api/eleves/{id}/releve/export/?id_periode="""
+        eleve = self.get_object()
+        ecole = request.user.id_ecole
+        try:
+            releve = pedagogie.releve_de_notes(ecole, eleve, self._periode(request))
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+        return _fichier(
+            request,
+            pedagogie_documents.releve_de_notes(ecole, releve),
+            description=f"Relevé de notes de {eleve.prenom} {eleve.nom}",
+            entite="note",
+        )
+
+    @extend_schema(request=serializers.ChangementClasseSerializer, responses=dict)
+    @action(detail=True, methods=["post"], url_path="changer-classe",
+            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    def changer_classe(self, request, pk=None):
+        """Changement de classe : POST /api/eleves/{id}/changer-classe/"""
+        return self._mouvement(
+            request, serializers.ChangementClasseSerializer,
+            lambda d, eleve: scolarite.changer_de_classe(
+                request.user.id_ecole, eleve, d["id_classe"],
+                date_effet=d.get("date_effet"), motif=d.get("motif", ""),
+                commentaire=d.get("commentaire", "")),
+            models.JournalActivite.Action.MODIFICATION,
+            lambda eleve, d: f"Changement de classe de {eleve.prenom} {eleve.nom} "
+                             f"vers {d['id_classe'].nom}",
+        )
+
+    @extend_schema(request=serializers.RadiationSerializer, responses=dict)
+    @action(detail=True, methods=["post"],
+            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    def radier(self, request, pk=None):
+        """Radiation : POST /api/eleves/{id}/radier/"""
+        return self._mouvement(
+            request, serializers.RadiationSerializer,
+            lambda d, eleve: scolarite.radier(
+                request.user.id_ecole, eleve, date_effet=d.get("date_effet"),
+                motif=d["motif"], commentaire=d.get("commentaire", "")),
+            models.JournalActivite.Action.MODIFICATION,
+            lambda eleve, d: f"Radiation de {eleve.prenom} {eleve.nom} — {d['motif']}",
+        )
+
+    @extend_schema(request=serializers.TransfertSerializer, responses=dict)
+    @action(detail=True, methods=["post"],
+            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    def transferer(self, request, pk=None):
+        """Transfert vers un autre établissement : POST /api/eleves/{id}/transferer/"""
+        return self._mouvement(
+            request, serializers.TransfertSerializer,
+            lambda d, eleve: scolarite.transferer(
+                request.user.id_ecole, eleve, d["etablissement"],
+                date_effet=d.get("date_effet"), commentaire=d.get("commentaire", "")),
+            models.JournalActivite.Action.MODIFICATION,
+            lambda eleve, d: f"Transfert de {eleve.prenom} {eleve.nom} "
+                             f"vers {d['etablissement']}",
+        )
 
 
 class InscriptionViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
@@ -243,6 +494,10 @@ class InscriptionViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.Mode
     # aussi l'endpoint composite /eleves/inscrire/. Seul le changement de
     # classe est traité ici : la vue est le seul endroit qui connaît la
     # classe précédente.
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        scolarite.recaler_effectif(serializer.instance.id_classe)
+
     def perform_update(self, serializer):
         classe_avant = models.Inscription.objects.get(pk=serializer.instance.pk).id_classe
         super().perform_update(serializer)
@@ -256,6 +511,52 @@ class InscriptionViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.Mode
                 date_evenement=timezone.now().date(),
                 motif=f"Passage de {classe_avant.nom} à {inscription.id_classe.nom}",
             )
+        # Le statut peut aussi avoir changé (annulation) : on recale dans tous
+        # les cas, l'effectif dénormalisé se lit sur le tableau de bord.
+        scolarite.recaler_effectif(classe_avant, inscription.id_classe)
+
+    def perform_destroy(self, instance):
+        classe = instance.id_classe
+        super().perform_destroy(instance)
+        scolarite.recaler_effectif(classe)
+
+    @extend_schema(request=serializers.ReinscriptionSerializer, responses=dict)
+    @action(detail=False, methods=["post"], permission_classes=[EstAdmin])
+    def reinscrire(self, request):
+        """
+        Réinscription d'une promotion : POST /api/inscriptions/reinscrire/
+
+        Comme la génération des frais et l'import d'élèves, l'appel se fait
+        deux fois — d'abord sans `valider` pour voir combien d'élèves
+        passeraient et dans quelle classe, puis avec `valider=true` pour
+        écrire. Réinscrire une classe entière ne se défait pas à la main.
+        """
+        entree = serializers.ReinscriptionSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        donnees = entree.validated_data
+        valider = donnees["valider"]
+
+        try:
+            resultat = scolarite.reinscrire(
+                request.user.id_ecole,
+                donnees["id_annee_source"],
+                donnees["id_annee_cible"],
+                donnees["id_classe_cible"],
+                classe_source=donnees.get("id_classe_source"),
+                date_inscription=donnees.get("date_inscription"),
+                appliquer=valider,
+            )
+        except scolarite.ErreurScolarite as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        if valider:
+            journaliser(
+                request, models.JournalActivite.Action.CREATION, entite="inscription",
+                description=f"Réinscription de {resultat['reinscrits']} élèves "
+                            f"({resultat['classe_source']} → {resultat['classe_cible']})",
+            )
+        statut = status.HTTP_201_CREATED if valider else status.HTTP_200_OK
+        return Response(resultat, status=statut)
 
 
 class EleveParentViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
@@ -374,30 +675,227 @@ class ConseilClasseViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.Mo
 
 
 class EvaluationViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
-    queryset = models.Evaluation.objects.all()
+    queryset = models.Evaluation.objects.select_related(
+        "id_matiere", "id_classe", "id_periode").all()
     serializer_class = serializers.EvaluationSerializer
     permission_classes = [EstAdminOuEnseignant]
+    filterset_fields = ["id_classe", "id_matiere", "id_periode", "type"]
 
     def get_queryset(self):
         return super().get_queryset().filter(id_classe__id_ecole_id=self.request.user.id_ecole_id)
+
+    @extend_schema(responses=dict)
+    @action(detail=True, methods=["get"])
+    def grille(self, request, pk=None):
+        """
+        Grille de saisie préremplie : GET /api/evaluations/{id}/grille/
+
+        Tous les inscrits de la classe, notés ou non — sans quoi l'enseignant
+        devrait deviner qui reste à saisir.
+        """
+        try:
+            return Response(pedagogie.grille_de_saisie(
+                request.user.id_ecole, self.get_object()))
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
+    @extend_schema(request=serializers.SaisieNotesSerializer, responses=dict)
+    @action(detail=True, methods=["post"], url_path="notes")
+    def saisir_notes(self, request, pk=None):
+        """
+        Saisie en masse : POST /api/evaluations/{id}/notes/
+
+        Transactionnel : une note hors barème et rien n'est écrit, plutôt
+        qu'une grille à moitié saisie.
+        """
+        entree = serializers.SaisieNotesSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        evaluation = self.get_object()
+        try:
+            resultat = pedagogie.saisir_notes(
+                request.user.id_ecole, evaluation,
+                entree.validated_data["notes"], request.user)
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        journaliser(
+            request, models.JournalActivite.Action.MODIFICATION, entite="note",
+            id_entite=evaluation.pk,
+            description=f"Saisie de {resultat['creees'] + resultat['modifiees']} notes "
+                        f"({resultat['matiere']}, {resultat['classe']})",
+        )
+        return Response(resultat)
 
 
 class NoteViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
     queryset = models.Note.objects.all()
     serializer_class = serializers.NoteSerializer
     permission_classes = [EstAdminOuEnseignant]
+    filterset_fields = ["id_eleve", "id_evaluation"]
 
     def get_queryset(self):
         return super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
 
 
 class BulletinViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
-    queryset = models.Bulletin.objects.all()
+    queryset = models.Bulletin.objects.select_related(
+        "id_eleve", "id_classe", "id_periode").all()
     serializer_class = serializers.BulletinSerializer
     permission_classes = [permissions.IsAuthenticated]
+    filterset_fields = ["id_eleve", "id_classe", "id_periode"]
 
     def get_queryset(self):
         return super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
+
+    # -- Contexte commun aux vues de calcul -------------------------------
+
+    def _classe_et_periode(self, request):
+        """Lit `id_classe` et `id_periode` de l'URL, en refusant l'à-peu-près."""
+        ecole = request.user.id_ecole
+        try:
+            classe = models.Classe.objects.get(
+                pk=request.query_params.get("id_classe"), id_ecole=ecole)
+        except (models.Classe.DoesNotExist, ValueError, TypeError):
+            raise ValidationError({"id_classe": "Classe inconnue pour cette école."})
+        try:
+            periode = models.PeriodeScolaire.objects.select_related("id_annee_scolaire").get(
+                pk=request.query_params.get("id_periode"),
+                id_annee_scolaire__id_ecole=ecole)
+        except (models.PeriodeScolaire.DoesNotExist, ValueError, TypeError):
+            raise ValidationError({"id_periode": "Période inconnue pour cette école."})
+        return ecole, classe, periode
+
+    @extend_schema(request=serializers.GenerationBulletinsSerializer, responses=dict)
+    @action(detail=False, methods=["post"], permission_classes=[EstAdminOuEnseignant])
+    def generer(self, request):
+        """
+        Génération des bulletins d'une classe : POST /api/bulletins/generer/
+
+        Comme la génération des frais, l'appel se fait deux fois : sans
+        `valider` pour l'aperçu des moyennes, puis avec pour écrire.
+        Régénérer met à jour les bulletins existants — une note corrigée
+        après coup doit pouvoir se répercuter.
+        """
+        entree = serializers.GenerationBulletinsSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        donnees = entree.validated_data
+        valider = donnees["valider"]
+
+        try:
+            resultat = pedagogie.generer_bulletins(
+                request.user.id_ecole, donnees["id_classe"], donnees["id_periode"],
+                appliquer=valider)
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        if valider:
+            journaliser(
+                request, models.JournalActivite.Action.CREATION, entite="bulletin",
+                description=f"Génération de {resultat['crees'] + resultat['mis_a_jour']} "
+                            f"bulletins ({resultat['classe']}, {resultat['periode']})",
+            )
+        statut = status.HTTP_201_CREATED if valider else status.HTTP_200_OK
+        return Response(resultat, status=statut)
+
+    @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"])
+    def moyennes(self, request):
+        """
+        Tableau des moyennes d'une classe :
+        GET /api/bulletins/moyennes/?id_classe=&id_periode=
+
+        Calculé à la volée, sans écrire de bulletin : c'est la vue de travail
+        avant le conseil de classe.
+        """
+        ecole, classe, periode = self._classe_et_periode(request)
+        try:
+            return Response({
+                "classe": classe.nom,
+                "periode": periode.libelle,
+                "lignes": pedagogie.moyennes_classe(ecole, classe, periode),
+            })
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
+    @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"], url_path="moyennes/export")
+    def exporter_moyennes(self, request):
+        """GET /api/bulletins/moyennes/export/?id_classe=&id_periode=&format_export=xlsx|pdf"""
+        ecole, classe, periode = self._classe_et_periode(request)
+        try:
+            resultat = pedagogie.generer_bulletins(ecole, classe, periode, appliquer=False)
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+        return _fichier(
+            request,
+            pedagogie_documents.moyennes_classe(ecole, resultat, format=_format_export(request)),
+            description=f"Export des moyennes ({classe.nom}, {periode.libelle})",
+            entite="bulletin",
+        )
+
+    @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"])
+    def palmares(self, request):
+        """GET /api/bulletins/palmares/?id_classe=&id_periode=&limite="""
+        ecole, classe, periode = self._classe_et_periode(request)
+        limite = request.query_params.get("limite")
+        try:
+            limite = int(limite) if limite else None
+        except ValueError:
+            raise ValidationError({"limite": "Nombre entier attendu."})
+        try:
+            return Response(pedagogie.palmares(ecole, classe, periode, limite=limite))
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
+    @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"], url_path="palmares/export")
+    def exporter_palmares(self, request):
+        """GET /api/bulletins/palmares/export/?id_classe=&id_periode=&format_export=xlsx|pdf"""
+        ecole, classe, periode = self._classe_et_periode(request)
+        try:
+            donnees = pedagogie.palmares(ecole, classe, periode)
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+        return _fichier(
+            request,
+            pedagogie_documents.palmares(ecole, donnees, format=_format_export(request)),
+            description=f"Export du palmarès ({classe.nom}, {periode.libelle})",
+            entite="bulletin",
+        )
+
+    @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"])
+    def statistiques(self, request):
+        """GET /api/bulletins/statistiques/?id_classe=&id_periode="""
+        ecole, classe, periode = self._classe_et_periode(request)
+        try:
+            return Response(pedagogie.statistiques(ecole, classe, periode))
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
+    @extend_schema(responses=dict)
+    @action(detail=True, methods=["get"])
+    def pdf(self, request, pk=None):
+        """Bulletin imprimable : GET /api/bulletins/{id}/pdf/"""
+        bulletin = self.get_object()
+        ecole = request.user.id_ecole
+        try:
+            releve = pedagogie.releve_de_notes(ecole, bulletin.id_eleve, bulletin.id_periode)
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        conseil = (models.ConseilClasse.objects
+                   .filter(id_classe=bulletin.id_classe, id_periode=bulletin.id_periode)
+                   .order_by("-date_conseil").first())
+        return _fichier(
+            request,
+            pedagogie_documents.bulletin(ecole, releve,
+                                         conseil=conseil.decisions if conseil else None),
+            description=f"Bulletin de {bulletin.id_eleve.prenom} {bulletin.id_eleve.nom} "
+                        f"({bulletin.id_periode.libelle})",
+            entite="bulletin",
+        )
 
 
 class AbsenceViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
@@ -439,27 +937,87 @@ class TypeFraisViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMix
 
 
 class FraisEleveViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
-    queryset = models.FraisEleve.objects.select_related("id_eleve", "id_type_frais").all()
+    queryset = models.FraisEleve.objects.select_related(
+        "id_eleve", "id_type_frais", "id_annee_scolaire").all()
     serializer_class = serializers.FraisEleveSerializer
     permission_classes = [EstAdminOuCaissier]
 
     def get_queryset(self):
         qs = super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
-        id_eleve = self.request.query_params.get("eleve")
-        statut = self.request.query_params.get("statut")
-        if id_eleve:
-            qs = qs.filter(id_eleve=id_eleve)
-        if statut:
-            qs = qs.filter(statut=statut)
-        return qs
+        params = self.request.query_params
+        for parametre, champ in (("eleve", "id_eleve"), ("statut", "statut"),
+                                 ("type_frais", "id_type_frais"),
+                                 ("annee", "id_annee_scolaire")):
+            valeur = params.get(parametre)
+            if valeur:
+                qs = qs.filter(**{champ: valeur})
+        if params.get("classe"):
+            qs = qs.filter(id_eleve__inscriptions__id_classe=params["classe"])
+        if str(params.get("echus", "")).lower() in ("true", "1", "oui"):
+            qs = qs.filter(echeance__lt=timezone.localdate())
+        return qs.distinct()
+
+    def _impayes(self):
+        return self.get_queryset().exclude(statut=models.FraisEleve.Statut.PAYE)
 
     @action(detail=False, methods=["get"])
     def impayes(self, request):
-        """GET /api/frais-eleves/impayes/ — utilisé par l'écran Finances (admin) et le parcours caissier."""
-        qs = self.get_queryset().exclude(statut=models.FraisEleve.Statut.PAYE)
+        """GET /api/frais-eleves/impayes/ — écran Finances (admin) et parcours caissier."""
+        qs = self._impayes()
         page = self.paginate_queryset(qs)
         serializer = self.get_serializer(page or qs, many=True)
         return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
+
+    @extend_schema(request=serializers.GenerationFraisSerializer, responses=dict)
+    @action(detail=False, methods=["post"], permission_classes=[EstAdmin])
+    def generer(self, request):
+        """
+        Génération en masse des frais : POST /api/frais-eleves/generer/
+
+        Comme l'import d'élèves, l'appel se fait deux fois — d'abord sans
+        `valider` pour obtenir l'aperçu (combien de frais seraient créés, pour
+        quel total), puis avec `valider=true` pour écrire. Facturer une année
+        entière est irréversible à la main : mieux vaut voir le nombre avant.
+        """
+        entree = serializers.GenerationFraisSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        donnees = entree.validated_data
+        valider = donnees["valider"]
+
+        try:
+            resultat = finances.generer_frais(
+                request.user.id_ecole,
+                donnees["id_annee_scolaire"],
+                donnees["id_type_frais"],
+                donnees["echeances"],
+                montant=donnees.get("montant"),
+                classe=donnees.get("id_classe"),
+                appliquer=valider,
+            )
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        if valider:
+            journaliser(
+                request, models.JournalActivite.Action.CREATION, entite="frais_eleve",
+                description=f"Génération de {resultat['crees']} frais "
+                            f"({resultat['type_frais']}, {resultat['classe']})",
+            )
+        statut = status.HTTP_201_CREATED if valider else status.HTTP_200_OK
+        return Response(resultat, status=statut)
+
+    @action(detail=False, methods=["get"], url_path="impayes/export")
+    def exporter_impayes(self, request):
+        """GET /api/frais-eleves/impayes/export/?format=xlsx|pdf"""
+        return _fichier(
+            request,
+            finances_documents.impayes(
+                request.user.id_ecole,
+                self._impayes().select_related("id_eleve", "id_type_frais"),
+                format=_format_export(request),
+            ),
+            description="Export de l'état des impayés",
+        )
 
 
 class PaiementViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
@@ -468,30 +1026,92 @@ class PaiementViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelVi
     met à jour le frais concerné, génère le reçu et le mouvement de caisse
     automatiquement (voir PaiementSerializer.create).
     """
-    queryset = models.Paiement.objects.select_related("id_frais_eleve", "id_frais_eleve__id_eleve").all()
+    queryset = models.Paiement.objects.select_related(
+        "id_frais_eleve", "id_frais_eleve__id_eleve", "id_frais_eleve__id_type_frais",
+        "id_utilisateur_caissier", "recu").all()
     serializer_class = serializers.PaiementSerializer
     permission_classes = [EstAdminOuCaissier]
 
     def get_queryset(self):
-        return super().get_queryset().filter(id_frais_eleve__id_eleve__id_ecole_id=self.request.user.id_ecole_id)
+        qs = super().get_queryset().filter(
+            id_frais_eleve__id_eleve__id_ecole_id=self.request.user.id_ecole_id)
+        params = self.request.query_params
+        if params.get("methode"):
+            qs = qs.filter(methode=params["methode"])
+        if params.get("debut"):
+            qs = qs.filter(date_paiement__date__gte=params["debut"])
+        if params.get("fin"):
+            qs = qs.filter(date_paiement__date__lte=params["fin"])
+        return qs
+
+    @action(detail=False, methods=["get"], url_path="export")
+    def exporter(self, request):
+        """GET /api/paiements/export/?format=xlsx|pdf — journal des recettes."""
+        return _fichier(
+            request,
+            finances_documents.paiements(request.user.id_ecole, self.get_queryset(),
+                                         format=_format_export(request)),
+            description="Export du journal des recettes",
+        )
 
 
 class RecuViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = models.Recu.objects.all()
+    queryset = models.Recu.objects.select_related(
+        "id_paiement", "id_paiement__id_frais_eleve",
+        "id_paiement__id_frais_eleve__id_eleve").all()
     serializer_class = serializers.RecuSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         return super().get_queryset().filter(id_paiement__id_frais_eleve__id_eleve__id_ecole_id=self.request.user.id_ecole_id)
 
+    @action(detail=True, methods=["get"], url_path="pdf")
+    def pdf(self, request, pk=None):
+        """GET /api/recus/{id}/pdf/ — le justificatif remis à la famille."""
+        return _fichier(request, finances_documents.recu(self.get_object()),
+                        description=f"Édition du reçu {self.get_object().numero_recu}")
+
 
 class RelanceViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
-    queryset = models.Relance.objects.all()
+    queryset = models.Relance.objects.select_related(
+        "id_frais_eleve", "id_frais_eleve__id_eleve", "id_frais_eleve__id_type_frais").all()
     serializer_class = serializers.RelanceSerializer
     permission_classes = [EstAdminOuCaissier]
 
     def get_queryset(self):
         return super().get_queryset().filter(id_frais_eleve__id_eleve__id_ecole_id=self.request.user.id_ecole_id)
+
+    @extend_schema(request=serializers.GenerationRelancesSerializer, responses=dict)
+    @action(detail=False, methods=["post"])
+    def generer(self, request):
+        """
+        Relances automatiques : POST /api/relances/generer/
+
+        Sans `valider`, l'appel ne fait que compter les familles concernées —
+        on voit qui serait relancé avant d'envoyer quoi que ce soit.
+        """
+        entree = serializers.GenerationRelancesSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        donnees = entree.validated_data
+
+        try:
+            resultat = finances.generer_relances(
+                request.user.id_ecole,
+                donnees["canal"],
+                jours_retard=donnees["jours_retard"],
+                delai_min=donnees["delai_min"],
+                appliquer=donnees["valider"],
+            )
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        if donnees["valider"]:
+            journaliser(
+                request, models.JournalActivite.Action.CREATION, entite="relance",
+                description=f"{resultat['relances']} relances envoyées par {resultat['canal']}",
+            )
+        statut = status.HTTP_201_CREATED if donnees["valider"] else status.HTTP_200_OK
+        return Response(resultat, status=statut)
 
 
 class TypeDepenseViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
@@ -501,21 +1121,161 @@ class TypeDepenseViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeM
 
 
 class DepenseViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
-    queryset = models.Depense.objects.all()
+    """
+    Une dépense n'est pas qu'une ligne de saisie : elle sort de la caisse.
+    Création, modification et suppression tiennent donc le journal et le
+    budget à jour, sinon le bilan afficherait des recettes sans les charges.
+    """
+    queryset = models.Depense.objects.select_related("id_type_depense").all()
     serializer_class = serializers.DepenseSerializer
     permission_classes = [EstAdmin]
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+        if params.get("debut"):
+            qs = qs.filter(date_depense__gte=params["debut"])
+        if params.get("fin"):
+            qs = qs.filter(date_depense__lte=params["fin"])
+        if params.get("type_depense"):
+            qs = qs.filter(id_type_depense=params["type_depense"])
+        return qs
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        finances.enregistrer_depense(serializer.instance, utilisateur=self.request.user)
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        depense = serializer.instance
+        mouvements = models.JournalCaisse.objects.filter(id_depense=depense)
+        mouvements.update(
+            date_mouvement=depense.date_depense,
+            debit=depense.montant,
+            libelle=f"Dépense {depense.id_type_depense.libelle} — {depense.motif}"[:255],
+        )
+        finances.imputer_au_budget(depense)
+
+    def perform_destroy(self, instance):
+        # Capturés avant la suppression : ensuite la dépense n'existe plus et
+        # le budget ne saurait plus quelles lignes recompter.
+        temoin = models.Depense(id_ecole=instance.id_ecole,
+                                id_type_depense=instance.id_type_depense,
+                                date_depense=instance.date_depense)
+        models.JournalCaisse.objects.filter(id_depense=instance).delete()
+        super().perform_destroy(instance)
+        finances.imputer_au_budget(temoin)
+
+    @action(detail=False, methods=["get"], url_path="export")
+    def exporter(self, request):
+        """GET /api/depenses/export/?format=xlsx|pdf"""
+        return _fichier(
+            request,
+            finances_documents.depenses(request.user.id_ecole, self.get_queryset(),
+                                        format=_format_export(request)),
+            description="Export des dépenses",
+        )
+
 
 class BudgetViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
-    queryset = models.Budget.objects.all()
+    queryset = models.Budget.objects.select_related("id_type_depense", "id_annee_scolaire").all()
     serializer_class = serializers.BudgetSerializer
     permission_classes = [EstAdmin]
 
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        # Un budget créé après coup doit refléter les dépenses déjà engagées.
+        budget = serializer.instance
+        finances.imputer_au_budget(models.Depense(
+            id_ecole=budget.id_ecole, id_type_depense=budget.id_type_depense,
+            date_depense=budget.id_annee_scolaire.date_debut))
+
 
 class JournalCaisseViewSet(EcoleFiltreeMixin, viewsets.ReadOnlyModelViewSet):
-    queryset = models.JournalCaisse.objects.all().order_by("-date_mouvement")
+    queryset = models.JournalCaisse.objects.select_related("id_utilisateur").order_by(
+        "-date_mouvement", "-id")
     serializer_class = serializers.JournalCaisseSerializer
     permission_classes = [EstAdminOuCaissier]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+        if params.get("journal"):
+            qs = qs.filter(type_journal=params["journal"])
+        if params.get("debut"):
+            qs = qs.filter(date_mouvement__gte=params["debut"])
+        if params.get("fin"):
+            qs = qs.filter(date_mouvement__lte=params["fin"])
+        return qs
+
+    @action(detail=False, methods=["get"])
+    def soldes(self, request):
+        """GET /api/journal-caisse/soldes/ — bandeau caisse / banque."""
+        ecole = request.user.id_ecole
+        return Response({
+            "caisse": finances.montant_json(
+                finances.solde(ecole, models.JournalCaisse.TypeJournal.CAISSE)),
+            "banque": finances.montant_json(
+                finances.solde(ecole, models.JournalCaisse.TypeJournal.BANQUE)),
+            "total": finances.montant_json(finances.solde(ecole)),
+        })
+
+    @action(detail=False, methods=["get"], url_path="export")
+    def exporter(self, request):
+        """GET /api/journal-caisse/export/?format=xlsx|pdf&journal=caisse|banque"""
+        journal = request.query_params.get("journal")
+        titre = {"caisse": "Journal de caisse", "banque": "Journal de banque"}.get(
+            journal, "Journal de caisse et de banque")
+        return _fichier(
+            request,
+            finances_documents.journal(request.user.id_ecole,
+                                       self.get_queryset().order_by("date_mouvement", "id"),
+                                       format=_format_export(request), titre=titre),
+            description=f"Export du {titre.lower()}",
+        )
+
+
+# ---------- Bilan financier ----------
+
+class BilanFinancierView(APIView):
+    """
+    GET /api/finances/bilan/ — la synthèse « Budget, Dépenses & Bilan » du TDR.
+
+    Sans paramètre, le bilan porte sur l'année scolaire active : c'est la
+    lecture attendue quand un directeur ouvre l'écran. `annee`, `debut` et
+    `fin` permettent de recadrer, et `format_export=xlsx|pdf` de récupérer le
+    même contenu en fichier plutôt qu'en JSON.
+    """
+    permission_classes = [EstAdminOuCaissier]
+
+    def _contexte(self, request):
+        ecole = request.user.id_ecole
+        annee = None
+        id_annee = request.query_params.get("annee")
+        if id_annee:
+            annee = models.AnneeScolaire.objects.filter(
+                pk=id_annee, id_ecole=ecole).first()
+            if annee is None:
+                raise ValidationError({"annee": "Année scolaire inconnue pour cette école."})
+        elif not request.query_params.get("debut") and not request.query_params.get("fin"):
+            annee = (models.AnneeScolaire.objects
+                     .filter(id_ecole=ecole, statut=models.AnneeScolaire.Statut.ACTIVE)
+                     .order_by("-date_debut").first())
+
+        return ecole, annee, _date_param(request, "debut"), _date_param(request, "fin")
+
+    @extend_schema(responses=dict, summary="Bilan financier", tags=["finances"])
+    def get(self, request):
+        ecole, annee, debut, fin = self._contexte(request)
+        donnees = finances.bilan(ecole, annee=annee, debut=debut, fin=fin)
+
+        if request.query_params.get(PARAM_FORMAT):
+            return _fichier(
+                request,
+                finances_documents.bilan(ecole, donnees, format=_format_export(request)),
+                description="Export du bilan financier",
+            )
+        return Response(donnees)
 
 
 # ---------- Auth ----------

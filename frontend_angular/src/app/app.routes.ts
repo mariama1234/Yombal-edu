@@ -31,8 +31,37 @@ export const routes: Routes = [
         path: 'eleves/nouveau',
         loadComponent: () => import('./features/eleves/eleve-form.component').then((m) => m.EleveFormComponent),
       },
+      {
+        path: 'eleves/importer',
+        loadComponent: () => import('./features/eleves/import-eleves.component').then((m) => m.ImportElevesComponent),
+      },
+      {
+        path: 'eleves/reinscrire',
+        loadComponent: () => import('./features/eleves/reinscription.component').then((m) => m.ReinscriptionComponent),
+      },
+      // Après les routes fixes : sinon « importer » serait pris pour un id.
+      {
+        path: 'eleves/:id/dossier',
+        loadComponent: () => import('./features/eleves/eleve-dossier.component').then((m) => m.EleveDossierComponent),
+      },
 
-      // ---- Finances (module dédié : impayés, encaissement, journal) ----
+      // ---- Pédagogie (module dédié : saisie en grille, bulletins,
+      //      palmarès ; les référentiels passent par le CRUD générique) ----
+      {
+        path: 'pedagogie/notes',
+        loadComponent: () => import('./features/pedagogie/saisie-notes.component').then((m) => m.SaisieNotesComponent),
+      },
+      {
+        path: 'pedagogie/bulletins',
+        loadComponent: () => import('./features/pedagogie/bulletins.component').then((m) => m.BulletinsComponent),
+      },
+      {
+        path: 'pedagogie/palmares',
+        loadComponent: () => import('./features/pedagogie/palmares.component').then((m) => m.PalmaresComponent),
+      },
+
+      // ---- Finances (module dédié : impayés, encaissement, relances,
+      //      journal, bilan ; les référentiels passent par le CRUD générique) ----
       {
         path: 'finances',
         loadComponent: () => import('./features/finances/finances-list.component').then((m) => m.FinancesListComponent),
@@ -42,8 +71,20 @@ export const routes: Routes = [
         loadComponent: () => import('./features/finances/paiement-form.component').then((m) => m.PaiementFormComponent),
       },
       {
+        path: 'finances/generer',
+        loadComponent: () => import('./features/finances/generer-frais.component').then((m) => m.GenererFraisComponent),
+      },
+      {
+        path: 'finances/relances',
+        loadComponent: () => import('./features/finances/relances.component').then((m) => m.RelancesComponent),
+      },
+      {
         path: 'finances/journal',
         loadComponent: () => import('./features/finances/journal-caisse.component').then((m) => m.JournalCaisseComponent),
+      },
+      {
+        path: 'finances/bilan',
+        loadComponent: () => import('./features/finances/bilan-financier.component').then((m) => m.BilanFinancierComponent),
       },
 
       // ---- Modules via le système CRUD générique ----
@@ -62,11 +103,28 @@ export const routes: Routes = [
       { path: 'presences', component: GenericListComponent, data: { entityKey: 'presences' } },
       { path: 'presences/:id', component: GenericFormComponent, data: { entityKey: 'presences' } },
 
+      { path: 'evaluations', component: GenericListComponent, data: { entityKey: 'evaluations' } },
+      { path: 'evaluations/:id', component: GenericFormComponent, data: { entityKey: 'evaluations' } },
+
       { path: 'notes', component: GenericListComponent, data: { entityKey: 'notes' } },
       { path: 'notes/:id', component: GenericFormComponent, data: { entityKey: 'notes' } },
 
       { path: 'personnel', component: GenericListComponent, data: { entityKey: 'personnel' } },
       { path: 'personnel/:id', component: GenericFormComponent, data: { entityKey: 'personnel' } },
+
+      // Référentiels financiers : catalogue des frais, postes de charge,
+      // dépenses et budgets.
+      { path: 'types-frais', component: GenericListComponent, data: { entityKey: 'types-frais' } },
+      { path: 'types-frais/:id', component: GenericFormComponent, data: { entityKey: 'types-frais' } },
+
+      { path: 'types-depenses', component: GenericListComponent, data: { entityKey: 'types-depenses' } },
+      { path: 'types-depenses/:id', component: GenericFormComponent, data: { entityKey: 'types-depenses' } },
+
+      { path: 'depenses', component: GenericListComponent, data: { entityKey: 'depenses' } },
+      { path: 'depenses/:id', component: GenericFormComponent, data: { entityKey: 'depenses' } },
+
+      { path: 'budgets', component: GenericListComponent, data: { entityKey: 'budgets' } },
+      { path: 'budgets/:id', component: GenericFormComponent, data: { entityKey: 'budgets' } },
 
       { path: 'periodes', component: GenericListComponent, data: { entityKey: 'periodes' } },
       { path: 'periodes/:id', component: GenericFormComponent, data: { entityKey: 'periodes' } },

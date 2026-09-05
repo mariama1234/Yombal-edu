@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from gestion_scolaire import models
+from gestion_scolaire import finances, models, pedagogie, scolarite
 
 Utilisateur = get_user_model()
 
@@ -112,8 +112,96 @@ class Command(BaseCommand):
                 defaults={"montant_du": 25000, "echeance": date(2025, 11, 5)},
             )
 
-        classe.effectif = models.Inscription.objects.filter(id_classe=classe).count()
-        classe.save(update_fields=["effectif"])
+        # Côté charges : sans catégories ni budget, les écrans Dépenses,
+        # Budgets et Bilan s'ouvrent vides et on ne voit pas ce qu'ils font.
+        types_depense = {}
+        for libelle in ["Loyer", "Salaires", "Fournitures"]:
+            types_depense[libelle], _ = models.TypeDepense.objects.get_or_create(
+                id_ecole=ecole, libelle=libelle)
+
+        models.Budget.objects.get_or_create(
+            id_ecole=ecole, id_type_depense=types_depense["Loyer"],
+            id_annee_scolaire=annee, categorie="Charges fixes",
+            defaults={"montant_prevu": 1800000},
+        )
+        models.Budget.objects.get_or_create(
+            id_ecole=ecole, id_type_depense=types_depense["Salaires"],
+            id_annee_scolaire=annee, categorie="Masse salariale",
+            defaults={"montant_prevu": 9000000},
+        )
+
+        for libelle, motif, montant, jour in [
+            ("Loyer", "Loyer octobre", 150000, date(2025, 10, 5)),
+            ("Salaires", "Salaires octobre", 720000, date(2025, 10, 28)),
+            ("Fournitures", "Craies et registres", 45000, date(2025, 10, 12)),
+        ]:
+            depense, cree = models.Depense.objects.get_or_create(
+                id_ecole=ecole, id_type_depense=types_depense[libelle], motif=motif,
+                defaults={"montant": montant, "date_depense": jour},
+            )
+            # Passe par la même fonction que l'API : mouvement au journal
+            # et budget réalisé recalculé, sinon la démo montrerait un
+            # solde de caisse qui ne correspond à aucune dépense.
+            if cree:
+                finances.enregistrer_depense(depense)
+
+        # Côté pédagogie : sans coefficients, évaluations ni notes, les écrans
+        # Saisie des notes, Bulletins et Palmarès s'ouvrent vides — et c'est
+        # le cœur de la proposition de valeur qu'on ne voit pas tourner.
+        trimestre = models.PeriodeScolaire.objects.get(
+            id_annee_scolaire=annee, libelle="Trimestre 1")
+        maths = models.Matiere.objects.get(id_ecole=ecole, nom="Mathématiques")
+        francais = models.Matiere.objects.get(id_ecole=ecole, nom="Français")
+
+        for matiere, coefficient in [(maths, 4), (francais, 2)]:
+            models.CoefficientMatiere.objects.get_or_create(
+                id_matiere=matiere, id_classe=classe, id_annee_scolaire=annee,
+                defaults={"coefficient": coefficient},
+            )
+
+        # Un devoir sur 10 et une composition sur 20 : le barème n'est pas
+        # décoratif, il montre que les notes sont ramenées sur 20 au calcul.
+        evaluations = {}
+        for cle, matiere, type_eval, jour, bareme, coefficient in [
+            ("devoir_maths", maths, models.Evaluation.Type.DEVOIR,
+             date(2025, 11, 10), 10, 1),
+            ("compo_maths", maths, models.Evaluation.Type.COMPOSITION,
+             date(2025, 12, 10), 20, 3),
+            ("compo_francais", francais, models.Evaluation.Type.COMPOSITION,
+             date(2025, 12, 12), 20, 2),
+        ]:
+            evaluations[cle], _ = models.Evaluation.objects.get_or_create(
+                id_matiere=matiere, id_classe=classe, id_periode=trimestre,
+                type=type_eval, date_evaluation=jour,
+                defaults={"bareme": bareme, "coefficient": coefficient},
+            )
+
+        inscrits = list(
+            models.Eleve.objects.filter(id_ecole=ecole, matricule__startswith="MIC-2026-")
+            .order_by("matricule")
+        )
+        # Les valeurs sont choisies pour donner un classement net (14,50 /
+        # 14,17 / 12,17) : un ex æquo en tête ferait douter du calcul dès la
+        # première ouverture de l'écran.
+        notes = {
+            "devoir_maths": [8, 6, 9],
+            "compo_maths": [15, 11, 17],
+            "compo_francais": [13, 14, 8],
+        }
+        for cle, valeurs in notes.items():
+            for eleve, valeur in zip(inscrits, valeurs):
+                models.Note.objects.get_or_create(
+                    id_eleve=eleve, id_evaluation=evaluations[cle],
+                    defaults={"valeur": valeur, "id_utilisateur": prof_user},
+                )
+
+        scolarite.recaler_effectif(classe)
+
+        # Les bulletins passent par la même fonction que l'API : moyennes
+        # pondérées, rang et appréciation calculés une seule fois, ici comme
+        # en production.
+        if inscrits:
+            pedagogie.generer_bulletins(ecole, classe, trimestre, appliquer=True)
 
         self.stdout.write(self.style.SUCCESS(
             f"Données de démo prêtes — école « {ecole.nom} », "

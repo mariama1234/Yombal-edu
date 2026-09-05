@@ -1,0 +1,232 @@
+<p class="module-eyebrow">Gestion financière</p>
+<div class="page-head">
+  <div>
+    <h1>Bilan financier</h1>
+    <p>
+      Recouvrement, recettes, charges et trésorerie
+      @if (bilan()?.periode?.annee) { — année {{ bilan()!.periode.annee }} }
+    </p>
+  </div>
+  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+    <select class="input" style="width:auto;" [ngModel]="annee()" (ngModelChange)="annee.set($event); charger()">
+      <option value="">Tout l'historique</option>
+      @for (a of annees(); track a.id) { <option [value]="a.id">{{ a.libelle }}</option> }
+    </select>
+    <button class="btn-ghost" (click)="exporter('xlsx')" [disabled]="telechargement()">Export Excel</button>
+    <button class="btn-ghost" (click)="exporter('pdf')" [disabled]="telechargement()">Export PDF</button>
+    <a class="btn-ghost" routerLink="/finances">← Finances</a>
+  </div>
+</div>
+
+@if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+@if (loading()) {
+  <div class="panel"><p style="color:var(--ink-400); font-size:13px;">Chargement du bilan…</p></div>
+} @else {
+@if (bilan(); as b) {
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-top">
+        <span class="kpi-label">Encaissé</span>
+        <div class="kpi-icon" style="background:var(--green);">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 2v20M17 5.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5"/></svg>
+        </div>
+      </div>
+      <div class="kpi-value">{{ b.recouvrement.encaisse | number:'1.0-0' }}</div>
+      <div class="kpi-delta flat">sur {{ b.recouvrement.attendu | number:'1.0-0' }} F attendus</div>
+    </div>
+
+    <div class="kpi-card">
+      <div class="kpi-top">
+        <span class="kpi-label">Reste à recouvrer</span>
+        <div class="kpi-icon" style="background:var(--red);">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+        </div>
+      </div>
+      <div class="kpi-value">{{ b.recouvrement.reste | number:'1.0-0' }}</div>
+      <div class="kpi-delta flat">{{ b.impayes.nombre }} frais · {{ b.impayes.eleves_concernes }} élèves</div>
+    </div>
+
+    <div class="kpi-card">
+      <div class="kpi-top">
+        <span class="kpi-label">Taux de recouvrement</span>
+      </div>
+      <div class="kpi-value">{{ b.recouvrement.taux }} %</div>
+      <div class="kpi-delta" [class.up]="b.recouvrement.taux >= 80" [class.down]="b.recouvrement.taux < 50" [class.flat]="b.recouvrement.taux >= 50 && b.recouvrement.taux < 80">
+        {{ b.impayes.echus }} échéance(s) dépassée(s)
+      </div>
+    </div>
+
+    <div class="kpi-card">
+      <div class="kpi-top">
+        <span class="kpi-label">Résultat</span>
+        <div class="kpi-icon" style="background:var(--navy-900);">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M4 19h16M7 16V9M12 16V5M17 16v-4"/></svg>
+        </div>
+      </div>
+      <div class="kpi-value">{{ b.resultat.solde | number:'1.0-0' }}</div>
+      <div class="kpi-delta flat">{{ b.resultat.depenses | number:'1.0-0' }} F de dépenses</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Trésorerie</div></div>
+    <div class="tile-grid-generic">
+      <div class="tile-generic">
+        <div class="tile-generic-label">Caisse (espèces)</div>
+        <div class="tile-generic-value">{{ b.tresorerie.caisse | number:'1.0-0' }}</div>
+        <div class="tile-generic-meta">F CFA</div>
+      </div>
+      <div class="tile-generic">
+        <div class="tile-generic-label">Banque (mobile money, carte)</div>
+        <div class="tile-generic-value">{{ b.tresorerie.banque | number:'1.0-0' }}</div>
+        <div class="tile-generic-meta">F CFA</div>
+      </div>
+      <div class="tile-generic">
+        <div class="tile-generic-label">Total disponible</div>
+        <div class="tile-generic-value">{{ b.tresorerie.total | number:'1.0-0' }}</div>
+        <div class="tile-generic-meta"><a class="panel-link" routerLink="/finances/journal">Voir le journal →</a></div>
+      </div>
+    </div>
+  </div>
+
+  @if (b.evolution.length) {
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Évolution mensuelle</div></div>
+      <div style="display:flex; align-items:flex-end; gap:14px; height:170px; overflow-x:auto; padding-bottom:6px;">
+        @for (m of b.evolution; track m.mois) {
+          <div style="display:flex; flex-direction:column; align-items:center; gap:6px; min-width:52px;">
+            <div style="display:flex; align-items:flex-end; gap:3px; height:120px;">
+              <div [style.height.%]="hauteur(m.recettes)" [title]="m.recettes + ' F encaissés'"
+                   style="width:14px; background:var(--green); border-radius:3px 3px 0 0; min-height:2px;"></div>
+              <div [style.height.%]="hauteur(m.depenses)" [title]="m.depenses + ' F dépensés'"
+                   style="width:14px; background:var(--red); border-radius:3px 3px 0 0; min-height:2px;"></div>
+            </div>
+            <span style="font-size:10.5px; color:var(--ink-400);" class="mono">{{ m.mois }}</span>
+          </div>
+        }
+      </div>
+      <div style="display:flex; gap:16px; font-size:11.5px; color:var(--ink-600); margin-top:10px;">
+        <span><span style="display:inline-block;width:9px;height:9px;background:var(--green);border-radius:2px;"></span> Recettes</span>
+        <span><span style="display:inline-block;width:9px;height:9px;background:var(--red);border-radius:2px;"></span> Dépenses</span>
+      </div>
+    </div>
+  }
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:18px;" class="form-grid">
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Recettes par type de frais</div></div>
+      @if (b.recettes.par_type_frais.length === 0) {
+        <p style="color:var(--ink-400); font-size:13px;">Aucun encaissement sur la période.</p>
+      } @else {
+        <table class="simple">
+          <thead><tr><th>Type</th><th>Nb</th><th>Montant</th><th>Part</th></tr></thead>
+          <tbody>
+            @for (l of b.recettes.par_type_frais; track l.code) {
+              <tr>
+                <td>{{ l.libelle }}</td>
+                <td class="mono">{{ l.nombre }}</td>
+                <td class="mono">{{ l.montant | number:'1.0-0' }} F</td>
+                <td style="width:90px;">
+                  <div style="background:var(--bg); border-radius:20px; height:7px; overflow:hidden;">
+                    <div [style.width.%]="part(l, b.recettes.total)" style="height:100%; background:var(--navy-700);"></div>
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Recettes par moyen de paiement</div></div>
+      @if (b.recettes.par_methode.length === 0) {
+        <p style="color:var(--ink-400); font-size:13px;">Aucun encaissement sur la période.</p>
+      } @else {
+        <table class="simple">
+          <thead><tr><th>Moyen</th><th>Opérations</th><th>Montant</th></tr></thead>
+          <tbody>
+            @for (l of b.recettes.par_methode; track l.code) {
+              <tr>
+                <td>{{ l.libelle }}</td>
+                <td class="mono">{{ l.nombre }}</td>
+                <td class="mono">{{ l.montant | number:'1.0-0' }} F</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Dépenses par catégorie</div>
+      <a class="panel-link" routerLink="/depenses">Gérer les dépenses →</a>
+    </div>
+    @if (b.depenses.par_categorie.length === 0) {
+      <p style="color:var(--ink-400); font-size:13px;">Aucune dépense enregistrée sur la période.</p>
+    } @else {
+      <table class="simple">
+        <thead><tr><th>Catégorie</th><th>Lignes</th><th>Montant</th><th>Part</th></tr></thead>
+        <tbody>
+          @for (l of b.depenses.par_categorie; track l.libelle) {
+            <tr>
+              <td>{{ l.libelle }}</td>
+              <td class="mono">{{ l.nombre }}</td>
+              <td class="mono">{{ l.montant | number:'1.0-0' }} F</td>
+              <td style="width:120px;">
+                <div style="background:var(--bg); border-radius:20px; height:7px; overflow:hidden;">
+                  <div [style.width.%]="part(l, b.depenses.total)" style="height:100%; background:var(--red);"></div>
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+        <tfoot>
+          <tr>
+            <td style="font-weight:600;">Total</td><td></td>
+            <td class="mono" style="font-weight:600;">{{ b.depenses.total | number:'1.0-0' }} F</td><td></td>
+          </tr>
+        </tfoot>
+      </table>
+    }
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Suivi budgétaire</div>
+      <a class="panel-link" routerLink="/budgets">Gérer les budgets →</a>
+    </div>
+    @if (b.budgets.length === 0) {
+      <p style="color:var(--ink-400); font-size:13px;">Aucun budget défini pour cette période.</p>
+    } @else {
+      <table class="simple">
+        <thead><tr><th>Catégorie</th><th>Prévu</th><th>Réalisé</th><th>Écart</th><th>Consommé</th></tr></thead>
+        <tbody>
+          @for (bu of b.budgets; track bu.categorie) {
+            <tr>
+              <td>{{ bu.categorie }} <span style="color:var(--ink-400);">· {{ bu.type_depense }}</span></td>
+              <td class="mono">{{ bu.prevu | number:'1.0-0' }} F</td>
+              <td class="mono">{{ bu.realise | number:'1.0-0' }} F</td>
+              <td class="mono" [style.color]="bu.ecart < 0 ? 'var(--red)' : 'var(--green)'">{{ bu.ecart | number:'1.0-0' }} F</td>
+              <td style="width:130px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <div style="flex:1; background:var(--bg); border-radius:20px; height:7px; overflow:hidden;">
+                    <div [style.width.%]="bu.consomme > 100 ? 100 : bu.consomme"
+                         [style.background]="bu.consomme > 100 ? 'var(--red)' : 'var(--green)'"
+                         style="height:100%;"></div>
+                  </div>
+                  <span class="mono" style="font-size:11.5px;">{{ bu.consomme }}%</span>
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+}
+}

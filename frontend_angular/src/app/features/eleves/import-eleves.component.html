@@ -1,0 +1,175 @@
+<div class="page-head">
+  <div>
+    <p class="module-eyebrow">Élèves</p>
+    <h1>Importer une liste</h1>
+    <p>Reprenez une liste nominative existante au lieu de saisir les élèves un par un.</p>
+  </div>
+  <a class="btn-ghost" routerLink="/eleves">Retour à la liste</a>
+</div>
+
+@if (erreur()) {
+  <div class="form-error">{{ erreur() }}</div>
+}
+
+<!-- ---------- Étape 1 : choix du fichier ---------- -->
+@if (etape() === 'choix') {
+  <div class="form-section">
+    <div class="form-section-title">Fichier à importer</div>
+    <div class="form-section-sub">
+      Formats acceptés : Excel (.xlsx), CSV (.csv) et Word (.docx).
+      Les listes nominatives Word sont lues telles quelles, un tableau par classe.
+    </div>
+
+    <div class="field">
+      <label for="fichier">Liste des élèves</label>
+      <input id="fichier" class="input" type="file" accept=".xlsx,.csv,.docx"
+             (change)="choisirFichier($event)" />
+      <span class="hint">
+        Les colonnes reconnues : nom, prénom, classe, téléphone, sexe, matricule.
+        Dans un fichier Word, la classe est lue dans le titre du tableau.
+      </span>
+    </div>
+
+    <div class="field">
+      <label for="classe">Classe (facultatif)</label>
+      <input id="classe" class="input" type="text" placeholder="Ex. CE1 A"
+             [ngModel]="classeForcee()" (ngModelChange)="classeForcee.set($event)" />
+      <span class="hint">
+        À renseigner seulement si le fichier ne nomme aucune classe. Tous les élèves
+        du fichier seront alors inscrits dans celle-ci.
+      </span>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn-primary" [disabled]="!fichier() || chargement()" (click)="analyser()">
+        {{ chargement() ? 'Analyse en cours…' : 'Analyser le fichier' }}
+      </button>
+    </div>
+  </div>
+}
+
+<!-- ---------- Étapes 2 et 3 : aperçu, puis résultat ---------- -->
+@if (apercu(); as plan) {
+  @if (etape() === 'termine' && plan.resultat; as resultat) {
+    <div class="form-section">
+      <div class="form-section-title">Import terminé</div>
+      <div class="form-section-sub">
+        {{ resultat.eleves_crees }} élève(s) créé(s) pour l'année {{ plan.annee_scolaire }},
+        depuis {{ plan.fichier }}.
+      </div>
+      <div class="form-actions">
+        <button class="btn-ghost" (click)="recommencer()">Importer un autre fichier</button>
+        <a class="btn-primary" routerLink="/eleves">Voir les élèves</a>
+      </div>
+    </div>
+  }
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-top"><span class="kpi-label">Lignes lues</span></div>
+      <div class="kpi-value">{{ plan.total }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-top"><span class="kpi-label">{{ plan.valide ? 'Créés' : 'À créer' }}</span></div>
+      <div class="kpi-value">{{ plan.a_creer }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-top"><span class="kpi-label">Déjà inscrits</span></div>
+      <div class="kpi-value">{{ plan.doublons }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-top"><span class="kpi-label">Ignorées</span></div>
+      <div class="kpi-value">{{ plan.ignores }}</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Classes détectées</div>
+      <span style="font-size:12.5px; color:var(--ink-400);">Année {{ plan.annee_scolaire }}</span>
+    </div>
+    <table class="simple">
+      <thead><tr><th>Classe</th><th>Niveau</th><th>Élèves</th><th>État</th></tr></thead>
+      <tbody>
+        @for (c of plan.classes; track c.nom) {
+          <tr>
+            <td><strong>{{ c.nom }}</strong></td>
+            <td>{{ c.niveau }}</td>
+            <td class="mono">{{ c.eleves }}</td>
+            <td>
+              <span class="pill" [class]="c.existe ? 'actif' : 'partiel'">
+                {{ c.existe ? 'Existante' : 'Sera créée' }}
+              </span>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <div class="filters">
+    <div class="chip" [class.active]="filtre() === ''" (click)="filtre.set('')">
+      Toutes ({{ plan.total }})
+    </div>
+    <div class="chip" [class.active]="filtre() === 'creation'" (click)="filtre.set('creation')">
+      {{ plan.valide ? 'Créés' : 'À créer' }} ({{ plan.a_creer }})
+    </div>
+    <div class="chip" [class.active]="filtre() === 'doublon'" (click)="filtre.set('doublon')">
+      Déjà inscrits ({{ plan.doublons }})
+    </div>
+    <div class="chip" [class.active]="filtre() === 'ignore'" (click)="filtre.set('ignore')">
+      Ignorées ({{ plan.ignores }})
+    </div>
+  </div>
+
+  <div class="panel">
+    @if (lignesVisibles().length === 0) {
+      <p style="color:var(--ink-400); font-size:13px;">Aucune ligne dans cette catégorie.</p>
+    } @else {
+      <table class="simple">
+        <thead>
+          <tr>
+            <th>Élève</th><th>Classe</th><th>Matricule</th>
+            <th>État</th><th>Remarque</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (e of lignesVisibles(); track e.source + e.nom + e.prenom) {
+            <tr>
+              <td>
+                <strong>{{ e.prenom }} {{ e.nom }}</strong>
+                @if (e.mention) {
+                  <span class="hint" style="margin-left:6px;">({{ e.mention }})</span>
+                }
+              </td>
+              <td>{{ e.classe || '—' }}</td>
+              <td class="mono">{{ e.matricule || '—' }}</td>
+              <td><span class="pill" [class]="classeDecision(e.decision)">
+                {{ libelleDecision(e.decision) }}
+              </span></td>
+              <td style="color:var(--ink-400); font-size:12.5px;">{{ e.message || '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      <div class="pagination"><span>{{ lignesVisibles().length }} ligne(s) affichée(s)</span></div>
+    }
+  </div>
+
+  @if (etape() === 'apercu') {
+    <div class="form-section">
+      <div class="form-section-title">Confirmer l'import</div>
+      <div class="form-section-sub">
+        {{ plan.a_creer }} élève(s) seront créés et inscrits pour l'année {{ plan.annee_scolaire }}.
+        Les élèves déjà inscrits et les lignes ignorées ne seront pas touchés.
+      </div>
+      <div class="form-actions">
+        <button class="btn-ghost" (click)="recommencer()">Annuler</button>
+        <button class="btn-primary" [disabled]="chargement() || plan.a_creer === 0"
+                (click)="valider()">
+          {{ chargement() ? 'Import en cours…' : 'Importer ' + plan.a_creer + ' élève(s)' }}
+        </button>
+      </div>
+    </div>
+  }
+}

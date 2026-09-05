@@ -1,35 +1,119 @@
+<p class="module-eyebrow">Gestion financière</p>
 <div class="page-head">
   <div>
     <h1>Finances</h1>
-    <p>Frais dus et impayés — clique sur "Encaisser" pour enregistrer un paiement.</p>
+    <p>Frais dus, encaissements et recouvrement.</p>
   </div>
-  <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse →</a>
+  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+    <a class="btn-ghost" routerLink="/finances/bilan">Bilan financier</a>
+    <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
+    <a class="btn-ghost" routerLink="/finances/relances">Relances</a>
+    @if (estAdmin()) {
+      <a class="btn-primary" routerLink="/finances/generer">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        Générer les frais
+      </a>
+    }
+  </div>
+</div>
+
+@if (erreur()) {
+  <div class="form-error">{{ erreur() }}</div>
+}
+
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Reste à recouvrer</span></div>
+    <div class="kpi-value">{{ totalSolde() | number:'1.0-0' }} <span style="font-size:13px;">F</span></div>
+    <div class="kpi-delta flat">{{ lignes().length }} frais affichés</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Déjà encaissé</span></div>
+    <div class="kpi-value">{{ totalPaye() | number:'1.0-0' }} <span style="font-size:13px;">F</span></div>
+    <div class="kpi-delta flat">sur {{ totalDu() | number:'1.0-0' }} F dus</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Solde caisse</span></div>
+    <div class="kpi-value">{{ (soldes()?.caisse ?? 0) | number:'1.0-0' }} <span style="font-size:13px;">F</span></div>
+    <div class="kpi-delta flat">espèces</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-top"><span class="kpi-label">Solde banque</span></div>
+    <div class="kpi-value">{{ (soldes()?.banque ?? 0) | number:'1.0-0' }} <span style="font-size:13px;">F</span></div>
+    <div class="kpi-delta flat">mobile money & carte</div>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab" [class.active]="onglet() === 'impayes'" (click)="changerOnglet('impayes')">Impayés</button>
+  <button class="tab" [class.active]="onglet() === 'tous'" (click)="changerOnglet('tous')">Tous les frais</button>
+</div>
+
+<div class="filters">
+  <div class="search" style="max-width:260px;">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <input type="text" placeholder="Rechercher un élève…" [ngModel]="recherche()" (ngModelChange)="recherche.set($event)">
+  </div>
+
+  <select class="input" style="width:auto;" [ngModel]="classe()" (ngModelChange)="classe.set($event); charger()">
+    <option value="">Toutes les classes</option>
+    @for (c of classes(); track c.id) { <option [value]="c.id">{{ c.nom }}</option> }
+  </select>
+
+  <select class="input" style="width:auto;" [ngModel]="typeFrais()" (ngModelChange)="typeFrais.set($event); charger()">
+    <option value="">Tous les types de frais</option>
+    @for (t of typesFrais(); track t.id) { <option [value]="t.id">{{ t.libelle }}</option> }
+  </select>
+
+  <button class="chip" [class.active]="echus()" (click)="basculerEchus()">Échéance dépassée</button>
+
+  <div style="margin-left:auto; display:flex; gap:8px;">
+    <button class="btn-ghost" (click)="exporter('xlsx')" [disabled]="telechargement()">Export Excel</button>
+    <button class="btn-ghost" (click)="exporter('pdf')" [disabled]="telechargement()">Export PDF</button>
+  </div>
 </div>
 
 <div class="panel">
   @if (loading()) {
     <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
-  } @else if (frais().length === 0) {
-    <p style="color:var(--ink-400); font-size:13px;">Aucun impayé 🎉</p>
+  } @else if (lignes().length === 0) {
+    <p style="color:var(--ink-400); font-size:13px;">
+      {{ onglet() === 'impayes' ? 'Aucun impayé 🎉' : 'Aucun frais enregistré pour ce filtre.' }}
+    </p>
   } @else {
     <table class="simple">
       <thead>
-        <tr><th>Élève</th><th>Montant dû</th><th>Payé</th><th>Solde</th><th>Statut</th><th></th></tr>
+        <tr>
+          <th>Élève</th><th>Échéance</th><th>Montant dû</th><th>Payé</th>
+          <th>Solde</th><th>Statut</th><th></th>
+        </tr>
       </thead>
       <tbody>
-        @for (f of frais(); track f.id) {
+        @for (f of lignes(); track f.id) {
           <tr>
             <td>{{ f.eleve_prenom }} {{ f.eleve_nom }}</td>
-            <td class="mono">{{ f.montant_du }} F</td>
-            <td class="mono">{{ f.montant_paye ?? 0 }} F</td>
-            <td class="mono">{{ f.solde_restant ?? f.montant_du }} F</td>
+            <td class="mono">{{ f.echeance ? (f.echeance | date:'dd/MM/yyyy') : '—' }}</td>
+            <td class="mono">{{ f.montant_du | number:'1.0-0' }} F</td>
+            <td class="mono">{{ (f.montant_paye ?? 0) | number:'1.0-0' }} F</td>
+            <td class="mono">{{ (f.solde_restant ?? f.montant_du) | number:'1.0-0' }} F</td>
             <td><span class="pill" [class]="f.statut">{{ f.statut }}</span></td>
             <td style="text-align:right;">
-              <a class="btn-primary" style="padding:6px 12px; font-size:12px;" [routerLink]="['/finances/encaisser', f.id]">Encaisser</a>
+              @if (f.statut !== 'paye') {
+                <a class="btn-primary" style="padding:6px 12px; font-size:12px;" [routerLink]="['/finances/encaisser', f.id]">Encaisser</a>
+              }
             </td>
           </tr>
         }
       </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2" style="font-weight:600;">Total affiché</td>
+          <td class="mono" style="font-weight:600;">{{ totalDu() | number:'1.0-0' }} F</td>
+          <td class="mono" style="font-weight:600;">{{ totalPaye() | number:'1.0-0' }} F</td>
+          <td class="mono" style="font-weight:600;">{{ totalSolde() | number:'1.0-0' }} F</td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
     </table>
   }
 </div>

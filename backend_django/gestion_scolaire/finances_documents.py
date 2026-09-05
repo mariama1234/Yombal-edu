@@ -1,0 +1,406 @@
+"""
+Documents financiers : état des impayés, journal de caisse, bilan, reçu.
+
+Chaque fonction renvoie un triplet `(contenu, nom_fichier, type_mime)` prêt à
+être posé dans une `HttpResponse`. Les deux formats partent des mêmes données :
+le PDF sert à imprimer et à remettre au parent, le `.xlsx` à retravailler les
+chiffres — c'est exactement la demande du TDR (« Exports Excel & PDF »).
+
+`exports.py` fournit la mécanique (classeur, moteur PDF) ; ici on ne décide
+que du contenu et de la mise en forme métier.
+"""
+from __future__ import annotations
+
+from datetime import date
+
+from . import exports
+
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PDF = "application/pdf"
+
+DEVISE = "F CFA"
+
+
+def formater_montant(valeur, devise=False):
+    """25000 → « 25 000 F CFA ». L'espace fine des locales n'est pas garantie
+    dans les polices PDF standard : on garde une espace ordinaire."""
+    try:
+        entier = int(round(float(valeur or 0)))
+    except (TypeError, ValueError):
+        return str(valeur)
+    texte = f"{entier:,}".replace(",", " ")
+    return f"{texte} {DEVISE}" if devise else texte
+
+
+def _jour(valeur):
+    if valeur is None:
+        return ""
+    if isinstance(valeur, date):
+        return valeur.strftime("%d/%m/%Y")
+    return valeur.strftime("%d/%m/%Y %H:%M")
+
+
+def _sous_titre(ecole, complement=None):
+    morceaux = [ecole.nom]
+    if ecole.telephone:
+        morceaux.append(ecole.telephone)
+    if complement:
+        morceaux.append(complement)
+    return " · ".join(morceaux)
+
+
+def _nom_fichier(base, extension):
+    return f"{base}-{date.today().isoformat()}.{extension}"
+
+
+# ---------------------------------------------------------------------------
+# État des impayés
+# ---------------------------------------------------------------------------
+
+_ENTETES_IMPAYES = ["Matricule", "Élève", "Classe", "Type de frais", "Échéance",
+                    "Statut", "Montant dû", "Payé", "Solde"]
+
+
+def _lignes_impayes(frais):
+    aujourdhui = date.today()
+    lignes = []
+    for f in frais:
+        inscription = (f.id_eleve.inscriptions
+                       .filter(id_annee_scolaire_id=f.id_annee_scolaire_id)
+                       .select_related("id_classe").first())
+        retard = f.echeance and f.echeance < aujourdhui
+        lignes.append({
+            "matricule": f.id_eleve.matricule,
+            "eleve": f"{f.id_eleve.prenom} {f.id_eleve.nom}",
+            "classe": inscription.id_classe.nom if inscription else "",
+            "type": f.id_type_frais.get_libelle_display(),
+            "echeance": f.echeance,
+            "statut": ("En retard" if retard else f.get_statut_display()),
+            "du": f.montant_du,
+            "paye": f.montant_paye,
+            "solde": f.solde_restant,
+        })
+    return lignes
+
+
+def impayes(ecole, frais, format="xlsx"):
+    lignes = _lignes_impayes(frais)
+    total = sum(l["solde"] for l in lignes) if lignes else 0
+
+    if format == "pdf":
+        doc = exports.DocumentPDF(
+            "État des impayés",
+            _sous_titre(ecole, f"{len(lignes)} frais non soldés"),
+            pied=ecole.nom, paysage=True,
+        )
+        doc.encadre("Reste à recouvrer", formater_montant(total, devise=True))
+        doc.tableau(
+            [("Matricule", 90, "g"), ("Élève", 190, "g"), ("Classe", 90, "g"),
+             ("Type de frais", 120, "g"), ("Échéance", 85, "g"), ("Statut", 85, "g"),
+             ("Montant dû", 100, "d"), ("Payé", 100, "d"), ("Solde", 100, "d")],
+            [[l["matricule"], l["eleve"], l["classe"], l["type"], _jour(l["echeance"]),
+              l["statut"], formater_montant(l["du"]), formater_montant(l["paye"]),
+              formater_montant(l["solde"])] for l in lignes],
+            total=["", "", "", "", "", "TOTAL", "", "", formater_montant(total)],
+        )
+        return doc.rendu(), _nom_fichier("impayes", "pdf"), PDF
+
+    contenu = exports.classeur_xlsx([(
+        "Impayés", _ENTETES_IMPAYES,
+        [[l["matricule"], l["eleve"], l["classe"], l["type"], _jour(l["echeance"]),
+          l["statut"], float(l["du"]), float(l["paye"]), float(l["solde"])] for l in lignes],
+    )])
+    return contenu, _nom_fichier("impayes", "xlsx"), XLSX
+
+
+# ---------------------------------------------------------------------------
+# Journal de caisse / banque
+# ---------------------------------------------------------------------------
+
+_ENTETES_JOURNAL = ["Date", "Journal", "Libellé", "Débit", "Crédit", "Solde après"]
+
+
+def journal(ecole, mouvements, format="xlsx", titre="Journal de caisse"):
+    mouvements = list(mouvements)
+    debits = sum(m.debit for m in mouvements) if mouvements else 0
+    credits = sum(m.credit for m in mouvements) if mouvements else 0
+
+    lignes = [[_jour(m.date_mouvement), m.get_type_journal_display(), m.libelle,
+               m.debit, m.credit, m.solde_apres] for m in mouvements]
+
+    if format == "pdf":
+        doc = exports.DocumentPDF(titre, _sous_titre(ecole, f"{len(lignes)} mouvements"),
+                                  pied=ecole.nom, paysage=True)
+        doc.encadre("Solde", formater_montant(credits - debits, devise=True))
+        doc.tableau(
+            [("Date", 90, "g"), ("Journal", 80, "g"), ("Libellé", 330, "g"),
+             ("Débit", 110, "d"), ("Crédit", 110, "d"), ("Solde après", 110, "d")],
+            [[l[0], l[1], l[2], formater_montant(l[3]), formater_montant(l[4]),
+              formater_montant(l[5])] for l in lignes],
+            total=["", "", "TOTAL", formater_montant(debits), formater_montant(credits), ""],
+        )
+        return doc.rendu(), _nom_fichier("journal-caisse", "pdf"), PDF
+
+    contenu = exports.classeur_xlsx([(
+        "Journal", _ENTETES_JOURNAL,
+        [[l[0], l[1], l[2], float(l[3] or 0), float(l[4] or 0),
+          float(l[5] or 0)] for l in lignes],
+    )])
+    return contenu, _nom_fichier("journal-caisse", "xlsx"), XLSX
+
+
+# ---------------------------------------------------------------------------
+# Dépenses
+# ---------------------------------------------------------------------------
+
+def depenses(ecole, liste, format="xlsx"):
+    liste = list(liste)
+    total = sum(d.montant for d in liste) if liste else 0
+    lignes = [[_jour(d.date_depense), d.id_type_depense.libelle, d.motif,
+               d.justificatif_url or "", d.montant] for d in liste]
+
+    if format == "pdf":
+        doc = exports.DocumentPDF("Dépenses", _sous_titre(ecole, f"{len(lignes)} lignes"),
+                                  pied=ecole.nom)
+        doc.encadre("Total des dépenses", formater_montant(total, devise=True))
+        doc.tableau(
+            [("Date", 90, "g"), ("Catégorie", 130, "g"), ("Motif", 220, "g"),
+             ("Montant", 120, "d")],
+            [[l[0], l[1], l[2], formater_montant(l[4])] for l in lignes],
+            total=["", "", "TOTAL", formater_montant(total)],
+        )
+        return doc.rendu(), _nom_fichier("depenses", "pdf"), PDF
+
+    contenu = exports.classeur_xlsx([(
+        "Dépenses", ["Date", "Catégorie", "Motif", "Justificatif", "Montant"],
+        [[l[0], l[1], l[2], l[3], float(l[4])] for l in lignes],
+    )])
+    return contenu, _nom_fichier("depenses", "xlsx"), XLSX
+
+
+# ---------------------------------------------------------------------------
+# Bilan financier
+# ---------------------------------------------------------------------------
+
+def bilan(ecole, donnees, format="xlsx"):
+    periode = donnees["periode"]
+    intitule = periode.get("annee") or (
+        f"{_jour(_date(periode['debut']))} → {_jour(_date(periode['fin']))}"
+        if periode.get("debut") else "Tout l'historique"
+    )
+
+    if format == "pdf":
+        return _bilan_pdf(ecole, donnees, intitule)
+
+    recouvrement = donnees["recouvrement"]
+    resultat = donnees["resultat"]
+    tresorerie = donnees["tresorerie"]
+
+    feuilles = [
+        ("Synthèse", ["Indicateur", "Montant"], [
+            ["Période", intitule],
+            ["Total attendu", recouvrement["attendu"]],
+            ["Total encaissé", recouvrement["encaisse"]],
+            ["Reste à recouvrer", recouvrement["reste"]],
+            ["Taux de recouvrement (%)", recouvrement["taux"]],
+            ["Total des dépenses", resultat["depenses"]],
+            ["Résultat (recettes − dépenses)", resultat["solde"]],
+            ["Solde caisse", tresorerie["caisse"]],
+            ["Solde banque", tresorerie["banque"]],
+            ["Trésorerie totale", tresorerie["total"]],
+            ["Frais impayés (nombre)", donnees["impayes"]["nombre"]],
+            ["Frais échus impayés", donnees["impayes"]["echus"]],
+            ["Élèves concernés", donnees["impayes"]["eleves_concernes"]],
+        ]),
+        ("Recettes par frais", ["Type de frais", "Nombre", "Montant"],
+         [[l["libelle"], l["nombre"], l["montant"]] for l in donnees["recettes"]["par_type_frais"]]),
+        ("Recettes par moyen", ["Moyen de paiement", "Nombre", "Montant"],
+         [[l["libelle"], l["nombre"], l["montant"]] for l in donnees["recettes"]["par_methode"]]),
+        ("Dépenses", ["Catégorie", "Nombre", "Montant"],
+         [[l["libelle"], l["nombre"], l["montant"]] for l in donnees["depenses"]["par_categorie"]]),
+        ("Budgets", ["Catégorie", "Prévu", "Réalisé", "Écart", "Consommé (%)"],
+         [[b["categorie"], b["prevu"], b["realise"], b["ecart"], b["consomme"]]
+          for b in donnees["budgets"]]),
+        ("Évolution", ["Mois", "Recettes", "Dépenses", "Solde"],
+         [[m["mois"], m["recettes"], m["depenses"], m["recettes"] - m["depenses"]]
+          for m in donnees["evolution"]]),
+    ]
+    return exports.classeur_xlsx(feuilles), _nom_fichier("bilan-financier", "xlsx"), XLSX
+
+
+def _date(texte):
+    return date.fromisoformat(texte) if texte else None
+
+
+def _bilan_pdf(ecole, donnees, intitule):
+    recouvrement = donnees["recouvrement"]
+    resultat = donnees["resultat"]
+    tresorerie = donnees["tresorerie"]
+
+    doc = exports.DocumentPDF("Bilan financier", _sous_titre(ecole, intitule), pied=ecole.nom)
+
+    doc.encadre("Résultat de la période (recettes − dépenses)",
+                formater_montant(resultat["solde"], devise=True))
+
+    doc.section("Recouvrement")
+    doc.champs([
+        ("Total attendu", formater_montant(recouvrement["attendu"], devise=True)),
+        ("Total encaissé", formater_montant(recouvrement["encaisse"], devise=True)),
+        ("Reste à recouvrer", formater_montant(recouvrement["reste"], devise=True)),
+        ("Taux de recouvrement", f"{recouvrement['taux']} %"),
+        ("Frais impayés", f"{donnees['impayes']['nombre']} dont "
+                          f"{donnees['impayes']['echus']} échus "
+                          f"({donnees['impayes']['eleves_concernes']} élèves)"),
+    ], largeur_libelle=170)
+
+    doc.section("Trésorerie")
+    doc.champs([
+        ("Solde caisse", formater_montant(tresorerie["caisse"], devise=True)),
+        ("Solde banque", formater_montant(tresorerie["banque"], devise=True)),
+        ("Total", formater_montant(tresorerie["total"], devise=True)),
+    ], largeur_libelle=170)
+
+    if donnees["recettes"]["par_type_frais"]:
+        doc.section("Recettes par type de frais")
+        doc.tableau(
+            [("Type de frais", 240, "g"), ("Encaissements", 110, "d"), ("Montant", 150, "d")],
+            [[l["libelle"], str(l["nombre"]), formater_montant(l["montant"])]
+             for l in donnees["recettes"]["par_type_frais"]],
+            total=["TOTAL", "", formater_montant(donnees["recettes"]["total"])],
+        )
+
+    if donnees["recettes"]["par_methode"]:
+        doc.section("Recettes par moyen de paiement")
+        doc.tableau(
+            [("Moyen de paiement", 240, "g"), ("Opérations", 110, "d"), ("Montant", 150, "d")],
+            [[l["libelle"], str(l["nombre"]), formater_montant(l["montant"])]
+             for l in donnees["recettes"]["par_methode"]],
+        )
+
+    if donnees["depenses"]["par_categorie"]:
+        doc.section("Dépenses par catégorie")
+        doc.tableau(
+            [("Catégorie", 240, "g"), ("Lignes", 110, "d"), ("Montant", 150, "d")],
+            [[l["libelle"], str(l["nombre"]), formater_montant(l["montant"])]
+             for l in donnees["depenses"]["par_categorie"]],
+            total=["TOTAL", "", formater_montant(donnees["depenses"]["total"])],
+        )
+
+    if donnees["budgets"]:
+        doc.section("Suivi budgétaire")
+        doc.tableau(
+            [("Catégorie", 200, "g"), ("Prévu", 120, "d"), ("Réalisé", 120, "d"),
+             ("Écart", 120, "d"), ("Consommé", 80, "d")],
+            [[b["categorie"], formater_montant(b["prevu"]), formater_montant(b["realise"]),
+              formater_montant(b["ecart"]), f"{b['consomme']} %"] for b in donnees["budgets"]],
+        )
+
+    if donnees["evolution"]:
+        doc.section("Évolution mensuelle")
+        doc.tableau(
+            [("Mois", 140, "g"), ("Recettes", 150, "d"), ("Dépenses", 150, "d"),
+             ("Solde", 150, "d")],
+            [[m["mois"], formater_montant(m["recettes"]), formater_montant(m["depenses"]),
+              formater_montant(m["recettes"] - m["depenses"])] for m in donnees["evolution"]],
+        )
+
+    return doc.rendu(), _nom_fichier("bilan-financier", "pdf"), PDF
+
+
+# ---------------------------------------------------------------------------
+# Reçu de paiement
+# ---------------------------------------------------------------------------
+
+def recu(objet):
+    """Reçu remis au parent : le justificatif que le TDR demande automatique."""
+    paiement = objet.id_paiement
+    frais = paiement.id_frais_eleve
+    eleve = frais.id_eleve
+    ecole = eleve.id_ecole
+
+    inscription = (eleve.inscriptions
+                   .filter(id_annee_scolaire_id=frais.id_annee_scolaire_id)
+                   .select_related("id_classe").first())
+
+    doc = exports.DocumentPDF(f"Reçu n° {objet.numero_recu}",
+                              _sous_titre(ecole, ecole.adresse or None), pied=ecole.nom)
+
+    doc.encadre("Montant reçu", formater_montant(paiement.montant, devise=True))
+
+    doc.section("Élève")
+    doc.champs([
+        ("Nom et prénom", f"{eleve.prenom} {eleve.nom}"),
+        ("Matricule", eleve.matricule),
+        ("Classe", inscription.id_classe.nom if inscription else "—"),
+        ("Année scolaire", frais.id_annee_scolaire.libelle),
+    ])
+
+    doc.section("Paiement")
+    doc.champs([
+        ("Type de frais", frais.id_type_frais.get_libelle_display()),
+        ("Date", _jour(paiement.date_paiement)),
+        ("Moyen de paiement", paiement.get_methode_display()),
+        ("Référence", paiement.reference_transaction or "—"),
+        ("Encaissé par", (f"{paiement.id_utilisateur_caissier.prenom} "
+                          f"{paiement.id_utilisateur_caissier.nom}")
+         if paiement.id_utilisateur_caissier else "—"),
+    ])
+
+    doc.section("Situation du frais")
+    doc.champs([
+        ("Montant dû", formater_montant(frais.montant_du, devise=True)),
+        ("Total réglé", formater_montant(frais.montant_paye, devise=True)),
+        ("Solde restant", formater_montant(frais.solde_restant, devise=True)),
+        ("Statut", frais.get_statut_display()),
+    ])
+
+    doc.espace(18)
+    doc.paragraphe(
+        "Ce reçu est délivré automatiquement par le système de gestion de "
+        f"{ecole.nom}. Il atteste du paiement ci-dessus et doit être conservé "
+        "par la famille.", taille=8.5, gris=0.45)
+
+    return doc.rendu(), f"recu-{objet.numero_recu}.pdf", PDF
+
+
+# ---------------------------------------------------------------------------
+# Recettes détaillées (liste des paiements)
+# ---------------------------------------------------------------------------
+
+def paiements(ecole, liste, format="xlsx"):
+    liste = list(liste)
+    total = sum(p.montant for p in liste) if liste else 0
+    lignes = []
+    for p in liste:
+        frais = p.id_frais_eleve
+        lignes.append([
+            _jour(p.date_paiement),
+            getattr(getattr(p, "recu", None), "numero_recu", ""),
+            frais.id_eleve.matricule,
+            f"{frais.id_eleve.prenom} {frais.id_eleve.nom}",
+            frais.id_type_frais.get_libelle_display(),
+            p.get_methode_display(),
+            p.reference_transaction or "",
+            p.montant,
+        ])
+
+    if format == "pdf":
+        doc = exports.DocumentPDF("Journal des recettes",
+                                  _sous_titre(ecole, f"{len(lignes)} encaissements"),
+                                  pied=ecole.nom, paysage=True)
+        doc.encadre("Total encaissé", formater_montant(total, devise=True))
+        doc.tableau(
+            [("Date", 110, "g"), ("Reçu", 90, "g"), ("Matricule", 90, "g"),
+             ("Élève", 180, "g"), ("Type de frais", 120, "g"), ("Moyen", 110, "g"),
+             ("Référence", 110, "g"), ("Montant", 110, "d")],
+            [[*l[:-1], formater_montant(l[-1])] for l in lignes],
+            total=["", "", "", "", "", "", "TOTAL", formater_montant(total)],
+        )
+        return doc.rendu(), _nom_fichier("recettes", "pdf"), PDF
+
+    contenu = exports.classeur_xlsx([(
+        "Recettes",
+        ["Date", "Reçu", "Matricule", "Élève", "Type de frais", "Moyen", "Référence", "Montant"],
+        [[*l[:-1], float(l[-1])] for l in lignes],
+    )])
+    return contenu, _nom_fichier("recettes", "xlsx"), XLSX

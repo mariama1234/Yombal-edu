@@ -1,0 +1,152 @@
+<p class="module-eyebrow">Gestion pédagogique</p>
+<div class="page-head">
+  <div>
+    <h1>Palmarès &amp; statistiques</h1>
+    <p>Classement de la classe et indicateurs de la période, pour le conseil de classe.</p>
+  </div>
+  <div class="form-actions" style="margin:0;">
+    <a class="btn-ghost" routerLink="/pedagogie/bulletins">Bulletins</a>
+    <a class="btn-ghost" routerLink="/pedagogie/notes">Saisir des notes</a>
+  </div>
+</div>
+
+<form class="form-section" [formGroup]="form">
+  <div class="form-section-title">Périmètre</div>
+
+  @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+  <div class="form-grid">
+    <div class="field">
+      <label for="classe">Classe</label>
+      <select class="input" id="classe" formControlName="id_classe">
+        <option [ngValue]="null">— choisir —</option>
+        @for (c of classes(); track c.id) { <option [ngValue]="c.id">{{ c.nom }}</option> }
+      </select>
+    </div>
+    <div class="field">
+      <label for="periode">Période</label>
+      <select class="input" id="periode" formControlName="id_periode">
+        <option [ngValue]="null">— choisir —</option>
+        @for (p of periodes(); track p.id) { <option [ngValue]="p.id">{{ p.libelle }}</option> }
+      </select>
+    </div>
+    <div class="field">
+      <label for="limite">Limiter le palmarès</label>
+      <input class="input" id="limite" type="number" min="1" formControlName="limite" placeholder="Toute la classe">
+      <span class="hint">Ex. 10 pour n'afficher que les dix premiers.</span>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button type="button" class="btn-primary" (click)="charger()" [disabled]="occupe()">
+      {{ occupe() ? 'Calcul…' : 'Afficher' }}
+    </button>
+  </div>
+</form>
+
+@if (statistiques(); as s) {
+  <div class="tile-grid-generic">
+    <div class="tile-generic">
+      <div class="tile-generic-label">Moyenne de classe</div>
+      <div class="tile-generic-value">
+        {{ s.ensemble.moyenne !== null ? (s.ensemble.moyenne | number:'1.2-2') : '—' }}
+      </div>
+      <div class="tile-generic-meta">{{ s.ensemble.effectif }} élève(s) classé(s)</div>
+    </div>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Taux de réussite</div>
+      <div class="tile-generic-value">
+        {{ s.ensemble.taux_reussite !== null ? (s.ensemble.taux_reussite | number:'1.0-1') + ' %' : '—' }}
+      </div>
+      <div class="tile-generic-meta">{{ s.ensemble.reussite }} élève(s) à 10 ou plus</div>
+    </div>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Extrêmes</div>
+      <div class="tile-generic-value">
+        {{ s.ensemble.minimum !== null ? (s.ensemble.minimum | number:'1.2-2') : '—' }}
+        –
+        {{ s.ensemble.maximum !== null ? (s.ensemble.maximum | number:'1.2-2') : '—' }}
+      </div>
+      <div class="tile-generic-meta">plus basse et plus haute moyenne</div>
+    </div>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Sans note</div>
+      <div class="tile-generic-value">{{ s.sans_note }}</div>
+      <div class="tile-generic-meta">sur {{ s.inscrits }} inscrits</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Répartition par appréciation</div></div>
+    <table class="simple">
+      <tbody>
+        @for (m of mentions(s.repartition); track m.libelle) {
+          <tr>
+            <td style="width:160px;">{{ m.libelle }}</td>
+            <td class="mono" style="width:60px;">{{ m.nombre }}</td>
+            <td>
+              <div style="background:var(--ink-100, #eee); border-radius:4px; height:10px; width:100%;">
+                <div [style.width.%]="part(m.nombre, s.ensemble.effectif)"
+                     style="background:var(--accent, #1F3A5F); border-radius:4px; height:10px;"></div>
+              </div>
+            </td>
+            <td class="mono" style="width:60px;">{{ part(m.nombre, s.ensemble.effectif) }} %</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Par matière</div></div>
+    <table class="simple">
+      <thead>
+        <tr><th>Matière</th><th>Notés</th><th>Moyenne</th><th>Min</th><th>Max</th><th>Réussite</th></tr>
+      </thead>
+      <tbody>
+        @for (m of s.matieres; track m.matiere) {
+          <tr>
+            <td>{{ m.matiere }}</td>
+            <td class="mono">{{ m.effectif }}</td>
+            <td class="mono">{{ m.moyenne !== null ? (m.moyenne | number:'1.2-2') : '—' }}</td>
+            <td class="mono">{{ m.minimum !== null ? (m.minimum | number:'1.2-2') : '—' }}</td>
+            <td class="mono">{{ m.maximum !== null ? (m.maximum | number:'1.2-2') : '—' }}</td>
+            <td class="mono">{{ m.taux_reussite !== null ? (m.taux_reussite | number:'1.0-1') + ' %' : '—' }}</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="6" class="hint">Aucune note sur cette période.</td></tr>
+        }
+      </tbody>
+    </table>
+  </div>
+}
+
+@if (palmares(); as p) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Palmarès — {{ p.classe }}, {{ p.periode }}</div>
+      <div class="form-actions" style="margin:0;">
+        <button type="button" class="btn-ghost" (click)="exporter('xlsx')">Excel</button>
+        <button type="button" class="btn-ghost" (click)="exporter('pdf')">PDF</button>
+      </div>
+    </div>
+    <table class="simple">
+      <thead>
+        <tr><th style="width:70px;">Rang</th><th>Matricule</th><th>Élève</th><th>Moyenne</th><th>Appréciation</th></tr>
+      </thead>
+      <tbody>
+        @for (l of p.lignes; track l.matricule) {
+          <tr>
+            <td class="mono"><strong>{{ l.rang }}</strong></td>
+            <td class="mono">{{ l.matricule }}</td>
+            <td>{{ l.nom }} {{ l.prenom }}</td>
+            <td class="mono">{{ l.moyenne_generale | number:'1.2-2' }}</td>
+            <td>{{ l.appreciation }}</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="5" class="hint">Aucun élève classé : saisis d'abord des notes.</td></tr>
+        }
+      </tbody>
+    </table>
+  </div>
+}

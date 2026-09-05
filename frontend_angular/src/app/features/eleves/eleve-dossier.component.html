@@ -1,0 +1,288 @@
+<p class="module-eyebrow">Gestion des élèves</p>
+<div class="page-head">
+  <div>
+    <h1>Dossier de l'élève</h1>
+    <p>Identité, parcours, résultats, situation financière et assiduité.</p>
+  </div>
+  <a class="btn-ghost" routerLink="/eleves">← Retour à la liste</a>
+</div>
+
+@if (chargement()) {
+  <div class="panel"><p>Chargement du dossier…</p></div>
+} @else {
+@if (dossier(); as d) {
+
+  @if (message()) { <div class="form-success">{{ message() }}</div> }
+  @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+  <!-- Identité -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        {{ d.eleve.prenom }} {{ d.eleve.nom }}
+        <span class="chip">{{ d.eleve.statut_libelle }}</span>
+      </div>
+      <span class="mono">{{ d.eleve.matricule }}</span>
+    </div>
+    <div class="form-grid">
+      <div class="field"><label>Sexe</label><div class="mono">{{ d.eleve.sexe ?? '—' }}</div></div>
+      <div class="field">
+        <label>Date de naissance</label>
+        <div class="mono">{{ d.eleve.date_naissance ? (d.eleve.date_naissance | date:'dd/MM/yyyy') : '—' }}</div>
+      </div>
+      <div class="field"><label>Adresse</label><div class="mono">{{ d.eleve.adresse ?? '—' }}</div></div>
+      <div class="field">
+        <label>Première inscription</label>
+        <div class="mono">{{ d.eleve.date_premiere_inscription ? (d.eleve.date_premiere_inscription | date:'dd/MM/yyyy') : '—' }}</div>
+      </div>
+      <div class="field">
+        <label>Classe actuelle</label>
+        <div class="mono">{{ d.scolarite_courante?.classe ?? 'Aucune inscription active' }}</div>
+      </div>
+      <div class="field">
+        <label>Année scolaire</label>
+        <div class="mono">{{ d.scolarite_courante?.annee ?? '—' }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chiffres clés -->
+  <div class="tile-grid-generic">
+    <div class="tile-generic">
+      <div class="tile-generic-label">Solde à payer</div>
+      <div class="tile-generic-value">{{ d.finances.solde | number:'1.0-0' }}</div>
+      <div class="tile-generic-meta">
+        {{ d.finances.total_paye | number:'1.0-0' }} payés sur {{ d.finances.total_du | number:'1.0-0' }} F CFA
+      </div>
+    </div>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Frais impayés</div>
+      <div class="tile-generic-value">{{ d.finances.frais_impayes }}</div>
+      <div class="tile-generic-meta">échéances non soldées</div>
+    </div>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Absences</div>
+      <div class="tile-generic-value">{{ d.assiduite.absences }}</div>
+      <div class="tile-generic-meta">{{ d.assiduite.retards }} retard(s), {{ d.assiduite.non_justifiees }} non justifiée(s)</div>
+    </div>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Bulletins</div>
+      <div class="tile-generic-value">{{ d.resultats.length }}</div>
+      <div class="tile-generic-meta">périodes évaluées</div>
+    </div>
+  </div>
+
+  <!-- Mouvements -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Mouvements</div>
+    </div>
+
+    @if (sorti()) {
+      <p class="hint">
+        {{ d.eleve.prenom }} {{ d.eleve.nom }} a quitté l'établissement
+        ({{ d.eleve.statut_libelle | lowercase }}) : plus aucun mouvement n'est possible.
+      </p>
+    } @else if (!d.scolarite_courante) {
+      <p class="hint">Aucune inscription active : inscris l'élève avant tout mouvement.</p>
+    } @else {
+      <div class="form-actions" style="justify-content:flex-start;">
+        <button type="button" class="btn-ghost" (click)="ouvrir('classe')">Changer de classe</button>
+        <button type="button" class="btn-ghost" (click)="ouvrir('transfert')">Transférer</button>
+        <button type="button" class="btn-ghost" (click)="ouvrir('radiation')">Radier</button>
+      </div>
+
+      @if (mouvement() === 'classe') {
+        <form class="form-section" [formGroup]="formClasse">
+          <div class="form-section-title">Changement de classe</div>
+          <div class="form-section-sub">Au sein de la même année scolaire. Pour changer d'année, passe par la réinscription.</div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="nouvelle-classe">Nouvelle classe</label>
+              <select class="input" id="nouvelle-classe" formControlName="id_classe">
+                <option [ngValue]="null">— choisir —</option>
+                @for (c of classesDisponibles(); track c.id) {
+                  <option [ngValue]="c.id">{{ c.nom }} ({{ c.effectif }}/{{ c.capacite_max }})</option>
+                }
+              </select>
+            </div>
+            <div class="field">
+              <label for="date-classe">Date d'effet</label>
+              <input class="input" id="date-classe" type="date" formControlName="date_effet">
+              <span class="hint">Vide = aujourd'hui.</span>
+            </div>
+            <div class="field">
+              <label for="motif-classe">Motif</label>
+              <input class="input" id="motif-classe" formControlName="motif" placeholder="Rééquilibrage des effectifs…">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn-ghost" (click)="ouvrir(null)">Annuler</button>
+            <button type="button" class="btn-primary" (click)="changerDeClasse()" [disabled]="occupe()">
+              {{ occupe() ? 'Enregistrement…' : 'Valider le changement' }}
+            </button>
+          </div>
+        </form>
+      }
+
+      @if (mouvement() === 'transfert') {
+        <form class="form-section" [formGroup]="formTransfert">
+          <div class="form-section-title">Transfert vers un autre établissement</div>
+          <div class="form-section-sub">L'inscription en cours est clôturée et l'élève passe en « transféré ».</div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="etablissement">Établissement d'accueil</label>
+              <input class="input" id="etablissement" formControlName="etablissement" placeholder="Cours Sainte-Marie…">
+            </div>
+            <div class="field">
+              <label for="date-transfert">Date d'effet</label>
+              <input class="input" id="date-transfert" type="date" formControlName="date_effet">
+            </div>
+            <div class="field">
+              <label for="commentaire-transfert">Commentaire</label>
+              <input class="input" id="commentaire-transfert" formControlName="commentaire">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn-ghost" (click)="ouvrir(null)">Annuler</button>
+            <button type="button" class="btn-primary" (click)="transferer()" [disabled]="occupe()">
+              {{ occupe() ? 'Enregistrement…' : 'Valider le transfert' }}
+            </button>
+          </div>
+        </form>
+      }
+
+      @if (mouvement() === 'radiation') {
+        <form class="form-section" [formGroup]="formRadiation">
+          <div class="form-section-title">Radiation</div>
+          <div class="form-section-sub">
+            L'inscription en cours est annulée et l'élève sort de l'effectif. Le motif est
+            obligatoire : c'est lui qu'on relira si la famille conteste.
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="motif-radiation">Motif</label>
+              <input class="input" id="motif-radiation" formControlName="motif" placeholder="Absences répétées non justifiées…">
+              @if (formRadiation.controls.motif.touched && formRadiation.controls.motif.invalid) {
+                <span class="hint hint-error">Le motif est obligatoire.</span>
+              }
+            </div>
+            <div class="field">
+              <label for="date-radiation">Date d'effet</label>
+              <input class="input" id="date-radiation" type="date" formControlName="date_effet">
+            </div>
+            <div class="field">
+              <label for="commentaire-radiation">Commentaire</label>
+              <input class="input" id="commentaire-radiation" formControlName="commentaire">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn-ghost" (click)="ouvrir(null)">Annuler</button>
+            <button type="button" class="btn-primary" (click)="radier()" [disabled]="occupe()">
+              {{ occupe() ? 'Enregistrement…' : 'Radier l\'élève' }}
+            </button>
+          </div>
+        </form>
+      }
+    }
+  </div>
+
+  <!-- Parents -->
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Parents &amp; tuteurs</div></div>
+    @if (d.parents.length === 0) {
+      <p class="hint">Aucun parent rattaché.</p>
+    } @else {
+      <table class="simple">
+        <thead><tr><th>Nom</th><th>Lien</th><th>Téléphone</th><th>Email</th><th>Contact principal</th></tr></thead>
+        <tbody>
+          @for (p of d.parents; track p.id) {
+            <tr>
+              <td>{{ p.nom_complet }}</td>
+              <td>{{ p.lien }}</td>
+              <td class="mono">{{ p.telephone ?? '—' }}</td>
+              <td class="mono">{{ p.email ?? '—' }}</td>
+              <td>{{ p.contact_principal ? 'Oui' : '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+
+  <!-- Parcours -->
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Parcours scolaire</div></div>
+    <table class="simple">
+      <thead><tr><th>Date</th><th>Événement</th><th>Ancienne classe</th><th>Nouvelle classe</th><th>Motif</th></tr></thead>
+      <tbody>
+        @for (h of d.historique; track $index) {
+          <tr>
+            <td class="mono">{{ h.date | date:'dd/MM/yyyy' }}</td>
+            <td>{{ h.evenement }}</td>
+            <td>{{ h.ancienne_classe ?? '—' }}</td>
+            <td>{{ h.nouvelle_classe ?? '—' }}</td>
+            <td>{{ h.motif ?? '—' }}</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="5" class="hint">Aucun mouvement enregistré.</td></tr>
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Résultats -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Résultats</div>
+    </div>
+    <table class="simple">
+      <thead><tr><th>Période</th><th>Classe</th><th>Moyenne</th><th>Rang</th><th>Appréciation</th></tr></thead>
+      <tbody>
+        @for (r of d.resultats; track $index) {
+          <tr>
+            <td>{{ r.periode }}</td>
+            <td>{{ r.classe }}</td>
+            <td class="mono">{{ r.moyenne_generale !== null ? (r.moyenne_generale | number:'1.2-2') : '—' }}</td>
+            <td class="mono">{{ r.rang_classe ?? '—' }}</td>
+            <td>{{ r.appreciation ?? '—' }}</td>
+          </tr>
+        } @empty {
+          <tr><td colspan="5" class="hint">Aucun bulletin généré pour cet élève.</td></tr>
+        }
+      </tbody>
+    </table>
+
+    <form class="form-actions" [formGroup]="formReleve" style="justify-content:flex-start;">
+      <select class="input" formControlName="id_periode" style="max-width:220px;">
+        <option [ngValue]="null">— période —</option>
+        @for (p of periodes(); track p.id) { <option [ngValue]="p.id">{{ p.libelle }}</option> }
+      </select>
+      <button type="button" class="btn-ghost" (click)="telechargerReleve()">
+        Télécharger le relevé de notes (PDF)
+      </button>
+    </form>
+  </div>
+
+  <!-- Pièces -->
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Pièces du dossier</div></div>
+    @if (d.pieces.length === 0) {
+      <p class="hint">Aucune pièce déposée.</p>
+    } @else {
+      <table class="simple">
+        <thead><tr><th>Type</th><th>Fichier</th><th>Ajoutée le</th></tr></thead>
+        <tbody>
+          @for (p of d.pieces; track p.id) {
+            <tr>
+              <td>{{ p.type_piece }}</td>
+              <td class="mono">{{ p.fichier_url }}</td>
+              <td class="mono">{{ p.date_ajout | date:'dd/MM/yyyy' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+}
+}

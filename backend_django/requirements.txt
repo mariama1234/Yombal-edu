@@ -4,3 +4,4 @@ djangorestframework-simplejwt>=5.3
 django-cors-headers>=4.4
 django-filter>=24.3
 mysqlclient>=2.2   # décommente/installe seulement pour la prod MySQL — SQLite fonctionne sans lui en local
+openpyxl>=3.1        # lecture des listes d'élèves au format .xlsx (l'import accepte aussi .csv et .docx, sans dépendance)

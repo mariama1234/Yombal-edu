@@ -1,0 +1,109 @@
+<p class="module-eyebrow">Gestion financière</p>
+<div class="page-head">
+  <div>
+    <h1>Relances</h1>
+    <p>Contacte les familles dont l'échéance est dépassée et le frais non soldé.</p>
+  </div>
+  <a class="btn-ghost" routerLink="/finances">← Retour aux finances</a>
+</div>
+
+@if (resultat()) {
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">{{ resultat()!.relances }} relance(s) enregistrée(s) ✅</div></div>
+    <p style="font-size:13px; color:var(--ink-600); margin:0;">
+      Canal : <strong>{{ resultat()!.canal }}</strong> —
+      {{ resultat()!.montant_relance | number:'1.0-0' }} F CFA concernés.
+    </p>
+  </div>
+}
+
+<form class="form-section" [formGroup]="form" style="max-width:640px;">
+  <div class="form-section-title">Paramètres de relance</div>
+  <div class="form-section-sub">Un frais déjà relancé récemment n'est pas recontacté.</div>
+
+  @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+  <div class="field">
+    <label>Canal</label>
+    <div class="radio-pills">
+      <label class="radio-pill" [class.checked]="form.get('canal')?.value === 'sms'">
+        <input type="radio" formControlName="canal" value="sms"> SMS
+      </label>
+      <label class="radio-pill" [class.checked]="form.get('canal')?.value === 'email'">
+        <input type="radio" formControlName="canal" value="email"> E-mail
+      </label>
+    </div>
+  </div>
+
+  <div class="form-grid">
+    <div class="field">
+      <label for="retard">Retard minimum (jours)</label>
+      <input class="input" id="retard" type="number" min="0" formControlName="jours_retard">
+      <span class="hint">0 = dès le lendemain de l'échéance.</span>
+    </div>
+    <div class="field">
+      <label for="delai">Ne pas relancer deux fois en (jours)</label>
+      <input class="input" id="delai" type="number" min="0" formControlName="delai_min">
+      <span class="hint">Évite d'envoyer trois SMS au même parent le même jour.</span>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button type="button" class="btn-primary" (click)="previsualiser()" [disabled]="occupe()">
+      {{ occupe() ? 'Calcul…' : 'Prévisualiser' }}
+    </button>
+  </div>
+</form>
+
+@if (apercu()) {
+  <div class="panel" style="max-width:640px;">
+    <div class="panel-head"><div class="panel-title">Aperçu — rien n'est encore envoyé</div></div>
+    <div class="tile-grid-generic" style="margin-bottom:16px;">
+      <div class="tile-generic">
+        <div class="tile-generic-label">Familles à relancer</div>
+        <div class="tile-generic-value">{{ apercu()!.relances }}</div>
+      </div>
+      <div class="tile-generic">
+        <div class="tile-generic-label">Montant concerné</div>
+        <div class="tile-generic-value">{{ apercu()!.montant_relance | number:'1.0-0' }}</div>
+        <div class="tile-generic-meta">F CFA</div>
+      </div>
+    </div>
+
+    @if (apercu()!.eleves.length) {
+      <div style="font-size:12.5px; color:var(--ink-600);">
+        @for (e of apercu()!.eleves; track e) {
+          <span class="chip" style="margin:0 4px 4px 0; display:inline-block;">{{ e }}</span>
+        }
+      </div>
+    }
+
+    <div class="form-actions">
+      <button class="btn-primary" (click)="envoyer()" [disabled]="occupe() || apercu()!.relances === 0">
+        {{ occupe() ? 'Envoi…' : 'Envoyer ' + apercu()!.relances + ' relance(s)' }}
+      </button>
+    </div>
+  </div>
+}
+
+<div class="panel">
+  <div class="panel-head"><div class="panel-title">Relances envoyées</div></div>
+  @if (historique().length === 0) {
+    <p style="color:var(--ink-400); font-size:13px;">Aucune relance à ce jour.</p>
+  } @else {
+    <table class="simple">
+      <thead><tr><th>Date</th><th>Élève</th><th>Frais</th><th>Canal</th><th>Statut</th></tr></thead>
+      <tbody>
+        @for (r of historique(); track r.id) {
+          <tr>
+            <td class="mono">{{ r.date_envoi | date:'dd/MM/yyyy HH:mm' }}</td>
+            <td>{{ r.eleve_nom }}</td>
+            <td>{{ r.type_frais }}</td>
+            <td>{{ r.canal }}</td>
+            <td><span class="pill" [class.paye]="r.statut === 'envoyee'" [class.impaye]="r.statut === 'echouee'">{{ r.statut }}</span></td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>

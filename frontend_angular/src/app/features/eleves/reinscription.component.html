@@ -1,0 +1,131 @@
+<p class="module-eyebrow">Gestion des élèves</p>
+<div class="page-head">
+  <div>
+    <h1>Réinscrire une promotion</h1>
+    <p>Fait passer les élèves d'une classe à la classe de l'année suivante, en une opération.</p>
+  </div>
+  <a class="btn-ghost" routerLink="/eleves">← Retour aux élèves</a>
+</div>
+
+@if (resultat(); as r) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Réinscription terminée ✅</div>
+      <a class="panel-link" routerLink="/eleves">Voir les élèves →</a>
+    </div>
+    <table class="simple">
+      <tbody>
+        <tr><td>Promotion</td><td class="mono">{{ r.classe_source }} → {{ r.classe_cible }}</td></tr>
+        <tr><td>Années</td><td class="mono">{{ r.annee_source }} → {{ r.annee_cible }}</td></tr>
+        <tr><td>Élèves réinscrits</td><td class="mono">{{ r.reinscrits }}</td></tr>
+        <tr><td>Déjà inscrits (ignorés)</td><td class="mono">{{ r.ignores }}</td></tr>
+        <tr><td>Effectif de la classe d'arrivée</td><td class="mono">{{ r.effectif_cible }}</td></tr>
+      </tbody>
+    </table>
+    <div class="form-actions">
+      <button type="button" class="btn-ghost" (click)="recommencer()">Réinscrire une autre classe</button>
+    </div>
+  </div>
+} @else {
+  <form class="form-section" [formGroup]="form" style="max-width:720px;">
+    <div class="form-section-title">Périmètre</div>
+    <div class="form-section-sub">
+      Seuls les élèves actifs dont l'inscription n'a pas été annulée sont repris :
+      un élève radié ou transféré ne remonte pas.
+    </div>
+
+    @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+    <div class="form-grid">
+      <div class="field">
+        <label for="annee-source">Année de départ</label>
+        <select class="input" id="annee-source" formControlName="id_annee_source">
+          <option [ngValue]="null">— choisir —</option>
+          @for (a of annees(); track a.id) { <option [ngValue]="a.id">{{ a.libelle }}</option> }
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="classe-source">Classe de départ</label>
+        <select class="input" id="classe-source" formControlName="id_classe_source">
+          <option [ngValue]="null">Toutes les classes</option>
+          @for (c of classesSource(); track c.id) {
+            <option [ngValue]="c.id">{{ c.nom }} ({{ c.effectif }} élèves)</option>
+          }
+        </select>
+        <span class="hint">Vide = toute la promotion de l'année.</span>
+      </div>
+
+      <div class="field">
+        <label for="annee-cible">Année d'arrivée</label>
+        <select class="input" id="annee-cible" formControlName="id_annee_cible">
+          <option [ngValue]="null">— choisir —</option>
+          @for (a of annees(); track a.id) { <option [ngValue]="a.id">{{ a.libelle }}</option> }
+        </select>
+        @if (annees().length < 2) {
+          <span class="hint hint-error">Crée d'abord l'année scolaire suivante.</span>
+        }
+      </div>
+
+      <div class="field">
+        <label for="classe-cible">Classe d'arrivée</label>
+        <select class="input" id="classe-cible" formControlName="id_classe_cible">
+          <option [ngValue]="null">— choisir —</option>
+          @for (c of classesCible(); track c.id) {
+            <option [ngValue]="c.id">{{ c.nom }} ({{ c.effectif }}/{{ c.capacite_max }})</option>
+          }
+        </select>
+        @if (classesCible().length === 0) {
+          <span class="hint hint-error">Aucune classe sur l'année d'arrivée : crée-les d'abord.</span>
+        }
+      </div>
+
+      <div class="field">
+        <label for="date">Date d'inscription</label>
+        <input class="input" id="date" type="date" formControlName="date_inscription">
+        <span class="hint">Vide = premier jour de l'année d'arrivée.</span>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <a class="btn-ghost" routerLink="/eleves">Annuler</a>
+      <button type="button" class="btn-primary" (click)="previsualiser()" [disabled]="occupe()">
+        {{ occupe() ? 'Calcul…' : 'Prévisualiser' }}
+      </button>
+    </div>
+  </form>
+
+  @if (apercu(); as a) {
+    <div class="panel" style="max-width:720px;">
+      <div class="panel-head"><div class="panel-title">Aperçu — rien n'est encore écrit</div></div>
+
+      <div class="tile-grid-generic" style="margin-bottom:16px;">
+        <div class="tile-generic">
+          <div class="tile-generic-label">À réinscrire</div>
+          <div class="tile-generic-value">{{ a.reinscrits }}</div>
+          <div class="tile-generic-meta">{{ a.classe_source }} → {{ a.classe_cible }}</div>
+        </div>
+        <div class="tile-generic">
+          <div class="tile-generic-label">Déjà inscrits</div>
+          <div class="tile-generic-value">{{ a.ignores }}</div>
+          <div class="tile-generic-meta">ne seront pas dupliqués</div>
+        </div>
+        <div class="tile-generic">
+          <div class="tile-generic-label">Effectif visé</div>
+          <div class="tile-generic-value">{{ a.effectif_cible }}</div>
+          <div class="tile-generic-meta">dans {{ a.classe_cible }}</div>
+        </div>
+      </div>
+
+      @if (a.avertissement) {
+        <div class="form-error">⚠ {{ a.avertissement }}</div>
+      }
+
+      <div class="form-actions">
+        <button class="btn-primary" (click)="valider()" [disabled]="occupe() || a.reinscrits === 0">
+          {{ occupe() ? 'Réinscription…' : 'Réinscrire ' + a.reinscrits + ' élève(s)' }}
+        </button>
+      </div>
+    </div>
+  }
+}

@@ -32,20 +32,60 @@
 
   <div class="kpi-card">
     <div class="kpi-top">
-      <span class="kpi-label">Impayés en cours</span>
+      <span class="kpi-label">Reste à recouvrer</span>
       <div class="kpi-icon" style="background:var(--red);">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
       </div>
     </div>
-    <div class="kpi-value">{{ nbImpayes() ?? '—' }}</div>
+    <div class="kpi-value">
+      @if (bilan(); as b) { {{ b.recouvrement.reste | number:'1.0-0' }} } @else { — }
+    </div>
+    <div class="kpi-delta flat">
+      @if (bilan(); as b) { {{ b.impayes.nombre }} frais impayés, dont {{ b.impayes.echus }} échus }
+    </div>
+  </div>
+
+  <div class="kpi-card">
+    <div class="kpi-top">
+      <span class="kpi-label">Trésorerie</span>
+      <div class="kpi-icon" style="background:var(--orange-500);">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>
+      </div>
+    </div>
+    <div class="kpi-value">
+      @if (bilan(); as b) { {{ b.tresorerie.total | number:'1.0-0' }} } @else { — }
+    </div>
+    <div class="kpi-delta flat">
+      @if (bilan(); as b) { caisse {{ b.tresorerie.caisse | number:'1.0-0' }} · banque {{ b.tresorerie.banque | number:'1.0-0' }} }
+    </div>
   </div>
 </div>
+
+@if (bilan(); as b) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Recouvrement {{ b.periode.annee ? '— ' + b.periode.annee : '' }}</div>
+      <a class="panel-link" routerLink="/finances/bilan">Bilan complet →</a>
+    </div>
+    <div style="display:flex; align-items:center; gap:16px;">
+      <div style="flex:1; background:var(--bg); border-radius:20px; height:10px; overflow:hidden;">
+        <div [style.width.%]="b.recouvrement.taux" style="height:100%; background:var(--green);"></div>
+      </div>
+      <span class="mono" style="font-size:14px; font-weight:600;">{{ b.recouvrement.taux }} %</span>
+    </div>
+    <p style="font-size:12.5px; color:var(--ink-600); margin:10px 0 0;">
+      {{ b.recouvrement.encaisse | number:'1.0-0' }} F encaissés sur
+      {{ b.recouvrement.attendu | number:'1.0-0' }} F attendus.
+    </p>
+  </div>
+}
 
 <div class="panel">
   <div class="panel-head"><div class="panel-title">Accès rapides</div></div>
   <div style="display:flex; gap:10px; flex-wrap:wrap;">
     <a class="btn-ghost" routerLink="/eleves">Élèves</a>
     <a class="btn-ghost" routerLink="/finances">Finances</a>
+    <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
     <a class="btn-ghost" routerLink="/emploi-du-temps">Emploi du temps</a>
     <a class="btn-ghost" routerLink="/classes">Classes</a>
   </div>

@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 import os
+import sys
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -121,6 +122,14 @@ else:
 
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
+
+# Les tests créent quatre comptes par cas, et le hachage PBKDF2 par défaut
+# coûte volontairement cher : la suite passait de quelques minutes à près
+# d'une demi-heure, au point qu'on hésite à la lancer. Un hachage rapide,
+# strictement réservé à `manage.py test`, ramène ça à l'ordre de la minute.
+if 'test' in sys.argv:
+    PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+
 
 AUTH_PASSWORD_VALIDATORS = [
     {

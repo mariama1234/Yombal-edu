@@ -1,43 +1,65 @@
-@if (recuGenere()) {
+@if (paiement(); as p) {
+  <p class="module-eyebrow">Gestion financière</p>
   <div class="page-head">
-    <div><h1>Paiement enregistré ✅</h1><p>Le reçu a été généré automatiquement.</p></div>
-  </div>
-  <div class="panel" style="max-width:460px;">
-    <div class="panel-title" style="margin-bottom:14px;">Reçu</div>
-    <table class="simple">
-      <tbody>
-        <tr><td>Élève</td><td class="mono">{{ frais()?.eleve_prenom }} {{ frais()?.eleve_nom }}</td></tr>
-        <tr><td>Montant</td><td class="mono">{{ recuGenere()?.montant }} F CFA</td></tr>
-        <tr><td>Méthode</td><td class="mono">{{ recuGenere()?.methode }}</td></tr>
-        <tr><td>Date</td><td class="mono">{{ recuGenere()?.date_paiement | date:'short' }}</td></tr>
-      </tbody>
-    </table>
-    <div class="form-actions">
-      <a class="btn-ghost" routerLink="/finances">Retour aux impayés</a>
-      <button class="btn-primary" (click)="window.print()">Imprimer</button>
+    <div>
+      <h1>Paiement enregistré ✅</h1>
+      <p>Le reçu {{ p.numero_recu }} a été généré automatiquement.</p>
     </div>
   </div>
-} @else if (frais()) {
+
+  <div class="panel" style="max-width:520px;">
+    <div class="panel-head"><div class="panel-title">Reçu {{ p.numero_recu }}</div></div>
+    <table class="simple">
+      <tbody>
+        <tr><td>Élève</td><td class="mono">{{ p.eleve_nom ?? (frais()?.eleve_prenom + ' ' + frais()?.eleve_nom) }}</td></tr>
+        <tr><td>Montant</td><td class="mono">{{ p.montant | number:'1.0-0' }} F CFA</td></tr>
+        <tr><td>Moyen de paiement</td><td class="mono">{{ p.methode }}</td></tr>
+        <tr><td>Date</td><td class="mono">{{ p.date_paiement | date:'dd/MM/yyyy HH:mm' }}</td></tr>
+        @if (p.reference_transaction) {
+          <tr><td>Référence</td><td class="mono">{{ p.reference_transaction }}</td></tr>
+        }
+      </tbody>
+    </table>
+
+    @if (erreur()) { <div class="form-error" style="margin-top:14px;">{{ erreur() }}</div> }
+
+    <div class="form-actions">
+      <a class="btn-ghost" routerLink="/finances">Retour aux impayés</a>
+      <button class="btn-primary" (click)="telechargerRecu()" [disabled]="!p.id_recu || telechargement()">
+        {{ telechargement() ? 'Préparation…' : 'Télécharger le reçu (PDF)' }}
+      </button>
+    </div>
+  </div>
+} @else {
+@if (frais(); as f) {
+  <p class="module-eyebrow">Gestion financière</p>
   <div class="page-head">
     <div>
       <h1>Encaisser un paiement</h1>
-      <p>{{ frais()!.eleve_prenom }} {{ frais()!.eleve_nom }} — solde restant : <strong class="mono">{{ frais()!.solde_restant ?? frais()!.montant_du }} F CFA</strong></p>
+      <p>
+        {{ f.eleve_prenom }} {{ f.eleve_nom }} — solde restant :
+        <strong class="mono">{{ (f.solde_restant ?? f.montant_du) | number:'1.0-0' }} F CFA</strong>
+      </p>
     </div>
     <a class="btn-ghost" routerLink="/finances">Annuler</a>
   </div>
 
   <div class="form-section" style="max-width:520px;">
+    @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
     <form [formGroup]="form" (ngSubmit)="submit()">
       <div class="field">
         <label for="montant">Montant à encaisser (F CFA)</label>
         <input class="input" id="montant" type="number" formControlName="montant">
+        <span class="hint">Un paiement partiel est accepté : le frais reste ouvert pour le solde.</span>
       </div>
 
       <div class="field">
-        <label>Méthode de paiement</label>
+        <label>Moyen de paiement</label>
         <div class="radio-pills" style="flex-wrap:wrap;">
           @for (m of methodes; track m.value) {
-            <label class="radio-pill" [class.checked]="form.get('methode')?.value === m.value" style="flex:0 0 calc(50% - 4px); margin-bottom:8px;">
+            <label class="radio-pill" [class.checked]="form.get('methode')?.value === m.value"
+                   style="flex:0 0 calc(50% - 4px); margin-bottom:8px;">
               <input type="radio" formControlName="methode" [value]="m.value"> {{ m.label }}
             </label>
           }
@@ -46,7 +68,7 @@
 
       <div class="field">
         <label for="reference_transaction">Référence de transaction <span class="hint">(optionnel, mobile money)</span></label>
-        <input class="input" id="reference_transaction" formControlName="reference_transaction" placeholder="Ex: TXN-88213">
+        <input class="input" id="reference_transaction" formControlName="reference_transaction" placeholder="Ex : TXN-88213">
       </div>
 
       <div class="form-actions">
@@ -57,4 +79,7 @@
       </div>
     </form>
   </div>
+} @else if (erreur()) {
+  <div class="form-error">{{ erreur() }}</div>
+}
 }

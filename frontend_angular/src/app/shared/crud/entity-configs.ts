@@ -88,13 +88,50 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     ],
   },
 
+  // Sans évaluation, aucune note ne peut être saisie : c'est le point
+  // d'entrée du module pédagogique, avant la grille de saisie.
+  evaluations: {
+    key: 'evaluations',
+    endpoint: 'evaluations',
+    titre: 'Évaluations',
+    titreSingulier: 'une évaluation',
+    eyebrow: 'Pédagogie',
+    description:
+      'Devoirs, compositions et examens. Une fois l’évaluation créée, les notes se '
+      + 'saisissent en grille depuis « Saisie des notes ».',
+    columns: [
+      { key: 'date_evaluation', label: 'Date', type: 'date' },
+      { key: 'type', label: 'Type', type: 'badge' },
+      { key: 'bareme', label: 'Barème', type: 'number' },
+      { key: 'coefficient', label: 'Coefficient', type: 'number' },
+    ],
+    fields: [
+      { key: 'id_matiere', label: 'Matière', type: 'select', required: true, optionsEndpoint: 'matieres', optionsLabelKey: 'nom' },
+      { key: 'id_classe', label: 'Classe', type: 'select', required: true, optionsEndpoint: 'classes', optionsLabelKey: 'nom' },
+      { key: 'id_periode', label: 'Période', type: 'select', required: true, optionsEndpoint: 'periodes', optionsLabelKey: 'libelle' },
+      {
+        key: 'type', label: 'Type', type: 'select', required: true,
+        options: [
+          { value: 'devoir', label: 'Devoir' },
+          { value: 'composition', label: 'Composition' },
+          { value: 'examen', label: 'Examen' },
+        ],
+      },
+      { key: 'date_evaluation', label: "Date de l'épreuve", type: 'date', required: true },
+      { key: 'bareme', label: 'Barème (note maximale)', type: 'number', required: true, placeholder: '20' },
+      { key: 'coefficient', label: 'Coefficient dans la matière', type: 'number', required: true, placeholder: '1' },
+    ],
+  },
+
   notes: {
     key: 'notes',
     endpoint: 'notes',
-    titre: 'Notes & bulletins',
+    titre: 'Notes',
     titreSingulier: 'une note',
     eyebrow: 'Pédagogie',
-    description: 'Saisie des notes par évaluation. Les bulletins sont calculés automatiquement à partir de ces notes.',
+    description:
+      'Vue tableau des notes déjà saisies. Pour saisir une classe entière, passe par '
+      + '« Saisie des notes » : la grille envoie tout en une fois.',
     columns: [
       { key: 'valeur', label: 'Note', type: 'number' },
       { key: 'appreciation', label: 'Appréciation' },
@@ -103,7 +140,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     fields: [
       { key: 'id_eleve', label: 'Élève', type: 'select', required: true, optionsEndpoint: 'eleves', optionsLabelKey: 'nom' },
       { key: 'id_evaluation', label: 'Évaluation', type: 'select', required: true, optionsEndpoint: 'evaluations', optionsLabelKey: 'type' },
-      { key: 'valeur', label: 'Note (sur 20)', type: 'number', required: true },
+      // Le barème appartient à l'évaluation : la note se saisit telle qu'elle
+      // est portée sur la copie, la conversion sur 20 est faite au calcul.
+      { key: 'valeur', label: 'Note (dans le barème de l’évaluation)', type: 'number', required: true },
       { key: 'appreciation', label: 'Appréciation', type: 'textarea', span2: true },
     ],
   },
@@ -163,7 +202,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'types-frais',
     titre: 'Types de frais',
     titreSingulier: 'un type de frais',
-    eyebrow: 'Gestion',
+    eyebrow: 'Gestion financière',
     description: 'Catalogue des frais applicables (mensualité, transport, uniforme...).',
     columns: [
       { key: 'libelle', label: 'Libellé' },
@@ -181,23 +220,60 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     ],
   },
 
+  'types-depenses': {
+    key: 'types-depenses',
+    endpoint: 'types-depenses',
+    titre: 'Catégories de dépenses',
+    titreSingulier: 'une catégorie',
+    eyebrow: 'Gestion financière',
+    description: 'Postes de charge de l’école : loyer, salaires, fournitures, transport… Ce sont eux qui structurent le bilan et les budgets.',
+    columns: [{ key: 'libelle', label: 'Catégorie' }],
+    fields: [
+      { key: 'libelle', label: 'Libellé', type: 'text', required: true, placeholder: 'Loyer' },
+    ],
+  },
+
+  budgets: {
+    key: 'budgets',
+    endpoint: 'budgets',
+    titre: 'Budgets',
+    titreSingulier: 'un budget',
+    eyebrow: 'Gestion financière',
+    description: 'Enveloppe prévue par poste de charge et par année. Le réalisé ne se saisit pas : il se constate à partir des dépenses.',
+    columns: [
+      { key: 'categorie', label: 'Intitulé' },
+      { key: 'categorie_depense', label: 'Poste de charge' },
+      { key: 'montant_prevu', label: 'Prévu', type: 'number' },
+      { key: 'montant_realise', label: 'Réalisé', type: 'number' },
+      { key: 'ecart', label: 'Écart', type: 'number' },
+    ],
+    fields: [
+      { key: 'categorie', label: 'Intitulé du budget', type: 'text', required: true, span2: true, placeholder: 'Charges fixes' },
+      { key: 'id_type_depense', label: 'Poste de charge', type: 'select', required: true, optionsEndpoint: 'types-depenses', optionsLabelKey: 'libelle' },
+      { key: 'id_annee_scolaire', label: 'Année scolaire', type: 'select', required: true, optionsEndpoint: 'annees-scolaires', optionsLabelKey: 'libelle' },
+      { key: 'montant_prevu', label: 'Montant prévu (F CFA)', type: 'number', required: true, aide: 'Le montant réalisé est mis à jour automatiquement par les dépenses.' },
+    ],
+  },
+
   depenses: {
     key: 'depenses',
     endpoint: 'depenses',
     titre: 'Dépenses',
     titreSingulier: 'une dépense',
-    eyebrow: 'Gestion',
+    eyebrow: 'Gestion financière',
     description: 'Dépenses de l\u2019école, catégorisées.',
     columns: [
+      { key: 'date_depense', label: 'Date', type: 'date' },
+      { key: 'categorie', label: 'Catégorie' },
       { key: 'motif', label: 'Motif' },
       { key: 'montant', label: 'Montant', type: 'number' },
-      { key: 'date_depense', label: 'Date', type: 'date' },
     ],
     fields: [
       { key: 'motif', label: 'Motif', type: 'text', required: true, span2: true },
       { key: 'id_type_depense', label: 'Catégorie', type: 'select', required: true, optionsEndpoint: 'types-depenses', optionsLabelKey: 'libelle' },
       { key: 'montant', label: 'Montant (F CFA)', type: 'number', required: true },
       { key: 'date_depense', label: 'Date', type: 'date', required: true },
+      { key: 'justificatif_url', label: 'Justificatif (lien)', type: 'text', span2: true, aide: 'Lien vers la facture ou le reçu numérisé.' },
     ],
   },
 
