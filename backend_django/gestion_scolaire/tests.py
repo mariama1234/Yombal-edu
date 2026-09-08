@@ -382,6 +382,62 @@ class TestAnneesScolaires(BaseAPI):
         }, format="json")
         self.assertEqual(r.status_code, 403)
 
+    def test_une_seule_annee_active_a_la_fois(self):
+        """
+        Deux années actives avaient bloqué toutes les inscriptions : l'écran se
+        présélectionnait sur la mauvaise et refusait ensuite chaque classe.
+        """
+        r = self.client.post("/api/annees-scolaires/", {
+            "libelle": "2027-2028", "date_debut": "2027-10-01",
+            "date_fin": "2028-07-31", "statut": "active",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+
+        self.annee.refresh_from_db()
+        self.assertEqual(self.annee.statut, "archivee",
+                         "ouvrir une année doit archiver la précédente")
+        actives = models.AnneeScolaire.objects.filter(id_ecole=self.ecole, statut="active")
+        self.assertEqual(actives.count(), 1)
+        self.assertEqual(actives.first().libelle, "2027-2028")
+
+    def test_reactiver_une_annee_archivee_bascule_l_autre(self):
+        suivante = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2027-2028",
+            date_debut=date(2027, 10, 1), date_fin=date(2028, 7, 31))
+        self.annee.refresh_from_db()
+        self.assertEqual(self.annee.statut, "archivee")
+
+        r = self.client.patch(f"/api/annees-scolaires/{self.annee.pk}/",
+                              {"statut": "active"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+
+        suivante.refresh_from_db()
+        self.assertEqual(suivante.statut, "archivee")
+        self.assertEqual(
+            models.AnneeScolaire.objects.filter(id_ecole=self.ecole, statut="active").count(), 1)
+
+    def test_l_exclusivite_ne_traverse_pas_les_ecoles(self):
+        """Ouvrir une année chez l'un ne doit rien archiver chez l'autre."""
+        annee_b = models.AnneeScolaire.objects.create(
+            id_ecole=self.autre, libelle="2026-2027",
+            date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31))
+
+        models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2027-2028",
+            date_debut=date(2027, 10, 1), date_fin=date(2028, 7, 31))
+
+        annee_b.refresh_from_db()
+        self.assertEqual(annee_b.statut, "active",
+                         "l'année de l'autre école ne doit pas être touchée")
+
+    def test_tout_archiver_reste_possible(self):
+        """Entre deux années, n'avoir aucune année active est un état légitime."""
+        r = self.client.patch(f"/api/annees-scolaires/{self.annee.pk}/",
+                              {"statut": "archivee"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(
+            models.AnneeScolaire.objects.filter(id_ecole=self.ecole, statut="active").count(), 0)
+
     def test_l_annee_expose_ce_qu_elle_porte(self):
         """Avant d'archiver une année, il faut voir si elle porte des données."""
         models.Eleve.objects.create(

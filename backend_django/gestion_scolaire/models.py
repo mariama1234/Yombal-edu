@@ -7,7 +7,7 @@ module élèves, module pédagogique, emploi du temps, module financier.
 from decimal import Decimal
 
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.db import models
+from django.db import models, transaction
 from django.core.validators import MinValueValidator
 
 
@@ -122,6 +122,28 @@ class AnneeScolaire(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["id_ecole", "libelle"], name="uq_annee_ecole")
         ]
+
+    def save(self, *args, **kwargs):
+        """
+        Une seule année active par école : activer celle-ci archive les autres.
+
+        L'invariant est tenu ici plutôt que dans la vue parce qu'il existe
+        plusieurs chemins d'activation — l'écran des années, les commandes de
+        seed, le shell — et qu'aucun ne doit pouvoir en laisser deux actives.
+        C'était la cause d'un blocage réel : l'écran d'inscription se
+        présélectionnait sur la mauvaise des deux, et refusait ensuite toutes
+        les classes proposées.
+
+        Le contraire — exiger qu'il en reste toujours une — n'est pas imposé :
+        entre deux années, tout archiver est un état légitime.
+        """
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if self.statut == self.Statut.ACTIVE:
+                # `update()` ne repasse pas par save() : pas de récursion.
+                AnneeScolaire.objects.filter(
+                    id_ecole_id=self.id_ecole_id, statut=self.Statut.ACTIVE,
+                ).exclude(pk=self.pk).update(statut=self.Statut.ARCHIVEE)
 
     def __str__(self):
         return self.libelle

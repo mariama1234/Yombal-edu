@@ -31,8 +31,10 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'date_fin', label: 'Dernier jour', type: 'date', required: true },
       {
         key: 'statut', label: 'Statut', type: 'select', required: true,
-        aide: 'Une seule année devrait être active à la fois : c’est celle que les '
-            + 'écrans proposent par défaut.',
+        aide: 'Une seule année est active à la fois : activer celle-ci archive '
+            + 'automatiquement les autres. C’est l’année que les écrans proposent '
+            + 'par défaut ; les archivées restent consultables par le filtre en '
+            + 'haut de page.',
         options: [
           { value: 'active', label: 'Active (année en cours)' },
           { value: 'archivee', label: 'Archivée' },
