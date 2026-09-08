@@ -61,6 +61,19 @@
   </div>
 </div>
 
+<div class="panel">
+  <div class="panel-head"><div class="panel-title">Accès rapides</div></div>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <a class="btn-ghost" routerLink="/eleves">Élèves</a>
+    <a class="btn-ghost" routerLink="/finances">Finances</a>
+    <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
+    <a class="btn-ghost" routerLink="/pedagogie/notes">Saisie des notes</a>
+    <a class="btn-ghost" routerLink="/pedagogie/bulletins">Bulletins</a>
+    <a class="btn-ghost" routerLink="/emploi-du-temps">Emploi du temps</a>
+    <a class="btn-ghost" routerLink="/classes">Classes</a>
+  </div>
+</div>
+
 @if (bilan(); as b) {
   <div class="panel">
     <div class="panel-head">
@@ -78,15 +91,118 @@
       {{ b.recouvrement.attendu | number:'1.0-0' }} F attendus.
     </p>
   </div>
+
+  <!-- Recettes et dépenses mois par mois. Des barres et non une courbe :
+       une somme mensuelle est un agrégat, pas un continuum qu'on interpole. -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Recettes et dépenses par mois</div>
+      <div class="legende">
+        <span class="legende-cle"><i style="background:var(--serie-1);"></i>Recettes</span>
+        <span class="legende-cle"><i style="background:var(--serie-2);"></i>Dépenses</span>
+      </div>
+    </div>
+
+    @if (mois().length === 0) {
+      <p style="color:var(--ink-400); font-size:13px;">
+        Aucun encaissement ni dépense enregistré sur cette année.
+      </p>
+    } @else {
+      <div style="overflow-x:auto;">
+        <svg [attr.viewBox]="'0 0 ' + geometrie.largeur + ' ' + geometrie.hauteur"
+             style="width:100%; min-width:520px; height:auto; display:block;"
+             role="img" aria-label="Recettes et dépenses par mois">
+          <!-- Graduations : chaque étiquette nomme une valeur que l'axe atteint. -->
+          @for (g of graduations(); track g.y) {
+            <line [attr.x1]="geometrie.gauche" [attr.x2]="geometrie.largeur - geometrie.droite"
+                  [attr.y1]="g.y" [attr.y2]="g.y"
+                  stroke="var(--line)" stroke-width="1"></line>
+            <text [attr.x]="geometrie.gauche - 10" [attr.y]="g.y + 4" text-anchor="end"
+                  font-size="10.5" fill="var(--ink-400)">{{ abrege(g.valeur) }}</text>
+          }
+
+          @for (m of mois(); track m.cle) {
+            <g (mouseenter)="survoler(m)" (mouseleave)="survoler(null)"
+               [attr.opacity]="moisSurvole() && moisSurvole()!.cle !== m.cle ? 0.45 : 1">
+              <!-- Zone de survol plus large que les barres. -->
+              <rect [attr.x]="m.barreRecettes.x - 6" [attr.y]="geometrie.haut"
+                    [attr.width]="m.barreRecettes.largeur * 2 + 14"
+                    [attr.height]="baseY() - geometrie.haut"
+                    fill="transparent"></rect>
+              <rect [attr.x]="m.barreRecettes.x" [attr.y]="m.barreRecettes.y"
+                    [attr.width]="m.barreRecettes.largeur" [attr.height]="m.barreRecettes.hauteur"
+                    fill="var(--serie-1)" rx="3"></rect>
+              <rect [attr.x]="m.barreDepenses.x" [attr.y]="m.barreDepenses.y"
+                    [attr.width]="m.barreDepenses.largeur" [attr.height]="m.barreDepenses.hauteur"
+                    fill="var(--serie-2)" rx="3"></rect>
+              <title>{{ m.libelle }} — recettes {{ m.recettes | number:'1.0-0' }} F, dépenses {{ m.depenses | number:'1.0-0' }} F</title>
+            </g>
+            <text [attr.x]="m.centre" [attr.y]="geometrie.hauteur - 14" text-anchor="middle"
+                  font-size="10.5" fill="var(--ink-400)">{{ m.libelle }}</text>
+          }
+
+          <line [attr.x1]="geometrie.gauche" [attr.x2]="geometrie.largeur - geometrie.droite"
+                [attr.y1]="baseY()" [attr.y2]="baseY()"
+                stroke="var(--ink-400)" stroke-width="1"></line>
+        </svg>
+      </div>
+
+      <!-- Détail du mois survolé, sous le graphique plutôt qu'en bulle
+           flottante : lisible aussi au clavier et au doigt. -->
+      <div class="detail-survol">
+        @if (moisSurvole(); as m) {
+          <strong>{{ m.libelle }}</strong>
+          <span>Recettes {{ m.recettes | number:'1.0-0' }} F</span>
+          <span>Dépenses {{ m.depenses | number:'1.0-0' }} F</span>
+          <span [style.color]="m.solde < 0 ? 'var(--red)' : 'var(--green)'">
+            Solde {{ m.solde | number:'1.0-0' }} F
+          </span>
+        } @else {
+          <span style="color:var(--ink-400);">Survolez un mois pour le détail.</span>
+        }
+      </div>
+    }
+  </div>
 }
 
+<!-- Effectifs : série unique, donc une seule couleur et aucune légende — le
+     titre suffit à dire ce qu'on lit. -->
 <div class="panel">
-  <div class="panel-head"><div class="panel-title">Accès rapides</div></div>
-  <div style="display:flex; gap:10px; flex-wrap:wrap;">
-    <a class="btn-ghost" routerLink="/eleves">Élèves</a>
-    <a class="btn-ghost" routerLink="/finances">Finances</a>
-    <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
-    <a class="btn-ghost" routerLink="/emploi-du-temps">Emploi du temps</a>
-    <a class="btn-ghost" routerLink="/classes">Classes</a>
+  <div class="panel-head">
+    <div class="panel-title">Effectifs par classe</div>
+    <a class="panel-link" routerLink="/classes">Toutes les classes →</a>
   </div>
+
+  @if (effectifs().length === 0) {
+    <p style="color:var(--ink-400); font-size:13px;">Aucune classe sur cette année.</p>
+  } @else {
+    <p style="font-size:12.5px; color:var(--ink-600); margin:0 0 14px;">
+      {{ totalEffectif() | number:'1.0-0' }} élèves répartis sur
+      {{ effectifs().length }} classes.
+      @if (classesSaturees() > 0) {
+        <strong style="color:var(--orange-500);">
+          {{ classesSaturees() }} classe(s) à pleine capacité.
+        </strong>
+      }
+    </p>
+
+    <div class="barres-classes">
+      @for (c of effectifs(); track c.nom) {
+        <div class="barre-ligne">
+          <span class="barre-nom">{{ c.nom }}</span>
+          <span class="barre-piste">
+            <span class="barre-remplie" [class.saturee]="c.saturee"
+                  [style.width.%]="c.largeur"></span>
+          </span>
+          <span class="barre-valeur mono">
+            {{ c.effectif }}@if (c.capacite) { / {{ c.capacite }} }
+          </span>
+          <span class="barre-etat">
+            @if (c.saturee) { <span class="pill-sature">pleine</span> }
+            @else if (c.capacite) { {{ c.remplissage }} % }
+          </span>
+        </div>
+      }
+    </div>
+  }
 </div>
