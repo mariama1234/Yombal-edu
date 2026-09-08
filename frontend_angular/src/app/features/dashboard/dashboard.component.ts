@@ -144,6 +144,30 @@ export class DashboardComponent implements OnInit {
       });
   }
 
+  // ---- Suivi budgétaire ------------------------------------------------
+
+  /**
+   * Budgets triés par consommation décroissante : un poste à 95 % en février
+   * est une alerte, un poste à 20 % n'appelle rien. Le dépassement est calculé
+   * ici pour que le gabarit n'ait pas à comparer des nombres.
+   */
+  budgets = computed(() => {
+    const lignes = this.bilan()?.budgets ?? [];
+    return [...lignes]
+      .sort((a, b) => b.consomme - a.consomme)
+      .map((b) => ({
+        ...b,
+        // La barre se lit sur 100 % ; le dépassement est dit en toutes lettres
+        // plutôt que dessiné hors de sa piste.
+        remplissage: Math.min(100, b.consomme),
+        depasse: b.realise > b.prevu,
+      }));
+  });
+
+  totalPrevu = computed(() => this.budgets().reduce((t, b) => t + b.prevu, 0));
+  totalRealise = computed(() => this.budgets().reduce((t, b) => t + b.realise, 0));
+  budgetsDepasses = computed(() => this.budgets().filter((b) => b.depasse).length);
+
   // ---- Recouvrement et assiduité --------------------------------------
 
   /** Les cinq classes qui doivent le plus : c'est par là qu'on commence. */
