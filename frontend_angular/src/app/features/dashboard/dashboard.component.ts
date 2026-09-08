@@ -5,7 +5,14 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { AuthService } from '../../core/services/auth.service';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
-import { Bilan, Classe, Paginated, SyntheseEcole } from '../../core/models/models';
+import {
+  Bilan,
+  Classe,
+  ImpayesParClasse,
+  Paginated,
+  SyntheseAssiduite,
+  SyntheseEcole,
+} from '../../core/models/models';
 import { FinanceService } from '../finances/finance.service';
 
 /** Une barre prête à dessiner, en coordonnées du viewBox. */
@@ -61,6 +68,8 @@ export class DashboardComponent implements OnInit {
   bilan = signal<Bilan | null>(null);
   classes = signal<Classe[]>([]);
   synthese = signal<SyntheseEcole | null>(null);
+  impayes = signal<ImpayesParClasse | null>(null);
+  assiduite = signal<SyntheseAssiduite | null>(null);
 
   /** Mentions dans l'ordre du barème, pour l'histogramme de répartition. */
   private readonly ORDRE_MENTIONS = ['Excellent', 'Très bien', 'Bien', 'Assez bien',
@@ -116,6 +125,50 @@ export class DashboardComponent implements OnInit {
         next: (s) => this.synthese.set(s),
         error: () => this.synthese.set(null),
       });
+
+    this.http
+      .get<ImpayesParClasse>(
+        `${environment.apiUrl}/frais-eleves/impayes/par-classe/${suffixe}`)
+      .subscribe({
+        next: (i) => this.impayes.set(i),
+        // Le caissier n'est pas seul à ouvrir cet écran : un enseignant n'a
+        // pas accès aux finances, et le panneau disparaît simplement.
+        error: () => this.impayes.set(null),
+      });
+
+    this.http
+      .get<SyntheseAssiduite>(`${environment.apiUrl}/absences/synthese/${suffixe}`)
+      .subscribe({
+        next: (a) => this.assiduite.set(a),
+        error: () => this.assiduite.set(null),
+      });
+  }
+
+  // ---- Recouvrement et assiduité --------------------------------------
+
+  /** Les cinq classes qui doivent le plus : c'est par là qu'on commence. */
+  classesDebitrices = computed(() => (this.impayes()?.classes ?? []).slice(0, 5));
+
+  /** Part du reste dû, pour dimensionner les barres du panneau impayés. */
+  partReste(reste: number): number {
+    const maximum = Math.max(1, ...(this.impayes()?.classes ?? []).map((c) => c.reste));
+    return (reste / maximum) * 100;
+  }
+
+  aDesImpayes = computed(() => (this.impayes()?.classes?.length ?? 0) > 0);
+
+  aDeLAssiduite = computed(() => {
+    const total = this.assiduite()?.total;
+    return !!total && total.absences + total.retards > 0;
+  });
+
+  classesAbsenteistes = computed(() => (this.assiduite()?.classes ?? []).slice(0, 5));
+  elevesAbsenteistes = computed(() => (this.assiduite()?.eleves ?? []).slice(0, 5));
+
+  partAssiduite(nombre: number): number {
+    const classes = this.assiduite()?.classes ?? [];
+    const maximum = Math.max(1, ...classes.map((c) => c.absences + c.retards));
+    return (nombre / maximum) * 100;
   }
 
   // ---- Résultats de l'école -------------------------------------------

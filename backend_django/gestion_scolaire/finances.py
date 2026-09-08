@@ -24,7 +24,7 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
-from django.db.models import Count, DecimalField, Q, Sum, Value
+from django.db.models import Count, DecimalField, F, Q, Sum, Value
 from django.db.models.functions import Coalesce, TruncMonth
 from django.utils import timezone
 
@@ -327,6 +327,84 @@ def generer_relances(ecole, canal, jours_retard=0, delai_min=7, appliquer=True):
 # ---------------------------------------------------------------------------
 # Bilan financier
 # ---------------------------------------------------------------------------
+
+def impayes_par_classe(ecole, annee):
+    """
+    Reste à recouvrer, classe par classe.
+
+    « Il reste douze millions à encaisser » ne dit pas où aller chercher :
+    c'est la classe qui donne la liste d'appel et le professeur principal par
+    qui passer. Le classement se fait sur le reste dû, décroissant.
+
+    Deux requêtes plutôt qu'un `aggregate` unique : joindre les frais *et*
+    les paiements dans la même requête multiplie les lignes de frais par le
+    nombre de paiements et gonfle le montant dû d'autant.
+    """
+    if annee.id_ecole_id != ecole.pk:
+        raise ErreurFinance("Cette année scolaire appartient à une autre école.")
+
+    inscriptions = (models.Inscription.objects
+                    .filter(id_annee_scolaire=annee, id_eleve__id_ecole=ecole)
+                    .exclude(statut=models.Inscription.Statut.ANNULEE))
+
+    facture = {
+        ligne["id_classe"]: ligne
+        for ligne in inscriptions.values("id_classe", "id_classe__nom").annotate(
+            du=_somme("id_eleve__frais__montant_du",
+                      Q(id_eleve__frais__id_annee_scolaire=annee)),
+            eleves=Count("id_eleve", distinct=True),
+        )
+    }
+
+    encaisse = {
+        ligne["id_classe"]: ligne["paye"]
+        for ligne in models.Paiement.objects
+        .filter(id_frais_eleve__id_annee_scolaire=annee,
+                id_frais_eleve__id_eleve__id_ecole=ecole,
+                id_frais_eleve__id_eleve__inscriptions__id_annee_scolaire=annee)
+        .values(id_classe=F("id_frais_eleve__id_eleve__inscriptions__id_classe"))
+        .annotate(paye=_somme("montant"))
+    }
+
+    # Élèves dont au moins une échéance est dépassée : ce sont eux qu'on
+    # relance en premier, indépendamment du montant.
+    aujourdhui = timezone.localdate()
+    en_retard = {
+        ligne["id_classe"]: ligne["nombre"]
+        for ligne in inscriptions
+        .filter(id_eleve__frais__id_annee_scolaire=annee,
+                id_eleve__frais__echeance__lt=aujourdhui)
+        .exclude(id_eleve__frais__statut=models.FraisEleve.Statut.PAYE)
+        .values("id_classe")
+        .annotate(nombre=Count("id_eleve", distinct=True))
+    }
+
+    lignes = []
+    for id_classe, ligne in facture.items():
+        du = ligne["du"] or ZERO
+        paye = encaisse.get(id_classe, ZERO) or ZERO
+        reste = du - paye
+        if du <= ZERO:
+            continue
+        lignes.append({
+            "id_classe": id_classe,
+            "classe": ligne["id_classe__nom"],
+            "eleves": ligne["eleves"],
+            "eleves_en_retard": en_retard.get(id_classe, 0),
+            "du": montant_json(du),
+            "paye": montant_json(paye),
+            "reste": montant_json(reste),
+            "taux": float(round(paye * 100 / du, 1)) if du else 0.0,
+        })
+
+    lignes.sort(key=lambda l: l["reste"], reverse=True)
+    return {
+        "annee": annee.libelle,
+        "id_annee_scolaire": annee.pk,
+        "total_reste": montant_json(sum(Decimal(str(l["reste"])) for l in lignes)),
+        "classes": lignes,
+    }
+
 
 def bilan(ecole, annee=None, debut=None, fin=None):
     """

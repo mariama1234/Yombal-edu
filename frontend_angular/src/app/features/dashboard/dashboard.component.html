@@ -165,6 +165,120 @@
   </div>
 }
 
+<!-- Impayés par classe : un montant global ne dit pas où aller chercher. -->
+@if (aDesImpayes()) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Reste à recouvrer par classe</div>
+      <a class="panel-link" routerLink="/finances">Voir les impayés →</a>
+    </div>
+    <p style="font-size:12.5px; color:var(--ink-600); margin:0 0 14px;">
+      {{ impayes()!.total_reste | number:'1.0-0' }} F CFA à encaisser, répartis sur
+      {{ impayes()!.classes.length }} classes.
+    </p>
+
+    <div class="barres-classes">
+      @for (c of classesDebitrices(); track c.id_classe) {
+        <div class="barre-ligne">
+          <span class="barre-nom">{{ c.classe }}</span>
+          <span class="barre-piste">
+            <span class="barre-remplie" [class.saturee]="c.eleves_en_retard > 0"
+                  [style.width.%]="partReste(c.reste)"></span>
+          </span>
+          <span class="barre-valeur mono">{{ c.reste | number:'1.0-0' }} F</span>
+          <span class="barre-etat">
+            @if (c.eleves_en_retard > 0) {
+              <span class="pill-sature">{{ c.eleves_en_retard }} en retard</span>
+            } @else { {{ c.taux | number:'1.0-0' }} % payé }
+          </span>
+        </div>
+      }
+    </div>
+    <p style="font-size:11.5px; color:var(--ink-400); margin:12px 0 0;">
+      Une classe est signalée dès qu'un élève a une échéance dépassée, quel que
+      soit le montant.
+    </p>
+  </div>
+}
+
+<!-- Assiduité : sur les trente derniers jours, pas sur l'année cumulée. -->
+@if (assiduite(); as a) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        Assiduité @if (a.jours) { — {{ a.jours }} derniers jours }
+      </div>
+      <a class="panel-link" routerLink="/presences">Toutes les absences →</a>
+    </div>
+
+    @if (!aDeLAssiduite()) {
+      <p style="color:var(--ink-400); font-size:13px;">
+        @if (a.detail) { {{ a.detail }} }
+        @else { Aucune absence ni retard enregistré sur la période. }
+      </p>
+    } @else {
+      <div class="tile-grid-generic" style="margin-bottom:18px;">
+        <div class="tile-generic">
+          <div class="tile-generic-label">Absences</div>
+          <div class="tile-generic-value">{{ a.total!.absences }}</div>
+          <div class="tile-generic-meta">{{ a.total!.eleves }} élèves concernés</div>
+        </div>
+        <div class="tile-generic">
+          <div class="tile-generic-label">Retards</div>
+          <div class="tile-generic-value">{{ a.total!.retards }}</div>
+          <div class="tile-generic-meta">sur la même période</div>
+        </div>
+        <div class="tile-generic">
+          <div class="tile-generic-label">Non justifiées</div>
+          <div class="tile-generic-value">{{ a.total!.non_justifiees }}</div>
+          <div class="tile-generic-meta">à traiter avec les familles</div>
+        </div>
+      </div>
+
+      <div class="bloc-resultats">
+        <div>
+          <div class="sous-titre">Classes les plus touchées</div>
+          <div class="barres-classes">
+            @for (c of classesAbsenteistes(); track c.id_classe) {
+              <div class="barre-ligne">
+                <span class="barre-nom">{{ c.classe }}</span>
+                <span class="barre-piste">
+                  <span class="barre-remplie" [class.saturee]="c.non_justifiees > 0"
+                        [style.width.%]="partAssiduite(c.absences + c.retards)"></span>
+                </span>
+                <span class="barre-valeur mono">{{ c.absences }} abs.</span>
+                <span class="barre-etat">{{ c.retards }} ret.</span>
+              </div>
+            }
+          </div>
+        </div>
+
+        <div>
+          <div class="sous-titre">Élèves les plus absents</div>
+          <table class="simple">
+            <tbody>
+              @for (e of elevesAbsenteistes(); track e.id_eleve) {
+                <tr>
+                  <td>
+                    {{ e.nom }}
+                    <br><span class="mono" style="font-size:11px; color:var(--ink-400);">{{ e.classe }}</span>
+                  </td>
+                  <td class="mono" style="text-align:right;">{{ e.absences }} abs.</td>
+                  <td class="mono" style="text-align:right; color:var(--ink-400);">
+                    @if (e.non_justifiees > 0) {
+                      <span style="color:var(--serie-2);">{{ e.non_justifiees }} non just.</span>
+                    } @else { — }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    }
+  </div>
+}
+
 <!-- Résultats de l'école. Le tableau de bord ne disait rien du pédagogique,
      qui est pourtant le cœur du métier. -->
 @if (synthese(); as s) {

@@ -27,10 +27,11 @@ rang suivant saute d'autant (1, 2, 2, 4).
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
+from django.db.models import Count, Q
 
 from . import models
 
@@ -593,6 +594,92 @@ def evolution_resultats(ecole, annee):
             continue
         lignes.append({"periode": periode.libelle, **_bloc_statistique(moyennes)})
     return lignes
+
+
+# ---------------------------------------------------------------------------
+# Assiduité (« suivi de l'assiduité des élèves » du TDR)
+# ---------------------------------------------------------------------------
+
+def assiduite(ecole, annee, jours=30, aujourdhui=None):
+    """
+    Absences et retards sur une fenêtre glissante, par classe.
+
+    Une absence de novembre ne dit rien d'utile en juin : l'assiduité se
+    surveille sur les dernières semaines, pas sur le cumul de l'année. La
+    fenêtre par défaut couvre le mois écoulé.
+
+    Les non-justifiées sont comptées à part parce que ce sont les seules qui
+    appellent une action — un mot aux parents, une convocation.
+    """
+    if annee.id_ecole_id != ecole.pk:
+        raise ErreurPedagogie("Cette année scolaire appartient à une autre école.")
+    jours = max(1, min(int(jours), 365))
+
+    aujourdhui = aujourdhui or date.today()
+    depuis = aujourdhui - timedelta(days=jours)
+
+    faits = (models.Absence.objects
+             .filter(id_classe__id_annee_scolaire=annee,
+                     id_classe__id_ecole=ecole,
+                     date_absence__date__gte=depuis,
+                     date_absence__date__lte=aujourdhui))
+
+    totaux = faits.aggregate(
+        absences=Count("pk", filter=Q(statut=models.Absence.Statut.ABSENT)),
+        retards=Count("pk", filter=Q(statut=models.Absence.Statut.RETARD)),
+        non_justifiees=Count("pk", filter=Q(justifiee=False)),
+        eleves=Count("id_eleve", distinct=True),
+    )
+
+    par_classe = [
+        {
+            "id_classe": ligne["id_classe"],
+            "classe": ligne["id_classe__nom"],
+            "absences": ligne["absences"],
+            "retards": ligne["retards"],
+            "non_justifiees": ligne["non_justifiees"],
+            "eleves": ligne["eleves"],
+        }
+        for ligne in faits.values("id_classe", "id_classe__nom").annotate(
+            absences=Count("pk", filter=Q(statut=models.Absence.Statut.ABSENT)),
+            retards=Count("pk", filter=Q(statut=models.Absence.Statut.RETARD)),
+            non_justifiees=Count("pk", filter=Q(justifiee=False)),
+            eleves=Count("id_eleve", distinct=True),
+        )
+    ]
+    # Les classes les plus touchées en tête : c'est là qu'on intervient.
+    par_classe.sort(key=lambda c: c["absences"] + c["retards"], reverse=True)
+
+    # Élèves les plus absents, pour nommer les situations individuelles.
+    eleves = [
+        {
+            "id_eleve": ligne["id_eleve"],
+            "nom": f"{ligne['id_eleve__prenom']} {ligne['id_eleve__nom']}",
+            "matricule": ligne["id_eleve__matricule"],
+            "classe": ligne["id_classe__nom"],
+            "absences": ligne["absences"],
+            "retards": ligne["retards"],
+            "non_justifiees": ligne["non_justifiees"],
+        }
+        for ligne in faits.values(
+            "id_eleve", "id_eleve__nom", "id_eleve__prenom", "id_eleve__matricule",
+            "id_classe__nom",
+        ).annotate(
+            absences=Count("pk", filter=Q(statut=models.Absence.Statut.ABSENT)),
+            retards=Count("pk", filter=Q(statut=models.Absence.Statut.RETARD)),
+            non_justifiees=Count("pk", filter=Q(justifiee=False)),
+        ).order_by("-absences", "-retards")[:10]
+    ]
+
+    return {
+        "annee": annee.libelle,
+        "id_annee_scolaire": annee.pk,
+        "jours": jours,
+        "depuis": depuis,
+        "total": totaux,
+        "classes": par_classe,
+        "eleves": eleves,
+    }
 
 
 # ---------------------------------------------------------------------------

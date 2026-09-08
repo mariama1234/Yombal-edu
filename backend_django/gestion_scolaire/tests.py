@@ -16,6 +16,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from . import exports, finances, imports_eleves, models, pedagogie, scolarite
@@ -1614,6 +1615,127 @@ class TestGenerationDesFrais(BaseFinances):
         self._generer()
         self.assertTrue(models.JournalActivite.objects
                         .filter(entite="frais_eleve", action="creation").exists())
+
+
+class TestImpayesParClasse(BaseFinances):
+    """
+    « Il reste douze millions à encaisser » ne dit pas où aller chercher :
+    c'est la classe qui donne la liste d'appel.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.classe_b = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=self.niveau,
+            nom="6ème B", capacite_max=40)
+        self.eleve_b = self._inscrire("E-9", "Autre", classe=self.classe_b)
+
+        # 6ème A : trois élèves à 25 000, dont un a payé 10 000.
+        for eleve in self.eleves:
+            models.FraisEleve.objects.create(
+                id_eleve=eleve, id_type_frais=self.type_frais,
+                id_annee_scolaire=self.annee, montant_du=25000,
+                echeance=date.today() + timedelta(days=30))
+        premier = models.FraisEleve.objects.get(id_eleve=self.eleves[0])
+        models.Paiement.objects.create(
+            id_frais_eleve=premier, montant=10000, methode="especes")
+
+        # 6ème B : un élève à 25 000, échéance dépassée, rien payé.
+        models.FraisEleve.objects.create(
+            id_eleve=self.eleve_b, id_type_frais=self.type_frais,
+            id_annee_scolaire=self.annee, montant_du=25000,
+            echeance=date.today() - timedelta(days=5))
+
+    def _classes(self):
+        r = self.client.get(
+            f"/api/frais-eleves/impayes/par-classe/?id_annee_scolaire={self.annee.pk}")
+        self.assertEqual(r.status_code, 200, r.content)
+        return r.data
+
+    def test_montants_par_classe(self):
+        donnees = self._classes()
+        par_nom = {c["classe"]: c for c in donnees["classes"]}
+
+        self.assertEqual(par_nom["6ème A"]["du"], 75000.0)
+        self.assertEqual(par_nom["6ème A"]["paye"], 10000.0)
+        self.assertEqual(par_nom["6ème A"]["reste"], 65000.0)
+        self.assertEqual(par_nom["6ème B"]["reste"], 25000.0)
+        self.assertEqual(donnees["total_reste"], 90000.0)
+
+    def test_le_du_ne_double_pas_avec_plusieurs_paiements(self):
+        """Joindre frais et paiements dans la même requête gonflerait le dû."""
+        premier = models.FraisEleve.objects.get(id_eleve=self.eleves[0])
+        for _ in range(3):
+            models.Paiement.objects.create(
+                id_frais_eleve=premier, montant=1000, methode="especes")
+
+        par_nom = {c["classe"]: c for c in self._classes()["classes"]}
+        self.assertEqual(par_nom["6ème A"]["du"], 75000.0,
+                         "le montant dû ne dépend pas du nombre de paiements")
+        self.assertEqual(par_nom["6ème A"]["paye"], 13000.0)
+
+    def test_classement_par_reste_decroissant(self):
+        restes = [c["reste"] for c in self._classes()["classes"]]
+        self.assertEqual(restes, sorted(restes, reverse=True))
+
+    def test_eleves_en_retard_comptes(self):
+        par_nom = {c["classe"]: c for c in self._classes()["classes"]}
+        self.assertEqual(par_nom["6ème B"]["eleves_en_retard"], 1)
+        self.assertEqual(par_nom["6ème A"]["eleves_en_retard"], 0,
+                         "les échéances à venir ne sont pas des retards")
+
+    def test_isolation_entre_ecoles(self):
+        r = self.client_autre.get(
+            f"/api/frais-eleves/impayes/par-classe/?id_annee_scolaire={self.annee.pk}")
+        self.assertEqual(r.status_code, 400,
+                         "l'année d'une autre école ne doit pas être exploitable")
+
+
+class TestAssiduite(BasePedagogie):
+    """Absences et retards sur une fenêtre glissante, pas sur l'année entière."""
+
+    def setUp(self):
+        super().setUp()
+        maintenant = timezone.now()
+        for jours, statut, justifiee in [
+            (2, "absent", False), (3, "absent", True), (5, "retard", False),
+            (50, "absent", False),  # hors fenêtre de 30 jours
+        ]:
+            models.Absence.objects.create(
+                id_eleve=self.eleve, id_classe=self.classe,
+                date_absence=maintenant - timedelta(days=jours),
+                statut=statut, justifiee=justifiee)
+
+    def test_fenetre_glissante(self):
+        r = self.client.get("/api/absences/synthese/?jours=30")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.data["total"]["absences"], 2,
+                         "l'absence d'il y a 50 jours sort de la fenêtre")
+        self.assertEqual(r.data["total"]["retards"], 1)
+        self.assertEqual(r.data["total"]["non_justifiees"], 2)
+
+    def test_fenetre_elargie(self):
+        r = self.client.get("/api/absences/synthese/?jours=90")
+        self.assertEqual(r.data["total"]["absences"], 3)
+
+    def test_classes_les_plus_touchees_en_tete(self):
+        r = self.client.get("/api/absences/synthese/?jours=30")
+        classes = r.data["classes"]
+        self.assertEqual(classes[0]["classe"], self.classe.nom)
+        self.assertEqual(classes[0]["absences"], 2)
+
+    def test_eleves_les_plus_absents(self):
+        r = self.client.get("/api/absences/synthese/?jours=30")
+        self.assertEqual(len(r.data["eleves"]), 1)
+        self.assertEqual(r.data["eleves"][0]["matricule"], self.eleve.matricule)
+
+    def test_jours_illisible_refuse(self):
+        r = self.client.get("/api/absences/synthese/?jours=beaucoup")
+        self.assertEqual(r.status_code, 400, r.content)
+
+    def test_interdit_au_parent(self):
+        r = self._client(self.parent_user.email).get("/api/absences/synthese/")
+        self.assertEqual(r.status_code, 403)
 
 
 class TestRelancesAutomatiques(BaseFinances):

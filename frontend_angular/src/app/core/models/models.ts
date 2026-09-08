@@ -616,6 +616,51 @@ export interface StatistiquesClasse {
   matieres: (BlocStatistique & { matiere: string })[];
 }
 
+/** Réponse de GET /frais-eleves/impayes/par-classe/. */
+export interface ImpayesParClasse {
+  annee: string | null;
+  detail?: string;
+  id_annee_scolaire?: number;
+  total_reste: number;
+  classes: {
+    id_classe: number;
+    classe: string;
+    eleves: number;
+    /** Élèves dont au moins une échéance est dépassée. */
+    eleves_en_retard: number;
+    du: number;
+    paye: number;
+    reste: number;
+    taux: number;
+  }[];
+}
+
+/** Réponse de GET /absences/synthese/ — assiduité sur une fenêtre glissante. */
+export interface SyntheseAssiduite {
+  annee: string | null;
+  detail?: string;
+  jours?: number;
+  depuis?: string;
+  total?: { absences: number; retards: number; non_justifiees: number; eleves: number };
+  classes: {
+    id_classe: number;
+    classe: string;
+    absences: number;
+    retards: number;
+    non_justifiees: number;
+    eleves: number;
+  }[];
+  eleves: {
+    id_eleve: number;
+    nom: string;
+    matricule: string;
+    classe: string;
+    absences: number;
+    retards: number;
+    non_justifiees: number;
+  }[];
+}
+
 /** Réponse de GET /bulletins/synthese/ — résultats de toute l'école. */
 export interface SyntheseEcole {
   periode: string | null;

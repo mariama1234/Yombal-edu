@@ -54,6 +54,24 @@ def _date_param(request, nom):
     return valeur
 
 
+def _annee_demandee(request, ecole):
+    """
+    Année visée par une vue de synthèse : celle de l'URL, sinon l'année active.
+
+    Renvoie `None` quand l'école n'a aucune année active — un tableau de bord
+    doit l'annoncer, pas échouer sur une école qui démarre.
+    """
+    brut = request.query_params.get("id_annee_scolaire")
+    if brut:
+        try:
+            return models.AnneeScolaire.objects.get(pk=brut, id_ecole=ecole)
+        except (models.AnneeScolaire.DoesNotExist, ValueError, TypeError):
+            raise ValidationError({"id_annee_scolaire": "Année inconnue pour cette école."})
+    return (models.AnneeScolaire.objects
+            .filter(id_ecole=ecole, statut=models.AnneeScolaire.Statut.ACTIVE)
+            .order_by("-date_debut").first())
+
+
 def _fichier(request, document, description=None, entite="finances"):
     """
     Renvoie un export en téléchargement, et le trace.
@@ -996,6 +1014,29 @@ class AbsenceViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMix
     filterset_fields = ["id_eleve", "id_classe", "statut", "justifiee"]
     chemin_annee = "id_classe__id_annee_scolaire"
 
+    @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"])
+    def synthese(self, request):
+        """
+        Assiduité récente : GET /api/absences/synthese/?jours=30
+
+        Sur une fenêtre glissante et non sur l'année entière : une absence de
+        novembre ne dit rien d'utile en juin.
+        """
+        ecole = request.user.id_ecole
+        annee = _annee_demandee(request, ecole)
+        if annee is None:
+            return Response({"annee": None, "classes": [], "eleves": [],
+                             "detail": "Aucune année scolaire active."})
+        try:
+            jours = int(request.query_params.get("jours") or 30)
+        except ValueError:
+            raise ValidationError({"jours": "Nombre de jours attendu."})
+        try:
+            return Response(pedagogie.assiduite(ecole, annee, jours=jours))
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
     def get_queryset(self):
         return super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
 
@@ -1100,6 +1141,26 @@ class FraisEleveViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnnee
             )
         statut = status.HTTP_201_CREATED if valider else status.HTTP_200_OK
         return Response(resultat, status=statut)
+
+    @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"], url_path="impayes/par-classe")
+    def impayes_par_classe(self, request):
+        """
+        Reste à recouvrer par classe :
+        GET /api/frais-eleves/impayes/par-classe/?id_annee_scolaire=
+
+        Un montant global ne dit pas où aller chercher ; la classe donne la
+        liste d'appel et le professeur principal par qui passer.
+        """
+        ecole = request.user.id_ecole
+        annee = _annee_demandee(request, ecole)
+        if annee is None:
+            return Response({"annee": None, "classes": [], "total_reste": 0,
+                             "detail": "Aucune année scolaire active."})
+        try:
+            return Response(finances.impayes_par_classe(ecole, annee))
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
 
     @action(detail=False, methods=["get"], url_path="impayes/export")
     def exporter_impayes(self, request):
