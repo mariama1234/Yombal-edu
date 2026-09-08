@@ -178,11 +178,73 @@ class EcoleSerializer(serializers.ModelSerializer):
 
 # ---------- Module élèves ----------
 
-class AnneeScolaireSerializer(serializers.ModelSerializer):
+class UniciteParEcoleMixin:
+    """
+    Rejette proprement un doublon sur une contrainte du type
+    (id_ecole, champ).
+
+    DRF ne peut pas générer le validateur lui-même : `id_ecole` est en lecture
+    seule — il vient du compte connecté, jamais du corps de la requête — donc
+    il ne fait pas partie des données validées. Sans ce contrôle, un doublon
+    remonte en `IntegrityError` et l'utilisateur reçoit une erreur 500 muette
+    là où il attend « ce libellé existe déjà ».
+
+    `champ_unique` nomme la colonne, `message_unicite` le texte affiché.
+    """
+    champ_unique = None
+    message_unicite = "Cette valeur existe déjà pour votre école."
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        requete = self.context.get("request")
+        if requete is None or self.champ_unique is None:
+            return attrs
+
+        valeur = attrs.get(self.champ_unique,
+                           getattr(self.instance, self.champ_unique, None))
+        if valeur in (None, ""):
+            return attrs
+
+        doublons = self.Meta.model.objects.filter(
+            id_ecole_id=requete.user.id_ecole_id, **{self.champ_unique: valeur})
+        if self.instance is not None:
+            doublons = doublons.exclude(pk=self.instance.pk)
+        if doublons.exists():
+            raise serializers.ValidationError({self.champ_unique: self.message_unicite})
+        return attrs
+
+
+class AnneeScolaireSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
+    champ_unique = "libelle"
+    message_unicite = "Une année scolaire porte déjà ce libellé dans votre école."
+
+    # Compté côté serveur : l'écran des années a besoin de savoir si une année
+    # porte déjà des classes ou des inscriptions avant qu'on l'archive.
+    nombre_classes = serializers.IntegerField(source="classes.count", read_only=True)
+    nombre_inscriptions = serializers.IntegerField(source="inscriptions.count", read_only=True)
+
     class Meta:
         model = models.AnneeScolaire
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+
+    def validate(self, attrs):
+        """
+        Une année qui se termine avant d'avoir commencé rendrait toutes les
+        périodes qu'on y rattache invalides — `PeriodeScolaireSerializer` exige
+        qu'elles tiennent dans ces dates.
+        """
+        # Le `super()` porte le contrôle d'unicité du mixin : sans lui, il
+        # serait purement et simplement sauté.
+        attrs = super().validate(attrs)
+
+        debut = attrs.get("date_debut", getattr(self.instance, "date_debut", None))
+        fin = attrs.get("date_fin", getattr(self.instance, "date_fin", None))
+        if debut and fin and fin <= debut:
+            raise serializers.ValidationError(
+                {"date_fin": "La fin de l'année scolaire doit suivre son début."}
+            )
+        return attrs
 
 
 class PeriodeScolaireSerializer(serializers.ModelSerializer):
@@ -298,7 +360,10 @@ class HistoriqueScolaireSerializer(serializers.ModelSerializer):
         return f"{obj.id_eleve.prenom} {obj.id_eleve.nom}"
 
 
-class EleveSerializer(serializers.ModelSerializer):
+class EleveSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
+    champ_unique = "matricule"
+    message_unicite = "Un élève porte déjà ce matricule dans votre école."
+
     class Meta:
         model = models.Eleve
         fields = "__all__"
@@ -455,7 +520,10 @@ class ReinscriptionSerializer(serializers.Serializer):
 
 # ---------- Module pédagogique ----------
 
-class EnseignantSerializer(serializers.ModelSerializer):
+class EnseignantSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
+    champ_unique = "matricule"
+    message_unicite = "Un enseignant porte déjà ce matricule dans votre école."
+
     class Meta:
         model = models.Enseignant
         fields = "__all__"

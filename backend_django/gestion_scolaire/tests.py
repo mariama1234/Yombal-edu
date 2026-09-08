@@ -342,6 +342,89 @@ class TestComptes(BaseAPI):
                          .get("/api/utilisateurs/").status_code, 403)
 
 
+class TestAnneesScolaires(BaseAPI):
+    """
+    L'écran des années scolaires manquait : ouvrir une nouvelle année obligeait
+    à écrire directement en base. Ces tests couvrent la saisie par l'API.
+    """
+
+    def test_creation_par_l_admin(self):
+        r = self.client.post("/api/annees-scolaires/", {
+            "libelle": "2027-2028", "date_debut": "2027-10-01",
+            "date_fin": "2028-07-31", "statut": "active",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        annee = models.AnneeScolaire.objects.get(pk=r.data["id"])
+        self.assertEqual(annee.id_ecole_id, self.ecole.pk,
+                         "l'école vient du compte connecté, jamais du corps de la requête")
+
+    def test_fin_avant_debut_refusee(self):
+        r = self.client.post("/api/annees-scolaires/", {
+            "libelle": "2027-2028", "date_debut": "2028-07-31",
+            "date_fin": "2027-10-01", "statut": "active",
+        }, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("date_fin", r.data)
+
+    def test_libelle_unique_par_ecole(self):
+        charge = {"libelle": "2026-2027", "date_debut": "2026-10-01",
+                  "date_fin": "2027-07-31", "statut": "active"}
+        # BaseAPI a déjà créé « 2026-2027 » pour cette école.
+        self.assertEqual(self.client.post("/api/annees-scolaires/", charge, format="json")
+                         .status_code, 400)
+        # La même année reste créable dans une autre école.
+        self.assertEqual(self.client_autre.post("/api/annees-scolaires/", charge, format="json")
+                         .status_code, 201)
+
+    def test_creation_interdite_a_l_enseignant(self):
+        r = self._client(self.enseignant_user.email).post("/api/annees-scolaires/", {
+            "libelle": "2027-2028", "date_debut": "2027-10-01", "date_fin": "2028-07-31",
+        }, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_l_annee_expose_ce_qu_elle_porte(self):
+        """Avant d'archiver une année, il faut voir si elle porte des données."""
+        models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="E-001", nom="Fall", prenom="Moussa")
+        models.Inscription.objects.create(
+            id_eleve=models.Eleve.objects.get(matricule="E-001"), id_classe=self.classe,
+            id_annee_scolaire=self.annee, date_inscription=date(2026, 10, 1))
+
+        r = self.client.get(f"/api/annees-scolaires/{self.annee.pk}/")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.data["nombre_classes"], 1)
+        self.assertEqual(r.data["nombre_inscriptions"], 1)
+
+
+class TestReferentielsDeStructure(BaseAPI):
+    """Niveaux, salles et conseils de classe : saisissables par l'API."""
+
+    def test_creation_niveau(self):
+        r = self.client.post("/api/niveaux/", {"libelle": "5ème"}, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(models.Niveau.objects.get(pk=r.data["id"]).id_ecole_id, self.ecole.pk)
+
+    def test_creation_salle(self):
+        r = self.client.post("/api/salles/", {"nom": "Salle 3", "capacite": 35},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+
+    def test_creation_conseil_de_classe(self):
+        periode = models.PeriodeScolaire.objects.create(
+            id_annee_scolaire=self.annee, libelle="Trimestre 1",
+            date_debut=date(2026, 10, 1), date_fin=date(2026, 12, 20))
+        r = self.client.post("/api/conseils-classe/", {
+            "id_classe": self.classe.pk, "id_periode": periode.pk,
+            "date_conseil": "2026-12-22", "decisions": "Passage en 5ème.",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+
+    def test_niveau_interdit_a_l_enseignant(self):
+        r = self._client(self.enseignant_user.email).post(
+            "/api/niveaux/", {"libelle": "4ème"}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+
 class TestPeriodes(BaseAPI):
     def test_periode_doit_tenir_dans_l_annee(self):
         r = self.client.post("/api/periodes/", {
@@ -442,6 +525,30 @@ class TestParcoursEleve(BaseAPI):
             models.Eleve.objects.get(pk=r.data["id"]).matricule.endswith("0001"),
             "la première élève de l'école B doit porter le numéro 1",
         )
+
+    def test_classe_d_une_autre_annee_refusee_avec_un_message_lisible(self):
+        """
+        Le cas qui faisait échouer toutes les inscriptions en production : deux
+        années marquées actives, dont une sans classe. Le formulaire
+        présélectionnait l'année vide tout en proposant les classes de l'autre.
+        Le refus doit nommer la cause, pas se contenter d'un 400 muet.
+        """
+        annee_suivante = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2027-2028",
+            date_debut=date(2027, 10, 1), date_fin=date(2028, 7, 31))
+
+        r = self.client.post("/api/eleves/inscrire/", {
+            "nom": "Ba", "prenom": "Aïssatou",
+            "id_classe": self.classe.pk,            # relève de 2026-2027
+            "id_annee_scolaire": annee_suivante.pk,  # mais on vise 2027-2028
+            "date_inscription": "2027-10-01",
+        }, format="json")
+
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("id_classe", r.data)
+        self.assertIn("année scolaire", str(r.data["id_classe"][0]))
+        self.assertFalse(models.Eleve.objects.filter(nom="Ba").exists(),
+                         "aucun élève ne doit être créé quand l'inscription est refusée")
 
     def test_inscription_ecrit_l_historique(self):
         eleve = self._inscrire()

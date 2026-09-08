@@ -6,6 +6,96 @@ import { EntityConfig } from './crud-config.model';
  */
 export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
+  // Les référentiels de structure viennent en premier : ce sont eux qu'il
+  // faut poser avant toute inscription. Sans année scolaire ni niveau, on ne
+  // peut pas créer une classe, donc pas inscrire un élève.
+  'annees-scolaires': {
+    key: 'annees-scolaires',
+    endpoint: 'annees-scolaires',
+    titre: 'Années scolaires',
+    titreSingulier: 'une année scolaire',
+    eyebrow: 'Administration',
+    description:
+      'Ouvre une nouvelle année, ou archive celle qui vient de s’achever. Classes, '
+      + 'inscriptions, notes et frais sont tous rattachés à une année : c’est ce qui '
+      + 'permet de conserver les résultats des années passées sans les mélanger.',
+    columns: [
+      { key: 'libelle', label: 'Année' },
+      { key: 'date_debut', label: 'Début', type: 'date' },
+      { key: 'date_fin', label: 'Fin', type: 'date' },
+      { key: 'statut', label: 'Statut', type: 'badge' },
+    ],
+    fields: [
+      { key: 'libelle', label: 'Libellé', type: 'text', required: true, placeholder: '2026-2027' },
+      { key: 'date_debut', label: 'Premier jour', type: 'date', required: true },
+      { key: 'date_fin', label: 'Dernier jour', type: 'date', required: true },
+      {
+        key: 'statut', label: 'Statut', type: 'select', required: true,
+        aide: 'Une seule année devrait être active à la fois : c’est celle que les '
+            + 'écrans proposent par défaut.',
+        options: [
+          { value: 'active', label: 'Active (année en cours)' },
+          { value: 'archivee', label: 'Archivée' },
+        ],
+      },
+    ],
+  },
+
+  niveaux: {
+    key: 'niveaux',
+    endpoint: 'niveaux',
+    titre: 'Niveaux',
+    titreSingulier: 'un niveau',
+    eyebrow: 'Administration',
+    description:
+      'Les niveaux d’enseignement de l’école — CI, CP, CE1, 6ème… Une classe se '
+      + 'rattache à un niveau, qui sert aussi à filtrer les listes.',
+    columns: [{ key: 'libelle', label: 'Niveau' }],
+    fields: [
+      { key: 'libelle', label: 'Libellé du niveau', type: 'text', required: true, placeholder: '6ème' },
+    ],
+  },
+
+  salles: {
+    key: 'salles',
+    endpoint: 'salles',
+    titre: 'Salles',
+    titreSingulier: 'une salle',
+    eyebrow: 'Administration',
+    description:
+      'Les salles de cours, avec leur capacité. L’emploi du temps refuse d’y placer '
+      + 'deux séances sur le même créneau.',
+    columns: [
+      { key: 'nom', label: 'Salle' },
+      { key: 'capacite', label: 'Capacité', type: 'number' },
+    ],
+    fields: [
+      { key: 'nom', label: 'Nom de la salle', type: 'text', required: true, placeholder: 'Salle 1' },
+      { key: 'capacite', label: 'Capacité (places)', type: 'number' },
+    ],
+  },
+
+  'conseils-classe': {
+    key: 'conseils-classe',
+    endpoint: 'conseils-classe',
+    titre: 'Conseils de classe',
+    titreSingulier: 'un conseil de classe',
+    eyebrow: 'Pédagogie',
+    description:
+      'Date et décisions du conseil, par classe et par période. La décision saisie ici '
+      + 'est reprise en bas des bulletins de la période.',
+    columns: [
+      { key: 'date_conseil', label: 'Date', type: 'date' },
+      { key: 'decisions', label: 'Décisions' },
+    ],
+    fields: [
+      { key: 'id_classe', label: 'Classe', type: 'select', required: true, optionsEndpoint: 'classes', optionsLabelKey: 'nom' },
+      { key: 'id_periode', label: 'Période', type: 'select', required: true, optionsEndpoint: 'periodes', optionsLabelKey: 'libelle' },
+      { key: 'date_conseil', label: 'Date du conseil', type: 'date', required: true },
+      { key: 'decisions', label: 'Décisions', type: 'textarea', span2: true, placeholder: 'Passage en 5ème, félicitations…' },
+    ],
+  },
+
   parents: {
     key: 'parents',
     endpoint: 'parents',

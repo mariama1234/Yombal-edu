@@ -74,9 +74,17 @@
           <select class="input" id="id_classe" formControlName="id_classe">
             <option value="" disabled>Sélectionner…</option>
             @for (c of classesFiltrees(); track c.id) {
-              <option [value]="c.id">{{ c.nom }}</option>
+              <option [value]="c.id">{{ c.nom }} ({{ c.effectif }}/{{ c.capacite_max }})</option>
             }
           </select>
+          @if (anneeSansClasse()) {
+            <span class="hint hint-error">
+              Aucune classe n'existe encore en {{ libelleAnnee() }}. Crée-les dans
+              « Classes », ou choisis une autre année scolaire.
+            </span>
+          } @else if (classesFiltrees().length === 0) {
+            <span class="hint hint-error">Aucune classe de ce niveau en {{ libelleAnnee() }}.</span>
+          }
         </div>
         <div class="field">
           <label for="id_annee_scolaire">Année scolaire</label>
@@ -86,6 +94,7 @@
               <option [value]="a.id">{{ a.libelle }}</option>
             }
           </select>
+          <span class="hint">La liste des classes suit l'année choisie.</span>
         </div>
       </div>
 

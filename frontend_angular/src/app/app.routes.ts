@@ -88,6 +88,20 @@ export const routes: Routes = [
       },
 
       // ---- Modules via le système CRUD générique ----
+
+      // Référentiels de structure : à poser avant toute inscription.
+      { path: 'annees-scolaires', component: GenericListComponent, data: { entityKey: 'annees-scolaires' } },
+      { path: 'annees-scolaires/:id', component: GenericFormComponent, data: { entityKey: 'annees-scolaires' } },
+
+      { path: 'niveaux', component: GenericListComponent, data: { entityKey: 'niveaux' } },
+      { path: 'niveaux/:id', component: GenericFormComponent, data: { entityKey: 'niveaux' } },
+
+      { path: 'salles', component: GenericListComponent, data: { entityKey: 'salles' } },
+      { path: 'salles/:id', component: GenericFormComponent, data: { entityKey: 'salles' } },
+
+      { path: 'conseils-classe', component: GenericListComponent, data: { entityKey: 'conseils-classe' } },
+      { path: 'conseils-classe/:id', component: GenericFormComponent, data: { entityKey: 'conseils-classe' } },
+
       { path: 'parents', component: GenericListComponent, data: { entityKey: 'parents' } },
       { path: 'parents/:id', component: GenericFormComponent, data: { entityKey: 'parents' } },
 

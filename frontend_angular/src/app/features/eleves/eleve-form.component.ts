@@ -62,16 +62,55 @@ export class EleveFormComponent implements OnInit {
       this.classes.set(classes.results);
       this.annees.set(annees.results);
 
-      // Pré-sélection de l'année active si elle existe
-      const active = annees.results.find((a) => a.statut === 'active');
-      if (active) this.form.patchValue({ id_annee_scolaire: active.id as any });
+      // Pré-sélection de l'année active. Quand plusieurs années sont marquées
+      // actives, celle qui porte des classes est la seule sur laquelle on
+      // puisse inscrire : la retenir évite d'ouvrir le formulaire sur une
+      // année vide, où aucune classe n'est proposable.
+      const actives = annees.results.filter((a) => a.statut === 'active');
+      const utilisable =
+        actives.find((a) => classes.results.some((c) => c.id_annee_scolaire === a.id)) ??
+        actives[0];
+      if (utilisable) {
+        this.form.patchValue({ id_annee_scolaire: utilisable.id as any });
+      }
+    });
+
+    // Changer d'année vide la classe : une classe appartient à une année, et
+    // le serveur refuse l'inscription si les deux ne concordent pas.
+    this.form.get('id_annee_scolaire')?.valueChanges.subscribe(() => {
+      this.form.patchValue({ id_classe: '' }, { emitEvent: false });
+      this.erreur.set(null);
     });
   }
 
+  /**
+   * Classes proposables : celles de l'année sélectionnée, éventuellement
+   * restreintes au niveau choisi.
+   *
+   * Le filtre sur l'année est ce qui manquait : le formulaire proposait
+   * toutes les classes de l'école, y compris celles d'une autre année, et
+   * l'inscription partait alors se faire refuser côté serveur.
+   */
   classesFiltrees(): Classe[] {
+    const idAnnee = this.form.get('id_annee_scolaire')?.value;
     const idNiveau = this.form.get('id_niveau')?.value;
-    if (!idNiveau) return this.classes();
-    return this.classes().filter((c) => String(c.id_niveau) === String(idNiveau));
+    return this.classes().filter(
+      (c) =>
+        (!idAnnee || String(c.id_annee_scolaire) === String(idAnnee)) &&
+        (!idNiveau || String(c.id_niveau) === String(idNiveau)),
+    );
+  }
+
+  /** Vrai quand l'année choisie ne comporte encore aucune classe. */
+  anneeSansClasse(): boolean {
+    const idAnnee = this.form.get('id_annee_scolaire')?.value;
+    if (!idAnnee) return false;
+    return !this.classes().some((c) => String(c.id_annee_scolaire) === String(idAnnee));
+  }
+
+  libelleAnnee(): string {
+    const idAnnee = this.form.get('id_annee_scolaire')?.value;
+    return this.annees().find((a) => String(a.id) === String(idAnnee))?.libelle ?? '';
   }
 
   submit(): void {
@@ -106,9 +145,29 @@ export class EleveFormComponent implements OnInit {
         },
         error: (err) => {
           this.enregistrement.set(false);
-          this.erreur.set("Impossible d'enregistrer l'élève. Vérifie les champs et réessaie.");
+          this.erreur.set(this.message(err));
           console.error(err);
         },
       });
+  }
+
+  /**
+   * Message du serveur plutôt qu'un texte générique.
+   *
+   * « Vérifie les champs et réessaie » cachait des refus parfaitement
+   * explicites — « Cette classe relève d'une autre année scolaire » — et
+   * rendait la panne indéchiffrable depuis l'écran.
+   */
+  private message(erreur: unknown): string {
+    const corps = (erreur as { error?: Record<string, unknown> })?.error;
+    if (!corps || typeof corps !== 'object') {
+      return "Impossible d'enregistrer l'élève. Réessaie dans un instant.";
+    }
+    const messages = Object.values(corps)
+      .map((v) => (Array.isArray(v) ? String(v[0]) : String(v)))
+      .filter(Boolean);
+    return messages.length
+      ? messages.join(' ')
+      : "Impossible d'enregistrer l'élève. Vérifie les champs et réessaie.";
   }
 }
