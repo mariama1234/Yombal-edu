@@ -1,7 +1,6 @@
-import { Component, OnInit, effect, inject, signal } from '@angular/core';
+import { Component, effect, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, RouterLink } from '@angular/router';
-import { Subject, debounceTime, distinctUntilChanged } from 'rxjs';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { EleveService } from './eleve.service';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { Eleve } from '../../core/models/models';
@@ -12,36 +11,38 @@ import { Eleve } from '../../core/models/models';
   imports: [CommonModule, RouterLink],
   templateUrl: './eleves-list.component.html',
 })
-export class ElevesListComponent implements OnInit {
+export class ElevesListComponent {
   private route = inject(ActivatedRoute);
+  private router = inject(Router);
   annees = inject(AnneeScolaireService);
 
   eleves = signal<Eleve[]>([]);
   total = signal(0);
   loading = signal(true);
   filtreStatut = signal<string>('');
+
+  /**
+   * Terme cherché, reçu de la barre du bandeau haut.
+   *
+   * L'écran n'a pas son propre champ de recherche : il n'y en a qu'une dans
+   * l'application, en haut, et elle pilote cette liste par l'URL.
+   */
   recherche = signal<string>('');
 
-  private frappes = new Subject<string>();
-
   constructor(private eleveService: EleveService) {
-    this.frappes
-      .pipe(debounceTime(250), distinctUntilChanged())
-      .subscribe(() => this.charger());
+    // On écoute l'URL plutôt que de la lire une fois : depuis cette page,
+    // relancer une recherche depuis le bandeau haut ne recrée pas le
+    // composant, et un `snapshot` ne verrait jamais le nouveau terme.
+    this.route.queryParamMap.subscribe((params) => {
+      this.recherche.set(params.get('recherche') ?? '');
+      this.charger();
+    });
 
     // La liste suit l'année choisie dans le bandeau haut.
     effect(() => {
       this.annees.idAnnee();
       this.charger();
     });
-  }
-
-  ngOnInit(): void {
-    // La recherche globale renvoie ici avec son terme : l'écran doit s'ouvrir
-    // déjà filtré, sinon la recherche est perdue en chemin.
-    const terme = this.route.snapshot.queryParamMap.get('recherche');
-    if (terme) this.recherche.set(terme);
-    this.charger();
   }
 
   charger(): void {
@@ -51,8 +52,8 @@ export class ElevesListComponent implements OnInit {
     if (this.recherche().trim()) params['search'] = this.recherche().trim();
 
     const annee = this.annees.idAnnee();
-    // Une recherche cherche dans toute l'école : on trouve un élève parce
-    // qu'on ne sait pas où il est, l'année affichée ne doit pas le cacher.
+    // Une recherche porte sur toute l'école : on cherche un élève parce qu'on
+    // ne sait pas où il est, l'année affichée ne doit pas le cacher.
     if (annee !== null && !this.recherche().trim()) {
       params['id_annee_scolaire'] = String(annee);
     }
@@ -67,14 +68,9 @@ export class ElevesListComponent implements OnInit {
     });
   }
 
-  chercher(valeur: string): void {
-    this.recherche.set(valeur);
-    this.frappes.next(valeur);
-  }
-
+  /** Retire le terme de l'URL : la liste redevient celle de l'année en cours. */
   effacerRecherche(): void {
-    this.recherche.set('');
-    this.charger();
+    this.router.navigate([], { relativeTo: this.route, queryParams: {} });
   }
 
   filtrer(statut: string): void {
