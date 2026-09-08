@@ -2674,6 +2674,95 @@ class TestBulletins(BaseNotes):
         self.assertEqual(r.status_code, 400, r.content)
 
 
+class TestSyntheseEcole(BaseNotes):
+    """
+    Vue d'ensemble des résultats pour la direction : `statistiques()` ne
+    répondait que classe par classe.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # Maths 18 (coef 4) et Français 15 (coef 2) → 17 pour le premier ;
+        # 12 et 15 → 13 ; 12 et 9 → 11.
+        self._noter(self.composition, [18, 12, 12])
+        self._noter(self.compo_francais, [15, 15, 9])
+
+        # Une seconde classe, sur la même période, pour vérifier l'agrégation.
+        self.classe_b = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=self.niveau,
+            nom="6ème B", capacite_max=40)
+        self.eleve_b = self._inscrire("E-9", "Autre", classe=self.classe_b)
+        evaluation_b = models.Evaluation.objects.create(
+            id_matiere=self.matiere, id_classe=self.classe_b, id_periode=self.periode,
+            type="composition", date_evaluation=date(2026, 12, 10),
+            coefficient=1, bareme=20)
+        models.Note.objects.create(
+            id_eleve=self.eleve_b, id_evaluation=evaluation_b,
+            id_utilisateur=self.admin, valeur=8)
+
+    def test_synthese_agrege_toute_l_ecole(self):
+        r = self.client.get(f"/api/bulletins/synthese/?id_periode={self.periode.pk}")
+        self.assertEqual(r.status_code, 200, r.content)
+
+        # 3 élèves de 6ème A (17, 13, 11) + 1 de 6ème B (8) = 4 évalués.
+        self.assertEqual(r.data["ensemble"]["effectif"], 4)
+        self.assertEqual(Decimal(r.data["ensemble"]["moyenne"]), Decimal("12.25"))
+        self.assertEqual(r.data["ensemble"]["reussite"], 3, "trois élèves à 10 ou plus")
+        self.assertEqual(Decimal(r.data["ensemble"]["taux_reussite"]), Decimal("75.0"))
+
+    def test_classes_classees_par_moyenne(self):
+        r = self.client.get(f"/api/bulletins/synthese/?id_periode={self.periode.pk}")
+        noms = [c["classe"] for c in r.data["classes"]]
+        self.assertEqual(noms, ["6ème A", "6ème B"],
+                         "la classe qui réussit le mieux vient en tête")
+
+    def test_matieres_de_la_plus_faible_a_la_plus_forte(self):
+        """La direction cherche la matière en difficulté, pas la meilleure."""
+        r = self.client.get(f"/api/bulletins/synthese/?id_periode={self.periode.pk}")
+        moyennes = [Decimal(m["moyenne"]) for m in r.data["matieres"]]
+        self.assertEqual(moyennes, sorted(moyennes))
+
+    def test_classe_sans_note_listee_a_part(self):
+        """« Pas encore saisi » ne doit pas se lire comme « mauvais résultats »."""
+        vide = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=self.niveau,
+            nom="6ème C", capacite_max=40)
+        self._inscrire("E-20", "SansNote", classe=vide)
+
+        r = self.client.get(f"/api/bulletins/synthese/?id_periode={self.periode.pk}")
+        sans = [c["classe"] for c in r.data["classes_sans_notes"]]
+        self.assertIn("6ème C", sans)
+        self.assertNotIn("6ème C", [c["classe"] for c in r.data["classes"]])
+
+    def test_periode_par_defaut(self):
+        """Sans paramètre, la synthèse porte sur la période en cours."""
+        r = self.client.get("/api/bulletins/synthese/")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertIsNotNone(r.data["periode"])
+
+    def test_evolution_lue_sur_les_bulletins(self):
+        self.client.post("/api/bulletins/generer/", {
+            "id_classe": self.classe.pk, "id_periode": self.periode.pk, "valider": True,
+        }, format="json")
+
+        r = self.client.get(f"/api/bulletins/synthese/?id_periode={self.periode.pk}")
+        evolution = r.data["evolution"]
+        self.assertEqual(len(evolution), 1, "une seule période a des bulletins")
+        self.assertEqual(evolution[0]["periode"], "Trimestre 1")
+        self.assertEqual(evolution[0]["effectif"], 3)
+
+    def test_periode_d_une_autre_ecole_refusee(self):
+        annee_b = models.AnneeScolaire.objects.create(
+            id_ecole=self.autre, libelle="2026-2027",
+            date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31))
+        periode_b = models.PeriodeScolaire.objects.create(
+            id_annee_scolaire=annee_b, libelle="Trimestre 1",
+            date_debut=date(2026, 10, 1), date_fin=date(2026, 12, 20))
+
+        r = self.client.get(f"/api/bulletins/synthese/?id_periode={periode_b.pk}")
+        self.assertEqual(r.status_code, 400, r.content)
+
+
 class TestReleveEtPalmares(BaseNotes):
     def setUp(self):
         super().setUp()

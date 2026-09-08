@@ -5,7 +5,7 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { AuthService } from '../../core/services/auth.service';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
-import { Bilan, Classe, Paginated } from '../../core/models/models';
+import { Bilan, Classe, Paginated, SyntheseEcole } from '../../core/models/models';
 import { FinanceService } from '../finances/finance.service';
 
 /** Une barre prête à dessiner, en coordonnées du viewBox. */
@@ -60,6 +60,11 @@ export class DashboardComponent implements OnInit {
   nbClasses = signal<number | null>(null);
   bilan = signal<Bilan | null>(null);
   classes = signal<Classe[]>([]);
+  synthese = signal<SyntheseEcole | null>(null);
+
+  /** Mentions dans l'ordre du barème, pour l'histogramme de répartition. */
+  private readonly ORDRE_MENTIONS = ['Excellent', 'Très bien', 'Bien', 'Assez bien',
+                                     'Insuffisant', 'Très insuffisant'];
 
   /** Mois survolé dans l'histogramme, pour le détail sous le graphique. */
   moisSurvole = signal<MoisTrace | null>(null);
@@ -102,7 +107,57 @@ export class DashboardComponent implements OnInit {
       next: (b) => this.bilan.set(b),
       error: () => this.bilan.set(null),
     });
+
+    // Sans période précisée, le serveur retient celle en cours : le directeur
+    // ouvre son tableau de bord sur le trimestre du moment.
+    this.http
+      .get<SyntheseEcole>(`${environment.apiUrl}/bulletins/synthese/${suffixe}`)
+      .subscribe({
+        next: (s) => this.synthese.set(s),
+        error: () => this.synthese.set(null),
+      });
   }
+
+  // ---- Résultats de l'école -------------------------------------------
+
+  /** Vrai quand des notes existent : sinon le panneau annonce qu'il n'y en a pas. */
+  aDesResultats = computed(() => (this.synthese()?.ensemble?.effectif ?? 0) > 0);
+
+  mentions = computed(() => {
+    const repartition = this.synthese()?.repartition ?? {};
+    const total = Object.values(repartition).reduce((t, n) => t + n, 0);
+    return this.ORDRE_MENTIONS.map((libelle) => {
+      const nombre = repartition[libelle] ?? 0;
+      return {
+        libelle,
+        nombre,
+        part: total ? Math.round((nombre * 100) / total) : 0,
+        // Sous la moyenne : c'est là que la direction doit regarder.
+        faible: libelle === 'Insuffisant' || libelle === 'Très insuffisant',
+      };
+    });
+  });
+
+  /** Les cinq classes les plus en difficulté, celles où il faut aller voir. */
+  classesFragiles = computed(() => {
+    const classes = this.synthese()?.classes ?? [];
+    return [...classes].reverse().slice(0, 5);
+  });
+
+  matieresFragiles = computed(() => (this.synthese()?.matieres ?? []).slice(0, 5));
+
+  /** Progression d'une période à l'autre, en points de moyenne. */
+  evolution = computed(() => {
+    const lignes = this.synthese()?.evolution ?? [];
+    return lignes.map((ligne, index) => {
+      const precedente = index > 0 ? lignes[index - 1].moyenne : null;
+      const ecart =
+        precedente !== null && ligne.moyenne !== null
+          ? Number(ligne.moyenne) - Number(precedente)
+          : null;
+      return { ...ligne, ecart };
+    });
+  });
 
   // ---- Histogramme recettes / dépenses --------------------------------
 

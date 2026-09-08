@@ -615,3 +615,26 @@ export interface StatistiquesClasse {
   repartition: Record<string, number>;
   matieres: (BlocStatistique & { matiere: string })[];
 }
+
+/** Réponse de GET /bulletins/synthese/ — résultats de toute l'école. */
+export interface SyntheseEcole {
+  periode: string | null;
+  detail?: string;
+  id_periode?: number;
+  annee?: string;
+  id_annee_scolaire?: number;
+  ensemble?: BlocStatistique;
+  repartition?: Record<string, number>;
+  /** Classes classées par moyenne décroissante. */
+  classes?: (BlocStatistique & {
+    id_classe: number;
+    classe: string;
+    inscrits: number;
+    sans_note: number;
+  })[];
+  /** Classes où rien n'a encore été saisi — distinctes des mauvais résultats. */
+  classes_sans_notes?: { classe: string; id_classe: number; inscrits: number }[];
+  /** Matières de la plus faible à la plus forte. */
+  matieres?: (BlocStatistique & { matiere: string })[];
+  evolution?: (BlocStatistique & { periode: string })[];
+}

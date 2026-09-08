@@ -920,6 +920,51 @@ class BulletinViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMi
             raise ValidationError({"detail": str(exc)})
 
     @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"])
+    def synthese(self, request):
+        """
+        Résultats de toute l'école : GET /api/bulletins/synthese/
+
+        Sans paramètre, la réponse porte sur la période en cours de l'année
+        active — c'est la lecture attendue quand un directeur ouvre son
+        tableau de bord. `id_periode` recadre sur une autre période,
+        `id_annee_scolaire` sur une autre année.
+        """
+        ecole = request.user.id_ecole
+
+        brut = request.query_params.get("id_periode")
+        if brut:
+            try:
+                periode = models.PeriodeScolaire.objects.select_related(
+                    "id_annee_scolaire").get(
+                        pk=brut, id_annee_scolaire__id_ecole=ecole)
+            except (models.PeriodeScolaire.DoesNotExist, ValueError, TypeError):
+                raise ValidationError({"id_periode": "Période inconnue pour cette école."})
+        else:
+            annee = None
+            brut_annee = request.query_params.get("id_annee_scolaire")
+            if brut_annee:
+                try:
+                    annee = models.AnneeScolaire.objects.get(pk=brut_annee, id_ecole=ecole)
+                except (models.AnneeScolaire.DoesNotExist, ValueError, TypeError):
+                    raise ValidationError({
+                        "id_annee_scolaire": "Année inconnue pour cette école."})
+            periode = pedagogie.periode_courante(ecole, annee)
+
+        # Pas de période créée : le tableau de bord doit l'annoncer plutôt que
+        # d'échouer sur une école qui démarre.
+        if periode is None:
+            return Response({
+                "periode": None,
+                "detail": "Aucune période scolaire définie pour cette année.",
+            })
+
+        try:
+            return Response(pedagogie.synthese(ecole, periode))
+        except pedagogie.ErreurPedagogie as exc:
+            raise ValidationError({"detail": str(exc)})
+
+    @extend_schema(responses=dict)
     @action(detail=True, methods=["get"])
     def pdf(self, request, pk=None):
         """Bulletin imprimable : GET /api/bulletins/{id}/pdf/"""

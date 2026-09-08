@@ -165,6 +165,131 @@
   </div>
 }
 
+<!-- Résultats de l'école. Le tableau de bord ne disait rien du pédagogique,
+     qui est pourtant le cœur du métier. -->
+@if (synthese(); as s) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        Résultats @if (s.periode) { — {{ s.periode }} }
+      </div>
+      <a class="panel-link" routerLink="/pedagogie/palmares">Palmarès &amp; statistiques →</a>
+    </div>
+
+    @if (!aDesResultats()) {
+      <p style="color:var(--ink-400); font-size:13px;">
+        @if (s.detail) { {{ s.detail }} }
+        @else { Aucune note saisie sur cette période. }
+        <a class="panel-link" routerLink="/pedagogie/notes">Saisir des notes →</a>
+      </p>
+    } @else {
+      <div class="tile-grid-generic" style="margin-bottom:18px;">
+        <div class="tile-generic">
+          <div class="tile-generic-label">Moyenne de l'école</div>
+          <div class="tile-generic-value">{{ s.ensemble!.moyenne | number:'1.2-2' }}</div>
+          <div class="tile-generic-meta">sur 20 · {{ s.ensemble!.effectif }} élèves évalués</div>
+        </div>
+        <div class="tile-generic">
+          <div class="tile-generic-label">Taux de réussite</div>
+          <div class="tile-generic-value">{{ s.ensemble!.taux_reussite | number:'1.0-1' }} %</div>
+          <div class="tile-generic-meta">{{ s.ensemble!.reussite }} élèves à 10 ou plus</div>
+        </div>
+        <div class="tile-generic">
+          <div class="tile-generic-label">Extrêmes</div>
+          <div class="tile-generic-value">
+            {{ s.ensemble!.minimum | number:'1.2-2' }} – {{ s.ensemble!.maximum | number:'1.2-2' }}
+          </div>
+          <div class="tile-generic-meta">plus basse et plus haute moyenne</div>
+        </div>
+        @if (s.classes_sans_notes?.length) {
+          <div class="tile-generic">
+            <div class="tile-generic-label">En attente de saisie</div>
+            <div class="tile-generic-value">{{ s.classes_sans_notes!.length }}</div>
+            <div class="tile-generic-meta">classe(s) sans aucune note</div>
+          </div>
+        }
+      </div>
+
+      <!-- Répartition : série unique en magnitude, donc une seule teinte ;
+           seules les mentions sous la moyenne changent de couleur, et elles
+           portent leur libellé. -->
+      <div class="bloc-resultats">
+        <div>
+          <div class="sous-titre">Répartition des élèves</div>
+          <div class="barres-classes">
+            @for (m of mentions(); track m.libelle) {
+              <div class="barre-ligne">
+                <span class="barre-nom">{{ m.libelle }}</span>
+                <span class="barre-piste">
+                  <span class="barre-remplie" [class.saturee]="m.faible"
+                        [style.width.%]="m.part"></span>
+                </span>
+                <span class="barre-valeur mono">{{ m.nombre }}</span>
+                <span class="barre-etat">{{ m.part }} %</span>
+              </div>
+            }
+          </div>
+        </div>
+
+        <div>
+          <div class="sous-titre">Matières les plus faibles</div>
+          <table class="simple">
+            <tbody>
+              @for (m of matieresFragiles(); track m.matiere) {
+                <tr>
+                  <td>{{ m.matiere }}</td>
+                  <td class="mono" style="text-align:right;">{{ m.moyenne | number:'1.2-2' }}</td>
+                  <td class="mono" style="text-align:right; color:var(--ink-400);">
+                    {{ m.taux_reussite | number:'1.0-0' }} % réussite
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+
+          <div class="sous-titre" style="margin-top:16px;">Classes à surveiller</div>
+          <table class="simple">
+            <tbody>
+              @for (c of classesFragiles(); track c.id_classe) {
+                <tr>
+                  <td>{{ c.classe }}</td>
+                  <td class="mono" style="text-align:right;">{{ c.moyenne | number:'1.2-2' }}</td>
+                  <td class="mono" style="text-align:right; color:var(--ink-400);">
+                    {{ c.taux_reussite | number:'1.0-0' }} % réussite
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      @if (evolution().length > 1) {
+        <div class="sous-titre" style="margin-top:18px;">Évolution sur l'année</div>
+        <div class="evolution">
+          @for (e of evolution(); track e.periode) {
+            <div class="evolution-etape">
+              <div class="evolution-periode">{{ e.periode }}</div>
+              <div class="evolution-valeur mono">{{ e.moyenne | number:'1.2-2' }}</div>
+              <div class="evolution-ecart"
+                   [style.color]="e.ecart === null ? 'var(--ink-400)'
+                                  : (e.ecart >= 0 ? 'var(--green)' : 'var(--red)')">
+                @if (e.ecart === null) { — }
+                @else { {{ e.ecart > 0 ? '+' : '' }}{{ e.ecart | number:'1.2-2' }} pt }
+              </div>
+              <div class="evolution-meta">{{ e.taux_reussite | number:'1.0-0' }} % réussite</div>
+            </div>
+          }
+        </div>
+        <p style="font-size:11.5px; color:var(--ink-400); margin:8px 0 0;">
+          Lu sur les bulletins générés : une période dont les bulletins ne sont
+          pas encore produits n'apparaît pas.
+        </p>
+      }
+    }
+  </div>
+}
+
 <!-- Effectifs : série unique, donc une seule couleur et aucune légende — le
      titre suffit à dire ce qu'on lit. -->
 <div class="panel">

@@ -27,6 +27,7 @@ rang suivant saute d'autant (1, 2, 2, 4).
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import transaction
@@ -423,20 +424,6 @@ def statistiques(ecole, classe, periode):
                 continue
             par_matiere.setdefault(detail["matiere"], []).append(detail["moyenne"])
 
-    def _bloc(valeurs):
-        if not valeurs:
-            return {"effectif": 0, "moyenne": None, "minimum": None, "maximum": None,
-                    "reussite": 0, "taux_reussite": None}
-        reussite = sum(1 for v in valeurs if v >= MOYENNE_PASSAGE)
-        return {
-            "effectif": len(valeurs),
-            "moyenne": arrondi(sum(valeurs) / len(valeurs)),
-            "minimum": min(valeurs),
-            "maximum": max(valeurs),
-            "reussite": reussite,
-            "taux_reussite": arrondi(Decimal(reussite) * 100 / len(valeurs), 1),
-        }
-
     repartition = {libelle: 0 for _, libelle in MENTIONS}
     for valeur in moyennes:
         repartition[mention(valeur)] += 1
@@ -446,13 +433,166 @@ def statistiques(ecole, classe, periode):
         "periode": periode.libelle,
         "inscrits": len(lignes),
         "sans_note": len(lignes) - len(classes_),
-        "ensemble": _bloc(moyennes),
+        "ensemble": _bloc_statistique(moyennes),
         "repartition": repartition,
         "matieres": [
-            dict(matiere=nom, **_bloc(valeurs))
+            dict(matiere=nom, **_bloc_statistique(valeurs))
             for nom, valeurs in sorted(par_matiere.items())
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Synthèse école (tableau de bord de la direction, Module 12 du TDR)
+# ---------------------------------------------------------------------------
+
+def periode_courante(ecole, annee=None, aujourdhui=None):
+    """
+    Période à présenter par défaut : celle qui contient la date du jour.
+
+    Hors période — pendant les vacances, ou l'été — on retient la dernière
+    commencée plutôt que rien : un directeur qui ouvre son tableau de bord en
+    août veut voir le troisième trimestre, pas un écran vide.
+    """
+    aujourdhui = aujourdhui or date.today()
+    periodes = models.PeriodeScolaire.objects.filter(
+        id_annee_scolaire__id_ecole=ecole).select_related("id_annee_scolaire")
+    if annee is not None:
+        periodes = periodes.filter(id_annee_scolaire=annee)
+    else:
+        periodes = periodes.filter(
+            id_annee_scolaire__statut=models.AnneeScolaire.Statut.ACTIVE)
+
+    en_cours = periodes.filter(date_debut__lte=aujourdhui,
+                               date_fin__gte=aujourdhui).order_by("date_debut").first()
+    if en_cours is not None:
+        return en_cours
+    commencees = periodes.filter(date_debut__lte=aujourdhui).order_by("-date_debut").first()
+    return commencees or periodes.order_by("date_debut").first()
+
+
+def _bloc_statistique(valeurs):
+    """Indicateurs d'une série de moyennes. Vide plutôt que zéro s'il n'y a rien."""
+    if not valeurs:
+        return {"effectif": 0, "moyenne": None, "minimum": None, "maximum": None,
+                "reussite": 0, "taux_reussite": None}
+    reussite = sum(1 for v in valeurs if v >= MOYENNE_PASSAGE)
+    return {
+        "effectif": len(valeurs),
+        "moyenne": arrondi(sum(valeurs) / len(valeurs)),
+        "minimum": min(valeurs),
+        "maximum": max(valeurs),
+        "reussite": reussite,
+        "taux_reussite": arrondi(Decimal(reussite) * 100 / len(valeurs), 1),
+    }
+
+
+def synthese(ecole, periode):
+    """
+    Résultats de toute l'école sur une période.
+
+    `statistiques()` ne répond que pour une classe ; la direction a besoin de
+    la vue d'ensemble — taux de réussite global, classement des classes,
+    matières en difficulté. Le calcul réutilise `moyennes_classe()` classe par
+    classe, pour qu'il n'existe qu'une seule définition de la moyenne : la
+    dupliquer en SQL ferait diverger le tableau de bord et les bulletins au
+    premier changement de règle.
+
+    Les classes sans aucune note sont listées à part plutôt que comptées à
+    zéro : « pas encore saisi » et « mauvais résultats » ne se confondent pas.
+    """
+    if periode.id_annee_scolaire.id_ecole_id != ecole.pk:
+        raise ErreurPedagogie("Cette période appartient à une autre école.")
+
+    classes = (models.Classe.objects
+               .filter(id_ecole=ecole, id_annee_scolaire=periode.id_annee_scolaire_id)
+               .order_by("nom"))
+
+    moyennes_ecole = []
+    par_classe, sans_notes = [], []
+    par_matiere = {}
+
+    for classe in classes:
+        try:
+            lignes = moyennes_classe(ecole, classe, periode)
+        except ErreurPedagogie:
+            # Classe sans aucun inscrit : elle n'a pas sa place au classement.
+            continue
+
+        notes_classe = [l["moyenne_generale"] for l in lignes
+                        if l["moyenne_generale"] is not None]
+        if not notes_classe:
+            sans_notes.append({"classe": classe.nom, "id_classe": classe.pk,
+                               "inscrits": len(lignes)})
+            continue
+
+        moyennes_ecole.extend(notes_classe)
+        bloc = _bloc_statistique(notes_classe)
+        par_classe.append({
+            "id_classe": classe.pk,
+            "classe": classe.nom,
+            "inscrits": len(lignes),
+            "sans_note": len(lignes) - len(notes_classe),
+            **bloc,
+        })
+
+        for ligne in lignes:
+            for detail in ligne["matieres"]:
+                if detail["moyenne"] is not None:
+                    par_matiere.setdefault(detail["matiere"], []).append(detail["moyenne"])
+
+    # Classement décroissant : la première ligne est la classe qui réussit le
+    # mieux, la dernière celle où il faut aller voir.
+    par_classe.sort(key=lambda c: c["moyenne"], reverse=True)
+
+    repartition = {libelle: 0 for _, libelle in MENTIONS}
+    for valeur in moyennes_ecole:
+        repartition[mention(valeur)] += 1
+
+    matieres = sorted(
+        (dict(matiere=nom, **_bloc_statistique(valeurs))
+         for nom, valeurs in par_matiere.items()),
+        key=lambda m: m["moyenne"],
+    )
+
+    return {
+        "periode": periode.libelle,
+        "id_periode": periode.pk,
+        "annee": periode.id_annee_scolaire.libelle,
+        "id_annee_scolaire": periode.id_annee_scolaire_id,
+        "ensemble": _bloc_statistique(moyennes_ecole),
+        "repartition": repartition,
+        "classes": par_classe,
+        "classes_sans_notes": sans_notes,
+        "matieres": matieres,
+        "evolution": evolution_resultats(ecole, periode.id_annee_scolaire),
+    }
+
+
+def evolution_resultats(ecole, annee):
+    """
+    Moyenne et taux de réussite de l'école, période par période.
+
+    Lu sur les bulletins déjà générés plutôt que recalculé : recalculer chaque
+    classe pour chaque période multiplierait les requêtes par le nombre de
+    trimestres, pour un graphique de trois points. Une période dont les
+    bulletins n'ont pas été générés n'apparaît simplement pas.
+    """
+    lignes = []
+    periodes = (models.PeriodeScolaire.objects
+                .filter(id_annee_scolaire=annee).order_by("date_debut"))
+
+    for periode in periodes:
+        moyennes = list(
+            models.Bulletin.objects
+            .filter(id_periode=periode, id_eleve__id_ecole=ecole,
+                    moyenne_generale__isnull=False)
+            .values_list("moyenne_generale", flat=True)
+        )
+        if not moyennes:
+            continue
+        lignes.append({"periode": periode.libelle, **_bloc_statistique(moyennes)})
+    return lignes
 
 
 # ---------------------------------------------------------------------------
