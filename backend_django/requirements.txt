@@ -1,7 +1,30 @@
-Django>=5.1,<6.0
-djangorestframework>=3.15
-djangorestframework-simplejwt>=5.3
-django-cors-headers>=4.4
-django-filter>=24.3
-mysqlclient>=2.2   # décommente/installe seulement pour la prod MySQL — SQLite fonctionne sans lui en local
-openpyxl>=3.1        # lecture des listes d'élèves au format .xlsx (l'import accepte aussi .csv et .docx, sans dépendance)
+# Dépendances du backend YombalEdu.
+#
+#     pip install -r requirements.txt
+#
+# Les bornes hautes sont posées sur la majeure suivante : une montée de majeure
+# se décide, elle ne s'attrape pas au détour d'une réinstallation.
+
+# Django 6.x exige MariaDB 10.11+ ou MySQL 8.0.11+. C'est la raison de
+# l'instance MariaDB dédiée décrite dans le README : le serveur fourni par
+# XAMPP est en 10.4 et ne convient pas.
+Django>=6.1,<7.0
+
+djangorestframework>=3.18,<4.0
+djangorestframework-simplejwt>=5.5,<6.0
+django-cors-headers>=4.9,<5.0
+django-filter>=26.1,<27.0
+
+# Documentation OpenAPI de l'API (/api/docs/). Le paquet « sidecar » embarque
+# les fichiers de Swagger UI : la documentation reste consultable sans accès
+# internet, ce qui compte dans une école dont la connexion est intermittente.
+drf-spectacular>=0.30,<0.31
+drf-spectacular-sidecar>=2026.8.1
+
+# Connecteur MySQL / MariaDB. Inutile en local si DB_ENGINE=sqlite.
+mysqlclient>=2.2,<3.0
+
+# Lecture des listes d'élèves au format .xlsx et écriture des exports Excel.
+# L'import accepte aussi .csv et .docx, sans dépendance supplémentaire, et les
+# PDF sont écrits directement par gestion_scolaire/exports.py.
+openpyxl>=3.1,<4.0

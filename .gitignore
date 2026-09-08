@@ -17,3 +17,6 @@ dist/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Cle de signature engendree en developpement (jamais versionnee)
+.secret_key

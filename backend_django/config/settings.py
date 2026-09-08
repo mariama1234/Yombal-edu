@@ -14,20 +14,67 @@ import os
 import sys
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+# ---------------------------------------------------------------------------
+# Sécurité
+#
+# `DJANGO_DEBUG=false` bascule en mode production. Le défaut reste le mode
+# développement : c'est ce qu'attend un poste local fraîchement cloné, et
+# l'oubli inverse — un poste de dev muet parce qu'il se croit en production —
+# coûte plus de temps qu'il n'en fait gagner.
+# ---------------------------------------------------------------------------
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-5rsvjy31%eh+s*w2ofna5*-0!1pj8^ooefs+!=xy%%%ui*7p4='
+DEBUG = os.environ.get('DJANGO_DEBUG', 'true').strip().lower() not in ('0', 'false', 'non')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
 
-ALLOWED_HOSTS = []
+def _cle_secrete():
+    """
+    Clé de signature, lue dans l'environnement.
+
+    Elle signe les jetons de session et les liens de réinitialisation de mot de
+    passe : en clair dans le dépôt, n'importe qui pouvant lire le code peut
+    forger une session d'administrateur. Elle a donc quitté ce fichier.
+
+    En développement, une clé est engendrée puis conservée dans un fichier
+    local ignoré par git — sans quoi chaque redémarrage déconnecterait tout le
+    monde. En production, l'absence de `DJANGO_SECRET_KEY` arrête le démarrage
+    plutôt que de laisser tourner un site signé avec une clé de circonstance.
+    """
+    depuis_env = os.environ.get('DJANGO_SECRET_KEY')
+    if depuis_env:
+        return depuis_env
+
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY est obligatoire hors mode développement. "
+            "Engendrez-en une avec :\n"
+            "  python -c \"from django.core.management.utils import "
+            "get_random_secret_key; print(get_random_secret_key())\""
+        )
+
+    fichier = BASE_DIR / '.secret_key'
+    if fichier.exists():
+        return fichier.read_text(encoding='utf-8').strip()
+
+    from django.core.management.utils import get_random_secret_key
+    cle = get_random_secret_key()
+    fichier.write_text(cle, encoding='utf-8')
+    return cle
+
+
+SECRET_KEY = _cle_secrete()
+
+# En développement, les hôtes locaux suffisent. En production, la liste vient
+# de l'environnement : `DJANGO_ALLOWED_HOSTS=ecole.exemple.sn,www.exemple.sn`.
+_hotes = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
+ALLOWED_HOSTS = [h.strip() for h in _hotes.split(',') if h.strip()]
+if not ALLOWED_HOSTS:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]'] if DEBUG else []
 
 
 # Application definition

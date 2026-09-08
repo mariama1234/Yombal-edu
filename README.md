@@ -11,7 +11,7 @@ yombaledu_fullstack/
 
 ## Ce qui est réellement testé, pas juste généré
 
-- **234 tests automatisés** passent en une dizaine de secondes :
+- **273 tests automatisés** passent en une trentaine de secondes :
   `DB_ENGINE=sqlite python manage.py test gestion_scolaire`. Ils couvrent
   l'isolation multi-écoles, l'audit, le parcours élève (mouvements,
   réinscription, dossier), la pédagogie (pondérations, rang, bulletins,
@@ -207,10 +207,30 @@ CREATE DATABASE gestion_scolaire
 ```bash
 cd backend_django
 python3 -m venv venv && source venv/bin/activate
-pip install django djangorestframework djangorestframework-simplejwt django-cors-headers django-filter mysqlclient "drf-spectacular[sidecar]"
+pip install -r requirements.txt
 python3 manage.py migrate
 python3 manage.py createsuperuser   # ou utilise le script de seed ci-dessous
 python3 manage.py runserver
+```
+
+### Variables d'environnement
+
+Aucune n'est nécessaire en local : les valeurs par défaut visent le mode
+développement, et la clé de signature est engendrée au premier démarrage puis
+conservée dans `backend_django/.secret_key`, que git ignore.
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `DJANGO_SECRET_KEY` | engendrée en dev | Signe les sessions et les liens de réinitialisation. **Obligatoire hors développement** : sans elle, l'application refuse de démarrer plutôt que de tourner avec une clé de circonstance. |
+| `DJANGO_DEBUG` | `true` | `false` pour la production. |
+| `DJANGO_ALLOWED_HOSTS` | hôtes locaux | Domaines servis, séparés par des virgules. |
+| `DB_ENGINE` | MySQL | `sqlite` pour travailler sans serveur de base. |
+| `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` | voir `settings.py` | Connexion à la base. |
+
+Pour engendrer une clé de production :
+
+```bash
+python3 -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 ```
 
 ### Commandes de mise en route
@@ -218,11 +238,11 @@ python3 manage.py runserver
 ```bash
 python3 manage.py init_config   # paramètres et catégories de dépense d'une école
 python3 manage.py seed_demo     # école, comptes et élèves de démonstration
-python3 manage.py test gestion_scolaire   # 89 tests, environ 18 min
+python3 manage.py test gestion_scolaire   # 273 tests, une trentaine de secondes
 ```
 
-Le run est long parce que la création de la base de test MySQL et les
-migrations le sont ; c'est normal, pas un blocage.
+⚠ `seed_demo` crée des données fictives : ne la lance jamais sur la base d'une
+école réelle, elle y ajouterait une classe et des élèves de démonstration.
 
 `init_config` n'invente aucune donnée : elle installe les 19 paramètres par
 défaut (devise, barème sur 20, moyenne de passage, préfixe des matricules et
