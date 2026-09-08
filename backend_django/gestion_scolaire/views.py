@@ -291,6 +291,7 @@ class ClasseViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixi
     serializer_class = serializers.ClasseSerializer
     permission_classes = [LectureSeuleOuAdmin]
     filterset_fields = ["id_niveau"]
+    search_fields = ["nom", "id_niveau__libelle"]
 
 
 class ParentTuteurViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):

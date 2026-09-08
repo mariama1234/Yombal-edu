@@ -1,0 +1,62 @@
+<div class="recherche">
+  <div class="search">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <label class="sr-only" for="recherche-globale">Rechercher un élève ou une classe</label>
+    <input
+      id="recherche-globale"
+      type="search"
+      autocomplete="off"
+      placeholder="Rechercher un élève, une classe…"
+      [value]="terme()"
+      (input)="saisir($any($event.target).value)"
+      (focus)="saisir(terme())"
+      (keydown.enter)="valider()">
+  </div>
+
+  @if (ouvert()) {
+    <div class="recherche-panneau" role="listbox" aria-label="Résultats de recherche">
+      @if (cherche() && !aDesResultats()) {
+        <p class="recherche-info">Recherche…</p>
+      } @else if (!aDesResultats()) {
+        <p class="recherche-info">Aucun résultat pour « {{ terme() }} ».</p>
+      } @else {
+        @if (eleves().length > 0) {
+          <div class="recherche-groupe">Élèves</div>
+          @for (e of eleves(); track e.id) {
+            <button type="button" class="recherche-ligne" role="option"
+                    (click)="ouvrirEleve(e)">
+              <span class="avatar" style="width:28px;height:28px;font-size:10.5px;">{{ initiales(e) }}</span>
+              <span class="recherche-texte">
+                <span class="recherche-nom">{{ e.prenom }} {{ e.nom }}</span>
+                <span class="recherche-detail mono">{{ e.matricule }}</span>
+              </span>
+              @if (e.statut !== 'actif') {
+                <span class="recherche-statut">{{ e.statut }}</span>
+              }
+            </button>
+          }
+        }
+
+        @if (classes().length > 0) {
+          <div class="recherche-groupe">Classes</div>
+          @for (c of classes(); track c.id) {
+            <button type="button" class="recherche-ligne" role="option"
+                    (click)="ouvrirClasses()">
+              <span class="recherche-puce">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19V6a2 2 0 012-2h8l6 6v9a2 2 0 01-2 2H6a2 2 0 01-2-2z"/></svg>
+              </span>
+              <span class="recherche-texte">
+                <span class="recherche-nom">{{ c.nom }}</span>
+                <span class="recherche-detail">{{ c.effectif }} élèves</span>
+              </span>
+            </button>
+          }
+        }
+
+        <button type="button" class="recherche-tout" (click)="valider()">
+          Voir tous les élèves correspondant à « {{ terme() }} »
+        </button>
+      }
+    </div>
+  }
+</div>

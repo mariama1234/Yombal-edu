@@ -703,6 +703,35 @@ class TestParcoursEleve(BaseAPI):
         self.assertFalse(models.Eleve.objects.filter(nom="Ba").exists(),
                          "aucun élève ne doit être créé quand l'inscription est refusée")
 
+    def test_recherche_par_nom_prenom_ou_matricule(self):
+        """
+        Le champ de recherche du bandeau haut s'appuie là-dessus. Il était
+        purement décoratif : rien n'y était branché.
+        """
+        eleve = self._inscrire("Diagne", "Aïssatou")
+        self._inscrire("Fall", "Moussa")
+
+        for terme, attendu in [("Diagne", 1), ("aïssa", 1), ("all", 1),
+                               (eleve.matricule, 1), ("introuvable", 0)]:
+            with self.subTest(terme=terme):
+                r = self.client.get(f"/api/eleves/?search={terme}")
+                self.assertEqual(r.status_code, 200, r.content)
+                self.assertEqual(len(self.resultats(r)), attendu)
+
+    def test_recherche_ne_traverse_pas_les_ecoles(self):
+        models.Eleve.objects.create(
+            id_ecole=self.autre, matricule="B-001", nom="Diagne", prenom="Autre")
+        self._inscrire("Diagne", "Aïssatou")
+
+        r = self.client.get("/api/eleves/?search=Diagne")
+        self.assertEqual(len(self.resultats(r)), 1,
+                         "la recherche reste bornée à l'école du compte")
+
+    def test_recherche_de_classe(self):
+        r = self.client.get("/api/classes/?search=6ème")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertGreaterEqual(len(self.resultats(r)), 1)
+
     def test_inscription_ecrit_l_historique(self):
         eleve = self._inscrire()
         historique = models.HistoriqueScolaire.objects.filter(id_eleve=eleve)
