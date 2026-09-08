@@ -77,6 +77,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   'conseils-classe': {
     key: 'conseils-classe',
+    filtreParAnnee: true,
     endpoint: 'conseils-classe',
     titre: 'Conseils de classe',
     titreSingulier: 'un conseil de classe',
@@ -154,6 +155,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   presences: {
     key: 'presences',
+    filtreParAnnee: true,
     endpoint: 'absences',
     titre: 'Présences',
     titreSingulier: 'une absence',
@@ -182,6 +184,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   // d'entrée du module pédagogique, avant la grille de saisie.
   evaluations: {
     key: 'evaluations',
+    filtreParAnnee: true,
     endpoint: 'evaluations',
     titre: 'Évaluations',
     titreSingulier: 'une évaluation',
@@ -239,6 +242,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   'emploi-du-temps': {
     key: 'emploi-du-temps',
+    filtreParAnnee: true,
     endpoint: 'emplois-du-temps',
     titre: 'Emploi du temps',
     titreSingulier: 'un cours',
@@ -267,6 +271,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   classes: {
     key: 'classes',
+    filtreParAnnee: true,
     endpoint: 'classes',
     titre: 'Classes & niveaux',
     titreSingulier: 'une classe',
@@ -541,6 +546,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   periodes: {
     key: 'periodes',
+    filtreParAnnee: true,
     endpoint: 'periodes',
     titre: 'Périodes scolaires',
     titreSingulier: 'une période',
@@ -562,6 +568,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   coefficients: {
     key: 'coefficients',
+    filtreParAnnee: true,
     endpoint: 'coefficients',
     titre: 'Coefficients',
     titreSingulier: 'un coefficient',
@@ -582,6 +589,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   affectations: {
     key: 'affectations',
+    filtreParAnnee: true,
     endpoint: 'affectations',
     titre: 'Affectations',
     titreSingulier: 'une affectation',
@@ -604,6 +612,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   bulletins: {
     key: 'bulletins',
+    filtreParAnnee: true,
     endpoint: 'bulletins',
     titre: 'Bulletins',
     titreSingulier: '',

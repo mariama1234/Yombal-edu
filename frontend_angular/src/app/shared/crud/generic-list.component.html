@@ -19,11 +19,24 @@
     </div>
   }
 
+  @if (surUneArchive()) {
+    <div class="panel" style="border-color:var(--orange-500); color:var(--orange-500); font-size:13px;">
+      Vous consultez l'année archivée <strong>{{ libelleAnnee() }}</strong>. Changez
+      d'année en haut de l'écran pour revenir à l'année en cours.
+    </div>
+  }
+
   <div class="panel">
     @if (loading()) {
       <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
     } @else if (items().length === 0) {
-      <p style="color:var(--ink-400); font-size:13px;">Aucun élément pour le moment.</p>
+      <p style="color:var(--ink-400); font-size:13px;">
+        @if (config.filtreParAnnee && libelleAnnee()) {
+          Aucun élément en {{ libelleAnnee() }}.
+        } @else {
+          Aucun élément pour le moment.
+        }
+      </p>
     } @else {
       <table class="simple">
         <thead>

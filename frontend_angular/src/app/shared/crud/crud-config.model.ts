@@ -59,4 +59,17 @@ export interface EntityConfig {
   lectureSeule?: boolean;
   /** Actions métier proposées sur chaque ligne. */
   actions?: RowAction[];
+  /**
+   * La liste suit l'année scolaire choisie dans le bandeau haut.
+   *
+   * À n'activer que sur les listes dont l'endpoint accepte réellement
+   * `id_annee_scolaire` : le poser ailleurs le ferait ignorer en silence, et
+   * l'écran prétendrait filtrer sans le faire.
+   */
+  filtreParAnnee?: boolean;
+  /**
+   * Année à préremplir dans le formulaire de création, quand l'entité porte
+   * une clé vers l'année scolaire. Évite de la ressaisir à chaque ligne.
+   */
+  champAnnee?: string;
 }

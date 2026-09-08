@@ -156,6 +156,38 @@ class EcoleFiltreeMixin:
             super().perform_create(serializer)
 
 
+class FiltreParAnneeMixin:
+    """
+    Restreint une liste à une année scolaire, via `?id_annee_scolaire=`.
+
+    L'application affiche un sélecteur d'année en tête de page : consulter une
+    promotion passée doit être aussi simple que de changer d'année. Toutes les
+    listes ne portent pas la colonne — une note dépend de son évaluation, une
+    évaluation de sa période — d'où `chemin_annee`, qui nomme la relation à
+    suivre pour chaque modèle.
+
+    Le paramètre porte le même nom partout : le client ne se demande pas quelle
+    liste attend quel nom. Une valeur illisible est refusée plutôt qu'ignorée,
+    sinon l'écran afficherait toute l'école en croyant montrer une année.
+    """
+    chemin_annee = "id_annee_scolaire"
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        brut = self.request.query_params.get("id_annee_scolaire")
+        if not brut:
+            return qs
+        try:
+            annee = int(brut)
+        except (TypeError, ValueError):
+            raise ValidationError({"id_annee_scolaire": "Identifiant d'année attendu."})
+
+        qs = qs.filter(**{self.chemin_annee: annee})
+        # Un chemin qui traverse une relation multiple (les inscriptions d'un
+        # élève) duplique les lignes : une par inscription correspondante.
+        return qs.distinct() if "__" in self.chemin_annee else qs
+
+
 # ---------- Comptes ----------
 
 class UtilisateurViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
@@ -235,10 +267,12 @@ class NiveauViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin,
     permission_classes = [LectureSeuleOuAdmin]
 
 
-class ClasseViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
+class ClasseViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin,
+                    EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Classe.objects.select_related("id_niveau", "id_enseignant_principal").all()
     serializer_class = serializers.ClasseSerializer
     permission_classes = [LectureSeuleOuAdmin]
+    filterset_fields = ["id_niveau"]
 
 
 class ParentTuteurViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
@@ -247,12 +281,17 @@ class ParentTuteurViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltree
     permission_classes = [permissions.IsAuthenticated]
 
 
-class EleveViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
+class EleveViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin,
+                   EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Eleve.objects.all()
     serializer_class = serializers.EleveSerializer
     permission_classes = [permissions.IsAuthenticated]
     filterset_fields = ["statut"]
     search_fields = ["nom", "prenom", "matricule"]
+    # Un élève n'appartient pas à une année : ce sont ses inscriptions qui la
+    # portent. Filtrer par année revient donc à ne garder que les élèves
+    # inscrits cette année-là.
+    chemin_annee = "inscriptions__id_annee_scolaire"
 
     def get_serializer_class(self):
         if self.action == "inscrire":
@@ -662,11 +701,13 @@ class AffectationEnseignantViewSet(CoherenceEcoleMixin, JournalisationMixin, vie
         ])
 
 
-class ConseilClasseViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class ConseilClasseViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin,
+                           viewsets.ModelViewSet):
     queryset = models.ConseilClasse.objects.select_related("id_classe", "id_periode").all()
     serializer_class = serializers.ConseilClasseSerializer
     permission_classes = [EstAdminOuEnseignant]
     filterset_fields = ["id_classe", "id_periode"]
+    chemin_annee = "id_periode__id_annee_scolaire"
 
     def get_queryset(self):
         return super().get_queryset().filter(
@@ -674,12 +715,14 @@ class ConseilClasseViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.Mo
         )
 
 
-class EvaluationViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class EvaluationViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin,
+                        viewsets.ModelViewSet):
     queryset = models.Evaluation.objects.select_related(
         "id_matiere", "id_classe", "id_periode").all()
     serializer_class = serializers.EvaluationSerializer
     permission_classes = [EstAdminOuEnseignant]
     filterset_fields = ["id_classe", "id_matiere", "id_periode", "type"]
+    chemin_annee = "id_periode__id_annee_scolaire"
 
     def get_queryset(self):
         return super().get_queryset().filter(id_classe__id_ecole_id=self.request.user.id_ecole_id)
@@ -737,12 +780,14 @@ class NoteViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSe
         return super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
 
 
-class BulletinViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class BulletinViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin,
+                      viewsets.ModelViewSet):
     queryset = models.Bulletin.objects.select_related(
         "id_eleve", "id_classe", "id_periode").all()
     serializer_class = serializers.BulletinSerializer
     permission_classes = [permissions.IsAuthenticated]
     filterset_fields = ["id_eleve", "id_classe", "id_periode"]
+    chemin_annee = "id_periode__id_annee_scolaire"
 
     def get_queryset(self):
         return super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
@@ -898,10 +943,13 @@ class BulletinViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelVi
         )
 
 
-class AbsenceViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class AbsenceViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin,
+                     viewsets.ModelViewSet):
     queryset = models.Absence.objects.all()
     serializer_class = serializers.AbsenceSerializer
     permission_classes = [EstAdminOuEnseignant]
+    filterset_fields = ["id_eleve", "id_classe", "statut", "justifiee"]
+    chemin_annee = "id_classe__id_annee_scolaire"
 
     def get_queryset(self):
         return super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
@@ -915,7 +963,8 @@ class SalleViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMixin, 
     permission_classes = [LectureSeuleOuAdmin]
 
 
-class EmploiDuTempsViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class EmploiDuTempsViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin,
+                           viewsets.ModelViewSet):
     queryset = models.EmploiDuTemps.objects.select_related("id_matiere", "id_enseignant", "id_salle").all()
     serializer_class = serializers.EmploiDuTempsSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -936,7 +985,8 @@ class TypeFraisViewSet(CoherenceEcoleMixin, JournalisationMixin, EcoleFiltreeMix
     permission_classes = [EstAdmin]
 
 
-class FraisEleveViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class FraisEleveViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin,
+                        viewsets.ModelViewSet):
     queryset = models.FraisEleve.objects.select_related(
         "id_eleve", "id_type_frais", "id_annee_scolaire").all()
     serializer_class = serializers.FraisEleveSerializer

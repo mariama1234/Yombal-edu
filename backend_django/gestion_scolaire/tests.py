@@ -396,6 +396,102 @@ class TestAnneesScolaires(BaseAPI):
         self.assertEqual(r.data["nombre_inscriptions"], 1)
 
 
+class TestFiltreParAnnee(BaseAPI):
+    """
+    Le sélecteur d'année du bandeau haut passe `id_annee_scolaire` à chaque
+    liste. Toutes ne portent pas la colonne — une évaluation dépend de sa
+    période, un élève de ses inscriptions — d'où ces vérifications par chemin.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.periode = models.PeriodeScolaire.objects.create(
+            id_annee_scolaire=self.annee, libelle="Trimestre 1",
+            date_debut=date(2026, 10, 1), date_fin=date(2026, 12, 20))
+
+        # Une seconde année, avec sa classe, sa période et son élève.
+        self.annee2 = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2027-2028",
+            date_debut=date(2027, 10, 1), date_fin=date(2028, 7, 31))
+        self.classe2 = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee2, id_niveau=self.niveau,
+            nom="5ème A", capacite_max=40)
+        self.periode2 = models.PeriodeScolaire.objects.create(
+            id_annee_scolaire=self.annee2, libelle="Trimestre 1",
+            date_debut=date(2027, 10, 1), date_fin=date(2027, 12, 20))
+
+        self.eleve1 = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="E-001", nom="Fall", prenom="Moussa")
+        models.Inscription.objects.create(
+            id_eleve=self.eleve1, id_classe=self.classe, id_annee_scolaire=self.annee,
+            date_inscription=date(2026, 10, 1))
+        self.eleve2 = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="E-002", nom="Sarr", prenom="Mariama")
+        models.Inscription.objects.create(
+            id_eleve=self.eleve2, id_classe=self.classe2, id_annee_scolaire=self.annee2,
+            date_inscription=date(2027, 10, 1))
+
+    def _ids(self, url):
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 200, r.content)
+        return {ligne["id"] for ligne in self.resultats(r)}
+
+    def test_classes_filtrees(self):
+        self.assertEqual(self._ids(f"/api/classes/?id_annee_scolaire={self.annee.pk}"),
+                         {self.classe.pk})
+        self.assertEqual(self._ids(f"/api/classes/?id_annee_scolaire={self.annee2.pk}"),
+                         {self.classe2.pk})
+
+    def test_eleves_filtres_par_leurs_inscriptions(self):
+        """Un élève n'a pas d'année : ce sont ses inscriptions qui la portent."""
+        self.assertEqual(self._ids(f"/api/eleves/?id_annee_scolaire={self.annee.pk}"),
+                         {self.eleve1.pk})
+        self.assertEqual(self._ids(f"/api/eleves/?id_annee_scolaire={self.annee2.pk}"),
+                         {self.eleve2.pk})
+
+    def test_eleve_reinscrit_n_apparait_pas_deux_fois(self):
+        """La jointure sur les inscriptions dupliquerait la ligne sans distinct()."""
+        models.Inscription.objects.create(
+            id_eleve=self.eleve1, id_classe=self.classe2, id_annee_scolaire=self.annee2,
+            date_inscription=date(2027, 10, 1))
+        r = self.client.get(f"/api/eleves/?id_annee_scolaire={self.annee2.pk}")
+        identifiants = [l["id"] for l in self.resultats(r)]
+        self.assertEqual(len(identifiants), len(set(identifiants)),
+                         "un élève ne doit apparaître qu'une fois dans la liste")
+
+    def test_evaluations_filtrees_par_la_periode(self):
+        evaluation = models.Evaluation.objects.create(
+            id_matiere=self.matiere, id_classe=self.classe, id_periode=self.periode,
+            type="devoir", date_evaluation=date(2026, 11, 10))
+        models.Evaluation.objects.create(
+            id_matiere=self.matiere, id_classe=self.classe2, id_periode=self.periode2,
+            type="devoir", date_evaluation=date(2027, 11, 10))
+
+        self.assertEqual(self._ids(f"/api/evaluations/?id_annee_scolaire={self.annee.pk}"),
+                         {evaluation.pk})
+
+    def test_sans_parametre_tout_est_renvoye(self):
+        self.assertEqual(self._ids("/api/classes/"), {self.classe.pk, self.classe2.pk})
+
+    def test_annee_illisible_refusee(self):
+        """Une valeur illisible doit être refusée, pas ignorée : sinon l'écran
+        afficherait toute l'école en croyant montrer une année."""
+        r = self.client.get("/api/classes/?id_annee_scolaire=abc")
+        self.assertEqual(r.status_code, 400, r.content)
+
+    def test_le_filtre_ne_perce_pas_l_isolation(self):
+        """Filtrer sur l'année d'une autre école ne doit rien révéler."""
+        annee_b = models.AnneeScolaire.objects.create(
+            id_ecole=self.autre, libelle="2026-2027",
+            date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31))
+        models.Classe.objects.create(
+            id_ecole=self.autre, id_annee_scolaire=annee_b,
+            id_niveau=models.Niveau.objects.create(id_ecole=self.autre, libelle="6ème"),
+            nom="6ème B", capacite_max=30)
+
+        self.assertEqual(self._ids(f"/api/classes/?id_annee_scolaire={annee_b.pk}"), set())
+
+
 class TestReferentielsDeStructure(BaseAPI):
     """Niveaux, salles et conseils de classe : saisissables par l'API."""
 

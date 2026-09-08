@@ -1,9 +1,10 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, effect, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { GenericCrudService } from './generic-crud.service';
 import { ENTITY_CONFIGS } from './entity-configs';
 import { EntityConfig, RowAction } from './crud-config.model';
+import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 
 @Component({
   selector: 'app-generic-list',
@@ -18,7 +19,16 @@ export class GenericListComponent implements OnInit {
   total = signal(0);
   erreur = signal<string | null>(null);
 
-  constructor(private route: ActivatedRoute, private router: Router, private crud: GenericCrudService<any>) {}
+  annees = inject(AnneeScolaireService);
+
+  constructor(private route: ActivatedRoute, private router: Router, private crud: GenericCrudService<any>) {
+    // Changer d'année dans le bandeau haut recharge la liste courante, sans
+    // que l'utilisateur ait à revenir dessus.
+    effect(() => {
+      this.annees.idAnnee();
+      if (this.config?.filtreParAnnee) this.charger();
+    });
+  }
 
   ngOnInit(): void {
     this.route.data.subscribe((data) => {
@@ -27,9 +37,23 @@ export class GenericListComponent implements OnInit {
     });
   }
 
+  /** Vrai quand la liste affichée est restreinte à une année archivée. */
+  surUneArchive(): boolean {
+    return !!this.config?.filtreParAnnee && this.annees.consulteUneArchive();
+  }
+
+  libelleAnnee(): string {
+    return this.annees.anneeCourante()?.libelle ?? '';
+  }
+
   charger(): void {
     this.loading.set(true);
-    this.crud.list(this.config.endpoint).subscribe({
+    const params: Record<string, string> = {};
+    const id = this.annees.idAnnee();
+    if (this.config.filtreParAnnee && id !== null) {
+      params['id_annee_scolaire'] = String(id);
+    }
+    this.crud.list(this.config.endpoint, params).subscribe({
       next: (res) => {
         this.items.set(res.results);
         this.total.set(res.count);
