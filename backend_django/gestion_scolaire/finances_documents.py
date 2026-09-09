@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from datetime import date
 
+from django.utils.text import slugify
+
 from . import exports
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -53,6 +55,34 @@ def _nom_fichier(base, extension):
     return f"{base}-{date.today().isoformat()}.{extension}"
 
 
+def _morceau(valeur):
+    """
+    Un fragment de nom de fichier : sans accent, sans espace, sans ponctuation.
+
+    `slugify` sans `allow_unicode` translitère « Ndalé » en « ndale » et
+    « 4ème A » en « 4eme-a ». C'est voulu : le fichier voyage par e-mail,
+    WhatsApp et clé USB, et tout ce qui n'est pas ASCII finit tôt ou tard en
+    « recu-Ndal%C3%A9.pdf » chez le destinataire.
+
+    Tout est ramené en minuscules, numéro de pièce compris : préserver la
+    casse des seules valeurs déjà ASCII produisait « Test-Nom1 » à côté de
+    « ndale-fedior » — le même champ rendu différemment selon qu'il porte un
+    accent. Les systèmes de fichiers qui nous concernent ignorent la casse.
+    """
+    return slugify(str(valeur or ""), allow_unicode=False)
+
+
+def nom_document(*morceaux, extension="pdf"):
+    """
+    Assemble un nom de fichier parlant à partir de ce qui identifie la pièce.
+
+    Un dossier de téléchargement contient vite trente « recu.pdf » ; en y
+    lisant l'élève, sa classe et l'année, la pièce se retrouve sans l'ouvrir.
+    """
+    parties = [_morceau(m) for m in morceaux if m]
+    return "-".join(p for p in parties if p) + f".{extension}"
+
+
 # ---------------------------------------------------------------------------
 # État des impayés
 # ---------------------------------------------------------------------------
@@ -76,7 +106,9 @@ def _lignes_impayes(frais):
             "type": f.id_type_frais.get_libelle_display(),
             "echeance": f.echeance,
             "statut": ("En retard" if retard else f.get_statut_display()),
-            "du": f.montant_du,
+            # Le dû net de remise, pour que l'export réclame exactement ce que
+            # l'écran et le reçu annoncent.
+            "du": f.montant_net,
             "paye": f.montant_paye,
             "solde": f.solde_restant,
         })
@@ -312,55 +344,106 @@ def _bilan_pdf(ecole, donnees, intitule):
 # ---------------------------------------------------------------------------
 
 def recu(objet):
-    """Reçu remis au parent : le justificatif que le TDR demande automatique."""
+    """
+    Reçu remis au parent : le justificatif que le TDR demande automatique.
+
+    Il ne se contente pas d'attester le versement : il montre l'échéancier de
+    l'année et ce qu'il reste à payer. C'est la question que la famille pose
+    en repartant du guichet, et y répondre sur le papier évite un aller-retour.
+    """
     paiement = objet.id_paiement
     frais = paiement.id_frais_eleve
     eleve = frais.id_eleve
     ecole = eleve.id_ecole
+    annee = frais.id_annee_scolaire
 
     inscription = (eleve.inscriptions
-                   .filter(id_annee_scolaire_id=frais.id_annee_scolaire_id)
+                   .filter(id_annee_scolaire_id=annee.pk)
                    .select_related("id_classe").first())
+    classe = inscription.id_classe.nom if inscription else None
 
-    doc = exports.DocumentPDF(f"Reçu n° {objet.numero_recu}",
-                              _sous_titre(ecole, ecole.adresse or None), pied=ecole.nom)
+    doc = exports.DocumentPDF(
+        f"Reçu n° {objet.numero_recu}",
+        _sous_titre(ecole, ecole.adresse or None), pied=ecole.nom)
 
     doc.encadre("Montant reçu", formater_montant(paiement.montant, devise=True))
 
+    # -- Qui, et pour quelle scolarité ------------------------------------
     doc.section("Élève")
-    doc.champs([
-        ("Nom et prénom", f"{eleve.prenom} {eleve.nom}"),
-        ("Matricule", eleve.matricule),
-        ("Classe", inscription.id_classe.nom if inscription else "—"),
-        ("Année scolaire", frais.id_annee_scolaire.libelle),
-    ])
+    doc.tableau(
+        [("Nom et prénom", 200, "g"), ("Matricule", 130, "g"),
+         ("Classe", 110, "g"), ("Année scolaire", 110, "g")],
+        [[f"{eleve.prenom} {eleve.nom}", eleve.matricule, classe or "—", annee.libelle]],
+    )
 
-    doc.section("Paiement")
+    # -- Le versement lui-même --------------------------------------------
+    doc.section("Détail du règlement")
+    doc.tableau(
+        [("Frais réglé", 190, "g"), ("Échéance", 90, "g"), ("Moyen", 110, "g"),
+         ("Référence", 110, "g"), ("Montant", 100, "d")],
+        [[
+            frais.id_type_frais.get_libelle_display(),
+            _jour(frais.echeance) or "—",
+            paiement.get_methode_display(),
+            paiement.reference_transaction or "—",
+            formater_montant(paiement.montant),
+        ]],
+    )
     doc.champs([
-        ("Type de frais", frais.id_type_frais.get_libelle_display()),
-        ("Date", _jour(paiement.date_paiement)),
-        ("Moyen de paiement", paiement.get_methode_display()),
-        ("Référence", paiement.reference_transaction or "—"),
+        ("Date du paiement", _jour(paiement.date_paiement)),
         ("Encaissé par", (f"{paiement.id_utilisateur_caissier.prenom} "
                           f"{paiement.id_utilisateur_caissier.nom}")
          if paiement.id_utilisateur_caissier else "—"),
-    ])
+    ] + ([("Commentaire", paiement.commentaire)] if paiement.commentaire else []))
 
-    doc.section("Situation du frais")
-    doc.champs([
-        ("Montant dû", formater_montant(frais.montant_du, devise=True)),
-        ("Total réglé", formater_montant(frais.montant_paye, devise=True)),
-        ("Solde restant", formater_montant(frais.solde_restant, devise=True)),
-        ("Statut", frais.get_statut_display()),
-    ])
+    # -- Où en est l'année ------------------------------------------------
+    # Deux requêtes suffisent : les paiements sont préchargés, et le solde de
+    # chaque ligne se lit sur les propriétés du modèle, jamais recalculé ici.
+    lignes_annee = list(
+        type(frais).objects
+        .filter(id_eleve=eleve, id_annee_scolaire=annee)
+        .select_related("id_type_frais")
+        .prefetch_related("paiements")
+        .order_by("echeance", "pk")
+    )
+    if lignes_annee:
+        doc.section(f"Situation de l'année {annee.libelle}")
+        total_du = total_paye = 0
+        corps = []
+        for ligne in lignes_annee:
+            net, regle = ligne.montant_net, ligne.montant_paye
+            total_du += net
+            total_paye += regle
+            corps.append([
+                ligne.id_type_frais.get_libelle_display(),
+                _jour(ligne.echeance) or "—",
+                formater_montant(net),
+                formater_montant(regle),
+                formater_montant(net - regle),
+                # La ligne qui vient d'être réglée se repère d'un coup d'œil.
+                ("« ce reçu »" if ligne.pk == frais.pk
+                 else ligne.get_statut_display()),
+            ])
+        doc.tableau(
+            [("Frais", 170, "g"), ("Échéance", 85, "g"), ("Dû", 95, "d"),
+             ("Réglé", 95, "d"), ("Reste", 95, "d"), ("Statut", 100, "g")],
+            corps,
+            total=["Total", "", formater_montant(total_du),
+                   formater_montant(total_paye),
+                   formater_montant(total_du - total_paye), ""],
+        )
+        doc.encadre("Reste à payer sur l'année",
+                    formater_montant(total_du - total_paye, devise=True))
 
-    doc.espace(18)
+    doc.espace(14)
     doc.paragraphe(
         "Ce reçu est délivré automatiquement par le système de gestion de "
         f"{ecole.nom}. Il atteste du paiement ci-dessus et doit être conservé "
         "par la famille.", taille=8.5, gris=0.45)
 
-    return doc.rendu(), f"recu-{objet.numero_recu}.pdf", PDF
+    nom = nom_document("recu", objet.numero_recu, eleve.prenom, eleve.nom,
+                       classe, annee.libelle)
+    return doc.rendu(), nom, PDF
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,112 @@
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
+import { ContexteReinscription } from '../../core/models/models';
+import { EleveService } from './eleve.service';
+
+/**
+ * Réinscription d'un élève, en une page pré-remplie.
+ *
+ * L'écran ne pose qu'une question — dans quelle classe il passe. L'élève,
+ * sa provenance et l'année visée viennent du serveur : les faire ressaisir
+ * n'apporterait rien et ouvrirait la porte au couple incohérent (l'élève de
+ * 4ème A réinscrit « depuis » la 6ème B).
+ *
+ * Il n'y a volontairement pas de suggestion automatique de la classe
+ * supérieure : les niveaux n'ont pas d'ordre en base, et deviner « après la
+ * 4ème vient la 3ème » à partir du libellé se tromperait à la première école
+ * qui nomme ses niveaux autrement.
+ */
+@Component({
+  selector: 'app-eleve-reinscription',
+  standalone: true,
+  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  templateUrl: './eleve-reinscription.component.html',
+})
+export class EleveReinscriptionComponent implements OnInit {
+  private fb = inject(FormBuilder);
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
+  private eleves = inject(EleveService);
+  annees = inject(AnneeScolaireService);
+
+  idEleve = 0;
+  contexte = signal<ContexteReinscription | null>(null);
+  chargement = signal(true);
+  occupe = signal(false);
+  erreur = signal<string | null>(null);
+  resultat = signal<string | null>(null);
+
+  form = this.fb.group({
+    id_classe: [null as number | null, Validators.required],
+    date_inscription: [''],
+  });
+
+  /** Classes de l'année cible, celle de l'an passé exclue de fait. */
+  classes = computed(() => this.contexte()?.classes ?? []);
+
+  ngOnInit(): void {
+    this.idEleve = Number(this.route.snapshot.paramMap.get('id'));
+    this.charger();
+  }
+
+  private charger(): void {
+    this.chargement.set(true);
+    const annee = this.annees.idAnnee();
+    const params: Record<string, string> = {};
+    if (annee !== null) params['id_annee_scolaire'] = String(annee);
+
+    this.eleves.contexteReinscription(this.idEleve, params).subscribe({
+      next: (c) => {
+        this.contexte.set(c);
+        this.form.patchValue({ date_inscription: c.annee_cible.date_debut });
+        this.chargement.set(false);
+      },
+      error: (e) => {
+        this.erreur.set(this.messageErreur(e));
+        this.chargement.set(false);
+      },
+    });
+  }
+
+  valider(): void {
+    if (this.form.invalid) return this.form.markAllAsTouched();
+    const v = this.form.getRawValue();
+    this.occupe.set(true);
+    this.erreur.set(null);
+
+    this.eleves
+      .reinscrire(this.idEleve, {
+        id_classe: v.id_classe,
+        date_inscription: v.date_inscription || null,
+      })
+      .subscribe({
+        next: (r) => {
+          this.resultat.set(
+            `${r.eleve} passe de ${r.classe_precedente} (${r.annee_precedente}) `
+            + `à ${r.classe} pour ${r.annee}.`
+            + (r.avertissement ? ` ${r.avertissement}` : ''),
+          );
+          this.occupe.set(false);
+        },
+        error: (e) => {
+          this.erreur.set(this.messageErreur(e));
+          this.occupe.set(false);
+        },
+      });
+  }
+
+  /** Enchaîner : la file d'attente est le lieu naturel où revenir. */
+  retourFile(): void {
+    this.router.navigate(['/eleves'], { queryParams: { vue: 'a_reinscrire' } });
+  }
+
+  private messageErreur(erreur: unknown): string {
+    const corps = (erreur as { error?: Record<string, unknown> })?.error;
+    if (!corps) return "La réinscription a échoué.";
+    const premiere = Object.values(corps)[0];
+    return Array.isArray(premiere) ? String(premiere[0]) : String(premiere);
+  }
+}

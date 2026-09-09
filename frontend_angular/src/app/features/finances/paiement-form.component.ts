@@ -33,7 +33,9 @@ export class PaiementFormComponent implements OnInit {
   form = this.fb.group({
     montant: [0, [Validators.required, Validators.min(1)]],
     methode: ['especes', Validators.required],
+    date_paiement: [''],
     reference_transaction: [''],
+    commentaire: [''],
   });
 
   ngOnInit(): void {
@@ -52,8 +54,18 @@ export class PaiementFormComponent implements OnInit {
     this.enregistrement.set(true);
     this.erreur.set(null);
 
+    const v = this.form.getRawValue();
     this.finance
-      .encaisser({ id_frais_eleve: this.frais()!.id, ...this.form.getRawValue() })
+      .encaisser({
+        id_frais_eleve: this.frais()!.id,
+        montant: v.montant,
+        methode: v.methode,
+        // Le champ HTML rend « 2026-10-05 » ; l'API attend un instant. Omis,
+        // le serveur date le paiement de maintenant.
+        date_paiement: v.date_paiement ? `${v.date_paiement}T12:00:00` : undefined,
+        reference_transaction: v.reference_transaction || undefined,
+        commentaire: v.commentaire || undefined,
+      })
       .subscribe({
         next: (paiement) => {
           this.paiement.set(paiement);

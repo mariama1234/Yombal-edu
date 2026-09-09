@@ -63,7 +63,7 @@
         <div class="field">
           <label for="id_niveau">Niveau</label>
           <select class="input" id="id_niveau" formControlName="id_niveau">
-            <option value="">Tous</option>
+            <option value="" disabled>Sélectionner…</option>
             @for (n of niveaux(); track n.id) {
               <option [value]="n.id">{{ n.libelle }}</option>
             }

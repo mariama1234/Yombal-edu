@@ -9,7 +9,7 @@ consisteraient à la percer.
 """
 import io
 import zipfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -19,7 +19,8 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from . import exports, finances, imports_eleves, models, pedagogie, scolarite
+from . import (exports, finances, finances_documents, imports_eleves, models,
+               pedagogie, scolarite)
 
 Utilisateur = get_user_model()
 MDP = "motdepasse123"
@@ -477,16 +478,22 @@ class TestFiltreParAnnee(BaseAPI):
             id_annee_scolaire=self.annee2, libelle="Trimestre 1",
             date_debut=date(2027, 10, 1), date_fin=date(2027, 12, 20))
 
+        # `statut` explicite : une inscription naît « pré-inscrite » et
+        # n'entre dans la liste qu'au premier paiement. Ce test-ci porte sur le
+        # chemin `inscriptions__id_annee_scolaire`, pas sur cette règle — ses
+        # deux élèves sont donc des inscrits confirmés.
         self.eleve1 = models.Eleve.objects.create(
             id_ecole=self.ecole, matricule="E-001", nom="Fall", prenom="Moussa")
         models.Inscription.objects.create(
             id_eleve=self.eleve1, id_classe=self.classe, id_annee_scolaire=self.annee,
-            date_inscription=date(2026, 10, 1))
+            date_inscription=date(2026, 10, 1),
+            statut=models.Inscription.Statut.EN_COURS)
         self.eleve2 = models.Eleve.objects.create(
             id_ecole=self.ecole, matricule="E-002", nom="Sarr", prenom="Mariama")
         models.Inscription.objects.create(
             id_eleve=self.eleve2, id_classe=self.classe2, id_annee_scolaire=self.annee2,
-            date_inscription=date(2027, 10, 1))
+            date_inscription=date(2027, 10, 1),
+            statut=models.Inscription.Statut.EN_COURS)
 
     def _ids(self, url):
         r = self.client.get(url)
@@ -510,7 +517,8 @@ class TestFiltreParAnnee(BaseAPI):
         """La jointure sur les inscriptions dupliquerait la ligne sans distinct()."""
         models.Inscription.objects.create(
             id_eleve=self.eleve1, id_classe=self.classe2, id_annee_scolaire=self.annee2,
-            date_inscription=date(2027, 10, 1))
+            date_inscription=date(2027, 10, 1),
+            statut=models.Inscription.Statut.EN_COURS)
         r = self.client.get(f"/api/eleves/?id_annee_scolaire={self.annee2.pk}")
         identifiants = [l["id"] for l in self.resultats(r)]
         self.assertEqual(len(identifiants), len(set(identifiants)),
@@ -2122,7 +2130,8 @@ class TestExportsFinanciers(BaseFinances):
         r = self.client.get(f"/api/recus/{recu.pk}/pdf/")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
-        self.assertIn(recu.numero_recu, r["Content-Disposition"])
+        # Le nom du fichier est normalisé : accents et casse tombent.
+        self.assertIn(recu.numero_recu.lower(), r["Content-Disposition"])
         self.assertTrue(r.content.startswith(b"%PDF-"))
 
     def test_recu_d_une_autre_ecole_introuvable(self):
@@ -2996,3 +3005,995 @@ class TestReleveEtPalmares(BaseNotes):
         self.assertTrue(
             models.JournalActivite.objects.filter(action="export", entite="bulletin").exists(),
             "un export pédagogique doit être tracé sous sa propre entité")
+
+
+class BaseDossierFinancier(BaseFinances):
+    """
+    Un élève, deux années scolaires, un catalogue de frais.
+
+    Deux années dès le départ : la règle la plus facile à casser du module est
+    « ne jamais mélanger les paiements de deux années », et on ne la teste pas
+    avec une seule.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.eleve = self.eleves[0]
+
+        self.inscription_frais = models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="inscription", montant_defaut=50000)
+
+        self.annee_passee = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2025-2026",
+            date_debut=date(2025, 10, 1), date_fin=date(2026, 7, 31),
+            statut=models.AnneeScolaire.Statut.ARCHIVEE,
+        )
+        self.classe_passee = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee_passee,
+            id_niveau=self.niveau, nom="5ème A", capacite_max=40,
+        )
+        # L'année courante a été archivée par la création ci-dessus si elle
+        # était active : on la remet active, c'est celle qu'ouvre l'écran.
+        self.annee.statut = models.AnneeScolaire.Statut.ACTIVE
+        self.annee.save()
+
+    def _frais(self, montant, echeance, type_frais=None, annee=None, eleve=None,
+               remise=0):
+        return models.FraisEleve.objects.create(
+            id_eleve=eleve or self.eleve,
+            id_type_frais=type_frais or self.type_frais,
+            id_annee_scolaire=annee or self.annee,
+            montant_du=montant, remise=remise, echeance=echeance,
+        )
+
+    def _payer(self, frais, montant, methode="especes", **extra):
+        paiement = models.Paiement.objects.create(
+            id_frais_eleve=frais, montant=Decimal(str(montant)), methode=methode,
+            id_utilisateur_caissier=self.admin, **extra)
+        finances.enregistrer_paiement(paiement, utilisateur=self.admin)
+        return paiement
+
+    def _situation(self, annee=None, aujourdhui=None):
+        # Date figée : les statuts dépendent des échéances dépassées, et un
+        # test qui lit l'horloge réelle change de verdict avec le calendrier.
+        return finances.situation_eleve(
+            self.ecole, self.eleve, annee, aujourdhui=aujourdhui or date(2026, 10, 1))
+
+
+class TestSituationFinanciereEleve(BaseDossierFinancier):
+    def test_nouvel_eleve_tout_est_du(self):
+        """Aucun règlement : dû complet, reste égal au dû, statut « non payé »."""
+        self._frais(50000, None, self.inscription_frais)
+        for mois in (10, 11, 12):
+            self._frais(25000, date(2026, mois, 5))
+
+        resume = self._situation()["resume"]
+        self.assertEqual(resume["total_du"], 125000)
+        self.assertEqual(resume["total_paye"], 0)
+        self.assertEqual(resume["reste"], 125000)
+        self.assertEqual(resume["statut"], "non_paye")
+
+    def test_paiement_complet_met_a_jour(self):
+        frais = self._frais(25000, date(2026, 10, 5))
+        self._payer(frais, 25000)
+
+        situation = self._situation()
+        self.assertEqual(situation["resume"]["statut"], "a_jour")
+        self.assertEqual(situation["resume"]["reste"], 0)
+        self.assertEqual(situation["frais"][0]["statut"], "paye")
+
+    def test_paiement_partiel_puis_solde(self):
+        """25 000 dus, 10 000 versés : partiel ; les 15 000 suivants soldent."""
+        frais = self._frais(25000, date(2026, 11, 5))
+        self._payer(frais, 10000)
+
+        ligne = self._situation()["frais"][0]
+        self.assertEqual((ligne["montant"], ligne["paye"], ligne["reste"]),
+                         (25000, 10000, 15000))
+        self.assertEqual(ligne["statut"], "partiel")
+
+        self._payer(frais, 15000)
+        ligne = self._situation()["frais"][0]
+        self.assertEqual((ligne["paye"], ligne["reste"]), (25000, 0))
+        self.assertEqual(ligne["statut"], "paye")
+        self.assertEqual(self._situation()["resume"]["statut"], "a_jour")
+
+    def test_echeance_depassee_passe_en_retard(self):
+        """Une échéance dépassée l'emporte sur « partiel » : c'est elle qu'on relance."""
+        frais = self._frais(25000, date(2026, 10, 5))
+        self._payer(frais, 10000)
+
+        situation = self._situation(aujourdhui=date(2026, 11, 20))
+        self.assertEqual(situation["resume"]["statut"], "en_retard")
+        self.assertTrue(situation["frais"][0]["en_retard"])
+        self.assertEqual(situation["resume"]["frais_en_retard"], 1)
+
+        # Avant l'échéance, le même frais partiellement réglé n'est pas en retard.
+        situation = self._situation(aujourdhui=date(2026, 10, 1))
+        self.assertEqual(situation["resume"]["statut"], "partiel")
+
+    def test_echeancier_couvre_tous_les_mois_de_lannee(self):
+        """Octobre 2026 → juillet 2027 : dix mois, listés même sans frais."""
+        self._payer(self._frais(25000, date(2026, 10, 5)), 25000)
+        self._frais(25000, date(2026, 11, 5))
+
+        echeancier = self._situation()["echeancier"]
+        self.assertEqual([m["mois"] for m in echeancier][:3],
+                         ["2026-10", "2026-11", "2026-12"])
+        self.assertEqual(len(echeancier), 10)
+        par_mois = {m["mois"]: m["statut"] for m in echeancier}
+        self.assertEqual(par_mois["2026-10"], "a_jour")
+        self.assertEqual(par_mois["2026-11"], "non_paye")
+        self.assertEqual(par_mois["2026-12"], "sans_frais")
+
+    def test_frais_sans_echeance_reste_visible(self):
+        """Une inscription n'a pas de mois : elle ne doit pas disparaître."""
+        self._frais(50000, None, self.inscription_frais)
+        echeancier = self._situation()["echeancier"]
+        self.assertEqual(echeancier[-1]["libelle"], "Sans échéance")
+        self.assertEqual(echeancier[-1]["du"], 50000)
+
+    def test_historique_des_paiements(self):
+        frais = self._frais(25000, date(2026, 10, 5))
+        self._payer(frais, 25000, methode="wave", reference_transaction="TXN-88213",
+                    commentaire="Réglé par la mère")
+
+        paiement = self._situation()["paiements"][0]
+        self.assertEqual(paiement["montant"], 25000)
+        self.assertEqual(paiement["methode_libelle"], "Wave")
+        self.assertEqual(paiement["reference_transaction"], "TXN-88213")
+        self.assertEqual(paiement["commentaire"], "Réglé par la mère")
+        self.assertEqual(paiement["enregistre_par"], "Admin Test")
+        self.assertTrue(paiement["numero_recu"])
+
+    def test_libelle_date_le_mois_quand_le_type_se_repete(self):
+        self._frais(50000, None, self.inscription_frais)
+        self._frais(25000, date(2026, 10, 5))
+        self._frais(25000, date(2026, 11, 5))
+
+        libelles = [f["libelle"] for f in self._situation()["frais"]]
+        self.assertIn("Inscription", libelles)
+        self.assertIn("Mensualité octobre", libelles)
+        self.assertIn("Mensualité novembre", libelles)
+
+
+class TestAnneesNonMelangees(BaseDossierFinancier):
+    def setUp(self):
+        super().setUp()
+        models.Inscription.objects.create(
+            id_eleve=self.eleve, id_classe=self.classe_passee,
+            id_annee_scolaire=self.annee_passee,
+            date_inscription=self.annee_passee.date_debut)
+        self._payer(self._frais(30000, date(2025, 11, 5), annee=self.annee_passee), 30000)
+        self._frais(25000, date(2026, 11, 5))
+
+    def test_chaque_annee_a_sa_propre_ardoise(self):
+        passee = self._situation(self.annee_passee)
+        self.assertEqual(passee["resume"]["total_du"], 30000)
+        self.assertEqual(passee["resume"]["total_paye"], 30000)
+        self.assertEqual(passee["resume"]["statut"], "a_jour")
+
+        courante = self._situation(self.annee)
+        self.assertEqual(courante["resume"]["total_du"], 25000)
+        self.assertEqual(courante["resume"]["total_paye"], 0)
+        self.assertEqual(courante["resume"]["statut"], "non_paye")
+
+    def test_le_paiement_dune_annee_ne_compte_pas_dans_lautre(self):
+        self.assertEqual(len(self._situation(self.annee)["paiements"]), 0)
+        self.assertEqual(len(self._situation(self.annee_passee)["paiements"]), 1)
+
+    def test_les_deux_annees_sont_proposees_au_choix(self):
+        libelles = [a["libelle"] for a in self._situation()["annees"]]
+        self.assertEqual(libelles, ["2026-2027", "2025-2026"])
+
+    def test_sans_parametre_on_ouvre_lannee_active(self):
+        self.assertEqual(self._situation()["annee"]["libelle"], "2026-2027")
+
+    def test_le_dossier_ne_totalise_plus_toutes_les_annees(self):
+        """Le dossier scolaire montrait 55 000 dus : la somme de deux ardoises."""
+        dossier = scolarite.dossier(self.ecole, self.eleve)
+        self.assertEqual(dossier["finances"]["annee"], "2026-2027")
+        self.assertEqual(dossier["finances"]["total_du"], 25000)
+        self.assertEqual(dossier["finances"]["total_paye"], 0)
+
+
+class TestRemise(BaseDossierFinancier):
+    def test_le_montant_initial_reste_visible(self):
+        self._frais(300000, date(2026, 10, 5), remise=50000)
+        resume = self._situation()["resume"]
+        self.assertEqual(resume["frais_initial"], 300000)
+        self.assertEqual(resume["remise"], 50000)
+        self.assertEqual(resume["total_du"], 250000)
+        self.assertEqual(resume["reste"], 250000)
+
+    def test_la_remise_peut_solder_un_frais(self):
+        """Une remise accordée après coup doit faire suivre le statut."""
+        frais = self._frais(25000, date(2026, 11, 5))
+        self._payer(frais, 20000)
+        self.assertEqual(frais.statut, "partiel")
+
+        reponse = self.client.patch(f"/api/frais-eleves/{frais.pk}/",
+                                    {"remise": "5000"}, format="json")
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        frais.refresh_from_db()
+        self.assertEqual(frais.statut, "paye")
+        self.assertEqual(self._situation()["resume"]["statut"], "a_jour")
+
+    def test_une_remise_ne_peut_pas_effacer_ce_qui_est_deja_verse(self):
+        frais = self._frais(25000, date(2026, 11, 5))
+        self._payer(frais, 20000)
+        reponse = self.client.patch(f"/api/frais-eleves/{frais.pk}/",
+                                    {"remise": "10000"}, format="json")
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+
+    def test_la_remise_allege_le_bilan(self):
+        self._frais(100000, date(2026, 10, 5), remise=40000)
+        bilan = finances.bilan(self.ecole, self.annee)
+        self.assertEqual(bilan["recouvrement"]["attendu"], 60000)
+        self.assertEqual(bilan["recouvrement"]["reste"], 60000)
+
+
+class TestOngletFinancesDuDossier(BaseDossierFinancier):
+    """GET /api/eleves/{id}/finances/ — ce que l'écran ouvre."""
+
+    def test_une_seule_requete_rend_tout_le_dossier_financier(self):
+        self._payer(self._frais(25000, date(2026, 10, 5)), 25000)
+        self._frais(25000, date(2026, 11, 5))
+
+        reponse = self.client.get(f"/api/eleves/{self.eleve.pk}/finances/")
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        for bloc in ("eleve", "annee", "annees", "scolarite", "resume", "frais",
+                     "echeancier", "paiements"):
+            self.assertIn(bloc, reponse.data)
+        self.assertEqual(reponse.data["resume"]["total_du"], 50000)
+        self.assertEqual(reponse.data["resume"]["total_paye"], 25000)
+        self.assertEqual(reponse.data["resume"]["reste"], 25000)
+        self.assertEqual(reponse.data["scolarite"]["classe"], "6ème A")
+
+    def test_le_choix_de_lannee_change_les_chiffres(self):
+        models.Inscription.objects.create(
+            id_eleve=self.eleve, id_classe=self.classe_passee,
+            id_annee_scolaire=self.annee_passee,
+            date_inscription=self.annee_passee.date_debut)
+        self._frais(30000, date(2025, 11, 5), annee=self.annee_passee)
+        self._frais(25000, date(2026, 11, 5))
+
+        courante = self.client.get(f"/api/eleves/{self.eleve.pk}/finances/")
+        self.assertEqual(courante.data["resume"]["total_du"], 25000)
+
+        passee = self.client.get(
+            f"/api/eleves/{self.eleve.pk}/finances/",
+            {"id_annee_scolaire": self.annee_passee.pk})
+        self.assertEqual(passee.data["resume"]["total_du"], 30000)
+        self.assertEqual(passee.data["scolarite"]["classe"], "5ème A")
+
+    def test_annee_inconnue_refusee(self):
+        reponse = self.client.get(f"/api/eleves/{self.eleve.pk}/finances/",
+                                  {"id_annee_scolaire": 999999})
+        self.assertEqual(reponse.status_code, 400)
+
+    def test_une_autre_ecole_ne_voit_rien(self):
+        reponse = self.client_autre.get(f"/api/eleves/{self.eleve.pk}/finances/")
+        self.assertEqual(reponse.status_code, 404)
+
+    def test_un_parent_na_pas_acces(self):
+        client = self._client(self.parent_user.email)
+        reponse = client.get(f"/api/eleves/{self.eleve.pk}/finances/")
+        self.assertEqual(reponse.status_code, 403)
+
+
+class TestEncaissementDepuisLeDossier(BaseDossierFinancier):
+    """POST /api/paiements/encaisser/ — le paiement saisi côté élève."""
+
+    def setUp(self):
+        super().setUp()
+        self.octobre = self._frais(25000, date(2026, 10, 5))
+        self.novembre = self._frais(25000, date(2026, 11, 5))
+
+    def _encaisser(self, **corps):
+        corps.setdefault("id_eleve", self.eleve.pk)
+        corps.setdefault("methode", "especes")
+        return self.client.post("/api/paiements/encaisser/", corps, format="json")
+
+    def test_le_versement_solde_la_plus_ancienne_echeance(self):
+        reponse = self._encaisser(montant="25000")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.octobre.refresh_from_db()
+        self.novembre.refresh_from_db()
+        self.assertEqual(self.octobre.statut, "paye")
+        self.assertEqual(self.novembre.statut, "impaye")
+
+    def test_un_versement_peut_couvrir_deux_echeances(self):
+        """50 000 sur deux mensualités : deux paiements, deux reçus."""
+        reponse = self._encaisser(montant="50000")
+        self.assertEqual(len(reponse.data["paiements"]), 2)
+        self.assertEqual(models.Recu.objects.count(), 2)
+        self.assertEqual(reponse.data["situation"]["resume"]["statut"], "a_jour")
+
+    def test_versement_partiel_puis_complement(self):
+        self._encaisser(montant="10000")
+        self.octobre.refresh_from_db()
+        self.assertEqual(self.octobre.statut, "partiel")
+        self.assertEqual(self.octobre.solde_restant, Decimal("15000"))
+
+        self._encaisser(montant="15000")
+        self.octobre.refresh_from_db()
+        self.assertEqual(self.octobre.statut, "paye")
+
+    def test_on_peut_viser_un_mois_precis(self):
+        self._encaisser(montant="25000", mois="2026-11")
+        self.octobre.refresh_from_db()
+        self.novembre.refresh_from_db()
+        self.assertEqual(self.octobre.statut, "impaye")
+        self.assertEqual(self.novembre.statut, "paye")
+
+    def test_montant_superieur_au_reste_refuse(self):
+        reponse = self._encaisser(montant="80000")
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertEqual(models.Paiement.objects.count(), 0)
+
+    def test_montant_negatif_refuse(self):
+        self.assertEqual(self._encaisser(montant="-1000").status_code, 400)
+        self.assertEqual(models.Paiement.objects.count(), 0)
+
+    def test_la_date_et_le_commentaire_sont_conserves(self):
+        reponse = self._encaisser(
+            montant="25000", methode="wave", date_paiement="2026-09-28T10:30:00Z",
+            reference_transaction="TXN-99", commentaire="Reçu samedi à la caisse")
+        paiement = models.Paiement.objects.get(pk=reponse.data["paiements"][0]["id"])
+        self.assertEqual(paiement.date_paiement.date(), date(2026, 9, 28))
+        self.assertEqual(paiement.reference_transaction, "TXN-99")
+        self.assertEqual(paiement.commentaire, "Reçu samedi à la caisse")
+
+    def test_lencaissement_alimente_la_caisse_et_le_recu(self):
+        reponse = self._encaisser(montant="25000")
+        paiement = models.Paiement.objects.get(pk=reponse.data["paiements"][0]["id"])
+        self.assertTrue(models.Recu.objects.filter(id_paiement=paiement).exists())
+        mouvement = models.JournalCaisse.objects.get(id_paiement=paiement)
+        self.assertEqual(mouvement.credit, Decimal("25000"))
+        self.assertEqual(mouvement.type_journal, "caisse")
+
+    def test_qui_a_encaisse_est_trace(self):
+        reponse = self._encaisser(montant="25000")
+        paiement = models.Paiement.objects.get(pk=reponse.data["paiements"][0]["id"])
+        self.assertEqual(paiement.id_utilisateur_caissier, self.admin)
+        self.assertTrue(models.JournalActivite.objects.filter(
+            entite="paiement", id_entite=paiement.pk).exists())
+
+    def test_la_situation_renvoyee_est_deja_a_jour(self):
+        """Le mois passe de « non payé » à « payé » sans second appel."""
+        avant = self.client.get(f"/api/eleves/{self.eleve.pk}/finances/")
+        octobre = [m for m in avant.data["echeancier"] if m["mois"] == "2026-10"][0]
+        self.assertEqual(octobre["statut"], "non_paye")
+
+        reponse = self._encaisser(montant="25000")
+        octobre = [m for m in reponse.data["situation"]["echeancier"]
+                   if m["mois"] == "2026-10"][0]
+        self.assertEqual(octobre["statut"], "a_jour")
+
+    def test_un_eleve_dune_autre_ecole_est_refuse(self):
+        reponse = self.client_autre.post(
+            "/api/paiements/encaisser/",
+            {"id_eleve": self.eleve.pk, "montant": "25000", "methode": "especes"},
+            format="json")
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertEqual(models.Paiement.objects.count(), 0)
+
+
+class TestSituationGlobale(BaseDossierFinancier):
+    """GET /api/frais-eleves/situation/ — un élève par ligne."""
+
+    def setUp(self):
+        super().setUp()
+        self.autre_classe = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=self.niveau,
+            nom="6ème B", capacite_max=40,
+        )
+        # eleves[0] à jour, eleves[1] partiel, eleves[2] rien versé.
+        self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[0]), 25000)
+        self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[1]), 10000)
+        self._frais(25000, date(2026, 11, 5), eleve=self.eleves[2])
+
+    def _situation_globale(self, **filtres):
+        return self.client.get("/api/frais-eleves/situation/", filtres)
+
+    def test_une_ligne_par_eleve_avec_son_statut(self):
+        reponse = self._situation_globale()
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        par_eleve = {l["id_eleve"]: l for l in reponse.data["eleves"]}
+        self.assertEqual(len(par_eleve), 3)
+        self.assertEqual(par_eleve[self.eleves[0].pk]["statut"], "a_jour")
+        self.assertEqual(par_eleve[self.eleves[1].pk]["statut"], "partiel")
+        self.assertEqual(par_eleve[self.eleves[2].pk]["statut"], "non_paye")
+        self.assertEqual(par_eleve[self.eleves[1].pk]["reste"], 15000)
+
+    def test_les_totaux_suivent(self):
+        totaux = self._situation_globale().data["totaux"]
+        self.assertEqual(totaux["du"], 75000)
+        self.assertEqual(totaux["paye"], 35000)
+        self.assertEqual(totaux["reste"], 40000)
+
+    def test_filtre_par_statut(self):
+        reponse = self._situation_globale(statut="partiel")
+        self.assertEqual([l["id_eleve"] for l in reponse.data["eleves"]],
+                         [self.eleves[1].pk])
+        # La répartition reste celle de toute la promotion.
+        self.assertEqual(reponse.data["repartition"]["a_jour"], 1)
+
+    def test_filtre_par_classe_et_par_niveau(self):
+        eleve = self._inscrire("E-9", "Autre", classe=self.autre_classe)
+        self._frais(25000, date(2026, 11, 5), eleve=eleve)
+
+        reponse = self._situation_globale(classe=self.autre_classe.pk)
+        self.assertEqual([l["id_eleve"] for l in reponse.data["eleves"]], [eleve.pk])
+
+        reponse = self._situation_globale(niveau=self.niveau.pk)
+        self.assertEqual(len(reponse.data["eleves"]), 4)
+
+    def test_recherche_par_nom(self):
+        reponse = self._situation_globale(q="Nom2")
+        self.assertEqual([l["nom_complet"] for l in reponse.data["eleves"]],
+                         ["Test Nom2"])
+
+    def test_statut_inconnu_refuse(self):
+        self.assertEqual(self._situation_globale(statut="bizarre").status_code, 400)
+
+    def test_une_classe_dune_autre_ecole_est_refusee(self):
+        classe = models.Classe.objects.create(
+            id_ecole=self.autre, id_annee_scolaire=models.AnneeScolaire.objects.create(
+                id_ecole=self.autre, libelle="2026-2027",
+                date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31)),
+            id_niveau=models.Niveau.objects.create(id_ecole=self.autre, libelle="6ème"),
+            nom="6ème Z", capacite_max=30)
+        self.assertEqual(self._situation_globale(classe=classe.pk).status_code, 400)
+
+    def test_lautre_ecole_ne_voit_que_les_siens(self):
+        reponse = self.client_autre.get("/api/frais-eleves/situation/")
+        self.assertEqual(reponse.status_code, 200)
+        self.assertEqual(reponse.data["eleves"], [])
+
+
+class TestRechercheDesPaiements(BaseDossierFinancier):
+    def setUp(self):
+        super().setUp()
+        self.frais = self._frais(25000, date(2026, 10, 5))
+        self._payer(self.frais, 25000, methode="wave",
+                    reference_transaction="TXN-88213")
+
+    def test_filtre_par_eleve(self):
+        reponse = self.client.get("/api/paiements/", {"eleve": self.eleve.pk})
+        self.assertEqual(len(self.resultats(reponse)), 1)
+        reponse = self.client.get("/api/paiements/", {"eleve": self.eleves[1].pk})
+        self.assertEqual(len(self.resultats(reponse)), 0)
+
+    def test_filtre_par_reference_de_transaction(self):
+        reponse = self.client.get("/api/paiements/", {"reference": "88213"})
+        self.assertEqual(len(self.resultats(reponse)), 1)
+        reponse = self.client.get("/api/paiements/", {"reference": "INCONNU"})
+        self.assertEqual(len(self.resultats(reponse)), 0)
+
+    def test_filtre_par_mois_decheance(self):
+        self.assertEqual(
+            len(self.resultats(self.client.get("/api/paiements/", {"mois": "2026-10"}))), 1)
+        self.assertEqual(
+            len(self.resultats(self.client.get("/api/paiements/", {"mois": "2026-11"}))), 0)
+
+    def test_mois_illisible_refuse(self):
+        reponse = self.client.get("/api/paiements/", {"mois": "octobre"})
+        self.assertEqual(reponse.status_code, 400)
+
+    def test_filtre_par_classe_ne_duplique_pas(self):
+        reponse = self.client.get("/api/paiements/", {"classe": self.classe.pk})
+        self.assertEqual(len(self.resultats(reponse)), 1)
+
+
+class TestBilanEnrichi(BaseDossierFinancier):
+    def test_repartition_des_eleves_et_derniers_paiements(self):
+        # Datés dans l'année scolaire : le bilan borne les recettes à sa période.
+        self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[0]), 25000,
+                    date_paiement=datetime(2026, 11, 6, 9, 0, tzinfo=dt_timezone.utc))
+        self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[1]), 10000,
+                    date_paiement=datetime(2026, 11, 7, 9, 0, tzinfo=dt_timezone.utc))
+        self._frais(25000, date(2026, 11, 5), eleve=self.eleves[2])
+
+        bilan = finances.bilan(self.ecole, self.annee)
+        self.assertEqual(bilan["eleves"]["a_jour"], 1)
+        self.assertEqual(bilan["eleves"]["partiel"], 1)
+        self.assertEqual(bilan["eleves"]["non_paye"], 1)
+        self.assertEqual(bilan["eleves"]["total"], 3)
+        self.assertEqual(len(bilan["derniers_paiements"]), 2)
+        self.assertEqual(bilan["derniers_paiements"][0]["eleve"], "Test Nom2")
+
+
+class BaseRentree(BaseDossierFinancier):
+    """
+    Une rentrée en cours : trois élèves inscrits l'an passé, aucun encore
+    repassé sur l'année active.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.classe_cible = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=self.niveau,
+            nom="6ème C", capacite_max=2,
+        )
+        # Les trois élèves de BaseFinances sont inscrits sur l'année active :
+        # on les bascule sur l'année passée pour reconstituer une rentrée.
+        models.Inscription.objects.filter(id_eleve__in=self.eleves).delete()
+        for eleve in self.eleves:
+            models.Inscription.objects.create(
+                id_eleve=eleve, id_classe=self.classe_passee,
+                id_annee_scolaire=self.annee_passee,
+                date_inscription=self.annee_passee.date_debut,
+                statut=models.Inscription.Statut.EN_COURS)
+
+
+class TestPreInscription(BaseRentree):
+    """Une place réservée n'est pas une inscription tant que rien n'est payé."""
+
+    def _reinscrire(self, eleve, classe=None):
+        return self.client.post(
+            f"/api/eleves/{eleve.pk}/reinscrire/",
+            {"id_classe": (classe or self.classe_cible).pk}, format="json")
+
+    def test_une_reinscription_nait_en_attente(self):
+        reponse = self._reinscrire(self.eleves[0])
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(reponse.data["statut"], "en_attente")
+        inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
+        self.assertEqual(inscription.statut, "en_attente")
+
+    def test_un_pre_inscrit_ne_figure_pas_parmi_les_inscrits(self):
+        self._reinscrire(self.eleves[0])
+        reponse = self.client.get("/api/eleves/",
+                                  {"id_annee_scolaire": self.annee.pk})
+        self.assertNotIn(self.eleves[0].pk,
+                         {l["id"] for l in self.resultats(reponse)})
+
+    def test_il_figure_dans_la_liste_des_pre_inscrits(self):
+        self._reinscrire(self.eleves[0])
+        reponse = self.client.get("/api/eleves/", {
+            "id_annee_scolaire": self.annee.pk, "inscription": "en_attente"})
+        self.assertEqual({l["id"] for l in self.resultats(reponse)},
+                         {self.eleves[0].pk})
+
+    def test_les_droits_dinscription_regles_confirment(self):
+        """Ce sont les droits d'inscription qui font l'inscrit, pas le mois."""
+        reponse = self._reinscrire(self.eleves[0])
+        inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
+        droits = self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+
+        self._payer(droits, 50000)
+
+        inscription.refresh_from_db()
+        self.assertEqual(inscription.statut, "en_cours")
+        liste = self.client.get("/api/eleves/", {"id_annee_scolaire": self.annee.pk})
+        self.assertIn(self.eleves[0].pk, {l["id"] for l in self.resultats(liste)})
+
+    def test_une_mensualite_ne_confirme_pas(self):
+        """Elle paie le mois, pas l'entrée."""
+        reponse = self._reinscrire(self.eleves[0])
+        inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
+        self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+
+        self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[0]), 25000)
+
+        inscription.refresh_from_db()
+        self.assertEqual(inscription.statut, "en_attente")
+
+    def test_des_droits_partiellement_regles_ne_confirment_pas(self):
+        reponse = self._reinscrire(self.eleves[0])
+        inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
+        droits = self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+
+        self._payer(droits, 30000)
+        inscription.refresh_from_db()
+        self.assertEqual(inscription.statut, "en_attente")
+
+        # Le complément déclenche la confirmation.
+        self._payer(droits, 20000)
+        inscription.refresh_from_db()
+        self.assertEqual(inscription.statut, "en_cours")
+
+    def test_une_remise_qui_solde_les_droits_confirme(self):
+        """Le solde compte, pas l'origine des fonds."""
+        reponse = self._reinscrire(self.eleves[0])
+        inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
+        droits = self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+        self._payer(droits, 30000)
+
+        r = self.client.patch(f"/api/frais-eleves/{droits.pk}/",
+                              {"remise": "20000"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        inscription.refresh_from_db()
+        self.assertEqual(inscription.statut, "en_cours")
+
+    def test_sans_droits_dinscription_emis_rien_ne_confirme(self):
+        """Le blocage annoncé : pas de frais d'inscription, pas de confirmation."""
+        reponse = self._reinscrire(self.eleves[0])
+        inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
+
+        self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[0]), 25000)
+
+        inscription.refresh_from_db()
+        self.assertEqual(inscription.statut, "en_attente")
+        situation = finances.situation_eleve(self.ecole, self.eleves[0], self.annee)
+        self.assertFalse(situation["confirmation"]["frais_emis"])
+        self.assertFalse(situation["confirmation"]["confirmee"])
+
+    def test_un_paiement_dune_autre_annee_ne_confirme_rien(self):
+        reponse = self._reinscrire(self.eleves[0])
+        inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
+        frais = self._frais(25000, date(2025, 11, 5), eleve=self.eleves[0],
+                            annee=self.annee_passee)
+
+        self._payer(frais, 25000)
+
+        inscription.refresh_from_db()
+        self.assertEqual(inscription.statut, "en_attente")
+
+    def test_lencaissement_par_le_dossier_confirme_aussi(self):
+        """Tous les chemins de paiement passent par le même verrou."""
+        reponse = self._reinscrire(self.eleves[0])
+        inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
+        self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+
+        encaissement = self.client.post("/api/paiements/encaisser/", {
+            "id_eleve": self.eleves[0].pk, "montant": "50000", "methode": "wave",
+        }, format="json")
+        self.assertEqual(encaissement.status_code, 201, encaissement.content)
+
+        inscription.refresh_from_db()
+        self.assertEqual(inscription.statut, "en_cours")
+        self.assertTrue(encaissement.data["situation"]["confirmation"]["confirmee"])
+
+    def test_les_frais_sont_generables_pour_un_pre_inscrit(self):
+        """Sans ça, l'élève n'aurait jamais rien à payer — donc jamais confirmé."""
+        self._reinscrire(self.eleves[0])
+        reponse = self._generer(echeances=["2026-11-05"],
+                                id_classe=self.classe_cible.pk)
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(reponse.data["crees"], 1)
+
+    def test_toutes_retrouve_lancien_comportement(self):
+        self._reinscrire(self.eleves[0])
+        reponse = self.client.get("/api/eleves/", {
+            "id_annee_scolaire": self.annee.pk, "inscription": "toutes"})
+        self.assertIn(self.eleves[0].pk, {l["id"] for l in self.resultats(reponse)})
+
+    def test_etat_inconnu_refuse(self):
+        reponse = self.client.get("/api/eleves/", {
+            "id_annee_scolaire": self.annee.pk, "inscription": "bizarre"})
+        self.assertEqual(reponse.status_code, 400)
+
+
+class TestFileDeReinscription(BaseRentree):
+    """GET /api/eleves/a-reinscrire/ — ceux que la nouvelle année a fait disparaître."""
+
+    def test_les_eleves_de_lan_passe_sont_en_attente_de_reinscription(self):
+        reponse = self.client.get("/api/eleves/a-reinscrire/",
+                                  {"id_annee_scolaire": self.annee.pk})
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.assertEqual(reponse.data["total"], 3)
+        ligne = reponse.data["eleves"][0]
+        self.assertEqual(ligne["derniere_classe"], "5ème A")
+        self.assertEqual(ligne["derniere_annee"], "2025-2026")
+
+    def test_un_eleve_reinscrit_sort_de_la_file(self):
+        self.client.post(f"/api/eleves/{self.eleves[0].pk}/reinscrire/",
+                         {"id_classe": self.classe_cible.pk}, format="json")
+        reponse = self.client.get("/api/eleves/a-reinscrire/",
+                                  {"id_annee_scolaire": self.annee.pk})
+        self.assertEqual(reponse.data["total"], 2)
+        self.assertNotIn(self.eleves[0].pk,
+                         {l["id"] for l in reponse.data["eleves"]})
+
+    def test_un_eleve_radie_nest_pas_propose(self):
+        scolarite.radier(self.ecole, self.eleves[0], motif="Départ")
+        reponse = self.client.get("/api/eleves/a-reinscrire/",
+                                  {"id_annee_scolaire": self.annee.pk})
+        self.assertEqual(reponse.data["total"], 2)
+
+    def test_filtre_par_classe_et_recherche(self):
+        reponse = self.client.get("/api/eleves/a-reinscrire/", {
+            "id_annee_scolaire": self.annee.pk, "classe": self.classe_passee.pk})
+        self.assertEqual(reponse.data["total"], 3)
+
+        reponse = self.client.get("/api/eleves/a-reinscrire/", {
+            "id_annee_scolaire": self.annee.pk, "q": "Nom2"})
+        self.assertEqual([l["nom_complet"] for l in reponse.data["eleves"]],
+                         ["Test Nom2"])
+
+    def test_lautre_ecole_ne_voit_personne(self):
+        reponse = self.client_autre.get("/api/eleves/a-reinscrire/",
+                                        {"id_annee_scolaire": self.annee.pk})
+        self.assertEqual(reponse.status_code, 400)
+
+
+class TestReinscriptionIndividuelle(BaseRentree):
+    def _reinscrire(self, eleve, classe=None, **corps):
+        corps.setdefault("id_classe", (classe or self.classe_cible).pk)
+        return self.client.post(f"/api/eleves/{eleve.pk}/reinscrire/", corps,
+                                format="json")
+
+    def test_lelevemonte_dans_la_classe_choisie(self):
+        reponse = self._reinscrire(self.eleves[0])
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(reponse.data["classe"], "6ème C")
+        self.assertEqual(reponse.data["classe_precedente"], "5ème A")
+        self.assertEqual(reponse.data["annee"], "2026-2027")
+
+    def test_le_mouvement_est_trace(self):
+        self._reinscrire(self.eleves[0])
+        trace = models.HistoriqueScolaire.objects.filter(
+            id_eleve=self.eleves[0],
+            type_evenement=models.HistoriqueScolaire.TypeEvenement.REINSCRIPTION)
+        self.assertTrue(trace.exists())
+        self.assertTrue(models.JournalActivite.objects.filter(
+            entite="inscription").exists())
+
+    def test_leffectif_de_la_classe_suit(self):
+        self._reinscrire(self.eleves[0])
+        self.classe_cible.refresh_from_db()
+        self.assertEqual(self.classe_cible.effectif, 1)
+
+    def test_le_depassement_de_capacite_avertit_sans_bloquer(self):
+        """Capacité 2 : le troisième passe, avec un avertissement."""
+        self._reinscrire(self.eleves[0])
+        self._reinscrire(self.eleves[1])
+        reponse = self._reinscrire(self.eleves[2])
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertIn("capacité", reponse.data["avertissement"])
+
+    def test_deux_fois_le_meme_eleve_est_refuse(self):
+        self._reinscrire(self.eleves[0])
+        reponse = self._reinscrire(self.eleves[0])
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertEqual(
+            models.Inscription.objects.filter(
+                id_eleve=self.eleves[0], id_annee_scolaire=self.annee).count(), 1)
+
+    def test_un_eleve_radie_ne_peut_pas_etre_reinscrit(self):
+        scolarite.radier(self.ecole, self.eleves[0], motif="Départ")
+        reponse = self._reinscrire(self.eleves[0])
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+
+    def test_un_eleve_sans_passe_est_renvoye_vers_linscription(self):
+        nouveau = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="E-NEW", nom="Neuf", prenom="Tout")
+        reponse = self._reinscrire(nouveau)
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertIn("Inscrire un élève", str(reponse.data))
+
+    def test_une_classe_dune_autre_ecole_est_refusee(self):
+        autre_annee = models.AnneeScolaire.objects.create(
+            id_ecole=self.autre, libelle="2026-2027",
+            date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31))
+        classe = models.Classe.objects.create(
+            id_ecole=self.autre, id_annee_scolaire=autre_annee,
+            id_niveau=models.Niveau.objects.create(id_ecole=self.autre, libelle="6ème"),
+            nom="6ème Z", capacite_max=30)
+        reponse = self._reinscrire(self.eleves[0], classe=classe)
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+
+    def test_un_eleve_dune_autre_ecole_est_introuvable(self):
+        reponse = self.client_autre.post(
+            f"/api/eleves/{self.eleves[0].pk}/reinscrire/",
+            {"id_classe": self.classe_cible.pk}, format="json")
+        self.assertEqual(reponse.status_code, 404)
+
+    def test_seul_un_admin_reinscrit(self):
+        client = self._client(self.parent_user.email)
+        reponse = client.post(f"/api/eleves/{self.eleves[0].pk}/reinscrire/",
+                              {"id_classe": self.classe_cible.pk}, format="json")
+        self.assertEqual(reponse.status_code, 403)
+
+
+class TestFilePaginee(BaseRentree):
+    """502 lignes ne se traitent pas d'un écran : la file se parcourt par pages."""
+
+    def setUp(self):
+        super().setUp()
+        for i in range(4, 12):
+            eleve = models.Eleve.objects.create(
+                id_ecole=self.ecole, matricule=f"E-{i}", nom=f"Nom{i}", prenom="Test")
+            models.Inscription.objects.create(
+                id_eleve=eleve, id_classe=self.classe_passee,
+                id_annee_scolaire=self.annee_passee,
+                date_inscription=self.annee_passee.date_debut,
+                statut=models.Inscription.Statut.EN_COURS)
+
+    def _page(self, **params):
+        params.setdefault("id_annee_scolaire", self.annee.pk)
+        return self.client.get("/api/eleves/a-reinscrire/", params)
+
+    def test_la_premiere_page_ne_rend_que_sa_tranche(self):
+        reponse = self._page(page_size=4)
+        self.assertEqual(reponse.data["total"], 11)
+        self.assertEqual(len(reponse.data["eleves"]), 4)
+        self.assertEqual(reponse.data["pages"], 3)
+        self.assertTrue(reponse.data["suivant"])
+        self.assertFalse(reponse.data["precedent"])
+
+    def test_les_pages_ne_se_recouvrent_pas(self):
+        page1 = {l["id"] for l in self._page(page_size=4, page=1).data["eleves"]}
+        page2 = {l["id"] for l in self._page(page_size=4, page=2).data["eleves"]}
+        self.assertEqual(len(page1 & page2), 0)
+        self.assertEqual(len(page1 | page2), 8)
+
+    def test_la_derniere_page_annonce_la_fin(self):
+        reponse = self._page(page_size=4, page=3)
+        self.assertEqual(len(reponse.data["eleves"]), 3)
+        self.assertFalse(reponse.data["suivant"])
+        self.assertTrue(reponse.data["precedent"])
+
+    def test_page_illisible_refusee(self):
+        self.assertEqual(self._page(page="deux").status_code, 400)
+        self.assertEqual(self._page(page=0).status_code, 400)
+
+    def test_le_filtre_reduit_le_total_pas_seulement_la_page(self):
+        reponse = self._page(q="Nom5")
+        self.assertEqual(reponse.data["total"], 1)
+        self.assertEqual(reponse.data["pages"], 1)
+
+
+class TestContexteReinscription(BaseRentree):
+    """GET /api/eleves/{id}/reinscription/ — ce qui pré-remplit l'écran."""
+
+    def _contexte(self, eleve, client=None):
+        return (client or self.client).get(
+            f"/api/eleves/{eleve.pk}/reinscription/",
+            {"id_annee_scolaire": self.annee.pk})
+
+    def test_il_donne_la_provenance_et_les_classes_possibles(self):
+        reponse = self._contexte(self.eleves[0])
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.assertEqual(reponse.data["eleve"]["nom_complet"], "Test Nom1")
+        self.assertEqual(reponse.data["precedente"]["classe"], "5ème A")
+        self.assertEqual(reponse.data["precedente"]["annee"], "2025-2026")
+        self.assertEqual(reponse.data["annee_cible"]["libelle"], "2026-2027")
+        self.assertIn(self.classe_cible.pk, [c["id"] for c in reponse.data["classes"]])
+        self.assertIsNone(reponse.data["deja_inscrit"])
+
+    def test_il_annonce_un_eleve_deja_inscrit(self):
+        self.client.post(f"/api/eleves/{self.eleves[0].pk}/reinscrire/",
+                         {"id_classe": self.classe_cible.pk}, format="json")
+        reponse = self._contexte(self.eleves[0])
+        self.assertEqual(reponse.data["deja_inscrit"]["classe"], "6ème C")
+        self.assertEqual(reponse.data["deja_inscrit"]["statut"], "en_attente")
+
+    def test_les_classes_proposees_sont_celles_de_lannee_cible(self):
+        reponse = self._contexte(self.eleves[0])
+        noms = [c["nom"] for c in reponse.data["classes"]]
+        self.assertNotIn("5ème A", noms, "la classe de l'an passé n'est pas une cible")
+
+    def test_un_eleve_dune_autre_ecole_est_introuvable(self):
+        reponse = self._contexte(self.eleves[0], client=self.client_autre)
+        self.assertEqual(reponse.status_code, 404)
+
+    def test_seul_un_admin_y_accede(self):
+        reponse = self._contexte(self.eleves[0],
+                                 client=self._client(self.parent_user.email))
+        self.assertEqual(reponse.status_code, 403)
+
+
+class TestEtatInscriptionDansLaListe(BaseRentree):
+    """La colonne « statut » disait « actif » d'un élève qui n'avait rien payé."""
+
+    def test_un_pre_inscrit_est_annonce_comme_tel(self):
+        self.client.post(f"/api/eleves/{self.eleves[0].pk}/reinscrire/",
+                         {"id_classe": self.classe_cible.pk}, format="json")
+        reponse = self.client.get("/api/eleves/", {
+            "id_annee_scolaire": self.annee.pk, "inscription": "en_attente"})
+        ligne = self.resultats(reponse)[0]
+        self.assertEqual(ligne["statut"], "actif")
+        self.assertEqual(ligne["inscription_statut"], "en_attente")
+        self.assertEqual(ligne["inscription_libelle"], "Pré-inscrit")
+        self.assertEqual(ligne["classe"], "6ème C")
+
+    def test_un_inscrit_confirme_le_dit_aussi(self):
+        self.client.post(f"/api/eleves/{self.eleves[0].pk}/reinscrire/",
+                         {"id_classe": self.classe_cible.pk}, format="json")
+        droits = self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+        self._payer(droits, 50000)
+        reponse = self.client.get("/api/eleves/", {"id_annee_scolaire": self.annee.pk})
+        ligne = [l for l in self.resultats(reponse) if l["id"] == self.eleves[0].pk][0]
+        self.assertEqual(ligne["inscription_statut"], "en_cours")
+        self.assertEqual(ligne["inscription_libelle"], "Inscrit")
+
+    def test_letat_suit_lannee_demandee(self):
+        """Sur l'année passée, le même élève est un inscrit confirmé."""
+        reponse = self.client.get("/api/eleves/",
+                                  {"id_annee_scolaire": self.annee_passee.pk})
+        ligne = [l for l in self.resultats(reponse) if l["id"] == self.eleves[0].pk][0]
+        self.assertEqual(ligne["inscription_statut"], "en_cours")
+        self.assertEqual(ligne["classe"], "5ème A")
+
+
+class TestStatutSansFrais(BaseDossierFinancier):
+    """« Rien n'a été facturé » ne doit pas se lire « tout est réglé »."""
+
+    def test_un_eleve_sans_frais_nest_pas_a_jour(self):
+        resume = self._situation()["resume"]
+        self.assertEqual(resume["total_du"], 0)
+        self.assertEqual(resume["statut"], "sans_frais")
+        self.assertEqual(resume["statut_libelle"], "Aucun frais")
+
+    def test_il_devient_non_paye_des_que_les_frais_sont_emis(self):
+        self._frais(25000, date(2026, 11, 5))
+        self.assertEqual(self._situation()["resume"]["statut"], "non_paye")
+
+    def test_puis_a_jour_une_fois_regle(self):
+        frais = self._frais(25000, date(2026, 11, 5))
+        self._payer(frais, 25000)
+        self.assertEqual(self._situation()["resume"]["statut"], "a_jour")
+
+    def test_la_vue_densemble_ne_le_compte_pas_comme_a_jour(self):
+        reponse = self.client.get("/api/frais-eleves/situation/",
+                                  {"id_annee_scolaire": self.annee.pk})
+        par_eleve = {l["id_eleve"]: l for l in reponse.data["eleves"]}
+        self.assertEqual(par_eleve[self.eleve.pk]["statut"], "sans_frais")
+        self.assertEqual(reponse.data["repartition"]["a_jour"], 0)
+        self.assertEqual(reponse.data["repartition"]["sans_frais"], 3)
+
+
+class TestRecuDePaiement(BaseDossierFinancier):
+    """Le justificatif remis à la famille : contenu et nom du fichier."""
+
+    def setUp(self):
+        super().setUp()
+        models.Inscription.objects.filter(
+            id_eleve=self.eleve, id_annee_scolaire=self.annee).update(
+                id_classe=self.classe, statut=models.Inscription.Statut.EN_COURS)
+        self._frais(50000, None, self.inscription_frais)
+        for mois in (10, 11, 12):
+            self._frais(25000, date(2026, mois, 5))
+        self.paiement = self._payer(
+            models.FraisEleve.objects.get(id_type_frais=self.inscription_frais), 50000)
+        self.recu = models.Recu.objects.get(id_paiement=self.paiement)
+
+    def _pdf(self):
+        return finances_documents.recu(self.recu)
+
+    def test_le_nom_du_fichier_identifie_la_piece(self):
+        _, nom, mime = self._pdf()
+        self.assertEqual(mime, "application/pdf")
+        # Numéro de reçu tel qu'imprimé, puis élève, classe et année.
+        self.assertTrue(nom.startswith(f"recu-{self.recu.numero_recu.lower()}-"), nom)
+        for morceau in ("test", "nom1", "6eme-a", "2026-2027"):
+            self.assertIn(morceau, nom)
+        self.assertTrue(nom.endswith(".pdf"))
+
+    def test_le_nom_ne_contient_ni_accent_ni_espace(self):
+        self.eleve.prenom = "Ndalé"
+        self.eleve.nom = "FÉDIOR"
+        self.eleve.save(update_fields=["prenom", "nom"])
+        _, nom, _ = self._pdf()
+        self.assertIn("ndale-fedior", nom)
+        self.assertTrue(nom.isascii(), nom)
+        self.assertNotIn(" ", nom)
+
+    def test_le_recu_rend_un_pdf_lisible(self):
+        contenu, _, _ = self._pdf()
+        self.assertTrue(contenu.startswith(b"%PDF-"))
+        self.assertTrue(contenu.rstrip().endswith(b"%%EOF"))
+        # Quatre frais + en-têtes + total : le reçu porte l'échéancier de
+        # l'année, pas seulement la ligne réglée.
+        self.assertGreater(len(contenu), 3000)
+
+    def test_un_paiement_sans_caissier_ne_casse_pas_le_recu(self):
+        paiement = models.Paiement.objects.create(
+            id_frais_eleve_id=models.FraisEleve.objects.filter(
+                echeance=date(2026, 10, 5)).first().pk,
+            montant=Decimal("25000"), methode="especes")
+        recu = finances.enregistrer_paiement(paiement)
+        contenu, nom, _ = finances_documents.recu(recu)
+        self.assertTrue(contenu.startswith(b"%PDF-"))
+        self.assertIn(recu.numero_recu.lower(), nom)
+
+    def test_un_eleve_sans_inscription_garde_un_recu(self):
+        """Un radié en cours d'année doit pouvoir rééditer ses justificatifs."""
+        models.Inscription.objects.filter(id_eleve=self.eleve).delete()
+        contenu, nom, _ = self._pdf()
+        self.assertTrue(contenu.startswith(b"%PDF-"))
+        self.assertIn("2026-2027", nom)

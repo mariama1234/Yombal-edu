@@ -5,10 +5,15 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { Classe, DossierEleve, Paginated, PeriodeScolaire } from '../../core/models/models';
+import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
+import { EleveFinancesComponent } from './eleve-finances.component';
 import { ScolariteService } from './scolarite.service';
 
 /** Les trois mouvements possibles, ou aucun formulaire ouvert. */
 type Mouvement = 'classe' | 'radiation' | 'transfert' | null;
+
+/** Les deux faces du dossier : la scolarité, et l'argent. */
+type Onglet = 'scolarite' | 'finances';
 
 /**
  * Dossier numérique de l'élève (1.2 et 1.3 de la priorisation).
@@ -23,7 +28,7 @@ type Mouvement = 'classe' | 'radiation' | 'transfert' | null;
 @Component({
   selector: 'app-eleve-dossier',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, EleveFinancesComponent],
   templateUrl: './eleve-dossier.component.html',
 })
 export class EleveDossierComponent implements OnInit {
@@ -31,17 +36,41 @@ export class EleveDossierComponent implements OnInit {
   private http = inject(HttpClient);
   private fb = inject(FormBuilder);
   private scolarite = inject(ScolariteService);
+  annees = inject(AnneeScolaireService);
 
   idEleve = 0;
   dossier = signal<DossierEleve | null>(null);
   classes = signal<Classe[]>([]);
   periodes = signal<PeriodeScolaire[]>([]);
 
+  /**
+   * Le financier est derrière son propre onglet plutôt qu'à la suite : le
+   * dossier tient déjà six blocs, et l'administrateur qui cherche « où en est
+   * le paiement » ne doit pas faire défiler les bulletins pour y arriver.
+   */
+  onglet = signal<Onglet>('scolarite');
+
   mouvement = signal<Mouvement>(null);
   erreur = signal<string | null>(null);
   message = signal<string | null>(null);
   occupe = signal(false);
   chargement = signal(true);
+
+  /**
+   * L'élève a-t-il besoin d'être réinscrit pour l'année affichée ?
+   *
+   * Vrai quand il a un passé dans l'école mais aucune inscription sur cette
+   * année-là. C'est la question qu'on se pose en ouvrant le dossier d'un
+   * ancien à la rentrée, et jusqu'ici le dossier n'y répondait pas : il
+   * affichait la classe de l'an dernier sans dire qu'elle était périmée.
+   */
+  aReinscrire = computed(() => {
+    const dossier = this.dossier();
+    const annee = this.annees.anneeCourante()?.libelle;
+    if (!dossier || !annee || dossier.eleve.statut !== 'actif') return false;
+    if (dossier.inscriptions.length === 0) return false;
+    return !dossier.inscriptions.some((i) => i.annee === annee);
+  });
 
   /** Un élève déjà sorti n'a plus de mouvement à subir. */
   sorti = computed(() => {

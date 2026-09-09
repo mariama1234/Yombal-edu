@@ -67,8 +67,19 @@
       </div>
 
       <div class="field">
+        <label for="date_paiement">Date du paiement</label>
+        <input class="input" id="date_paiement" type="date" formControlName="date_paiement">
+        <span class="hint">Vide = aujourd'hui. À renseigner pour un règlement reçu un autre jour.</span>
+      </div>
+
+      <div class="field">
         <label for="reference_transaction">Référence de transaction <span class="hint">(optionnel, mobile money)</span></label>
         <input class="input" id="reference_transaction" formControlName="reference_transaction" placeholder="Ex : TXN-88213">
+      </div>
+
+      <div class="field">
+        <label for="commentaire">Commentaire <span class="hint">(optionnel)</span></label>
+        <input class="input" id="commentaire" formControlName="commentaire" placeholder="Réglé par la mère…">
       </div>
 
       <div class="form-actions">

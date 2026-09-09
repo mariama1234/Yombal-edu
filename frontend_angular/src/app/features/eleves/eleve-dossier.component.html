@@ -15,6 +15,45 @@
   @if (message()) { <div class="form-success">{{ message() }}</div> }
   @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
 
+  <!-- Un ancien élève ouvert à la rentrée : le dossier affichait la classe de
+       l'an dernier sans dire qu'elle était périmée. -->
+  @if (aReinscrire()) {
+    <div class="panel" style="border-color:var(--orange-500);">
+      <div class="panel-head">
+        <div class="panel-title" style="color:var(--orange-500);">
+          Pas encore réinscrit pour {{ annees.anneeCourante()?.libelle }}
+        </div>
+        <a class="btn-primary" [routerLink]="['/eleves', idEleve, 'reinscrire']">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 3v6h-6"/></svg>
+          Réinscrire {{ d.eleve.prenom }}
+        </a>
+      </div>
+      <p class="hint" style="margin:0;">
+        Sa dernière scolarité connue est
+        <strong>{{ d.inscriptions[0].classe }}</strong> en {{ d.inscriptions[0].annee }}.
+        Le formulaire s'ouvrira déjà rempli : il ne restera qu'à choisir la classe
+        dans laquelle il passe.
+      </p>
+    </div>
+  }
+
+  <div class="tabs">
+    <button class="tab" [class.active]="onglet() === 'scolarite'"
+            (click)="onglet.set('scolarite')">Dossier scolaire</button>
+    <button class="tab" [class.active]="onglet() === 'finances'"
+            (click)="onglet.set('finances')">
+      Finances
+      @if (d.finances.solde > 0) {
+        <span class="pill" [class]="d.finances.statut"
+              style="margin-left:6px;">{{ d.finances.solde | number:'1.0-0' }} F</span>
+      }
+    </button>
+  </div>
+
+  @if (onglet() === 'finances') {
+    <app-eleve-finances [idEleve]="idEleve"></app-eleve-finances>
+  } @else {
+
   <!-- Identité -->
   <div class="panel">
     <div class="panel-head">
@@ -52,7 +91,9 @@
       <div class="tile-generic-label">Solde à payer</div>
       <div class="tile-generic-value">{{ d.finances.solde | number:'1.0-0' }}</div>
       <div class="tile-generic-meta">
-        {{ d.finances.total_paye | number:'1.0-0' }} payés sur {{ d.finances.total_du | number:'1.0-0' }} F CFA
+        {{ d.finances.total_paye | number:'1.0-0' }} payés sur
+        {{ d.finances.total_du | number:'1.0-0' }} F CFA
+        @if (d.finances.annee) { en {{ d.finances.annee }} }
       </div>
     </div>
     <div class="tile-generic">
@@ -284,5 +325,6 @@
       </table>
     }
   </div>
+  }
 }
 }

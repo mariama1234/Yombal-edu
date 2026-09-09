@@ -158,6 +158,25 @@ table.simple tr:hover td{background:var(--bg);}
 .pill.impaye, .pill.radie{background:var(--red-bg);color:var(--red);}
 .pill.partiel{background:var(--orange-100);color:var(--orange-500);}
 .pill.paye, .pill.actif{background:var(--green-bg);color:var(--green);}
+/* Statuts financiers d'ensemble : a_jour / partiel / en_retard / non_paye.
+   « En retard » se distingue de « impayé » — l'un se relance, l'autre attend
+   son échéance — d'où le rouge plein contre le gris. */
+.pill.a_jour{background:var(--green-bg);color:var(--green);}
+.pill.en_retard{background:var(--red);color:#fff;}
+.pill.non_paye{background:var(--bg);color:var(--ink-600);border:1px solid var(--line);}
+.pill.sans_frais{background:transparent;color:var(--ink-400);}
+
+/* ---------- Échéancier mensuel ---------- */
+.echeancier{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;}
+.echeancier-mois{border:1px solid var(--line);border-left-width:3px;border-radius:10px;padding:11px 13px;background:var(--surface);}
+.echeancier-nom{font-size:12.5px;font-weight:600;color:var(--ink-900);}
+.echeancier-etat{font-size:11.5px;font-weight:600;margin-top:3px;}
+.echeancier-montant{font-size:11.5px;color:var(--ink-400);margin-top:5px;}
+.echeancier-mois.a_jour{border-left-color:var(--green);} .echeancier-mois.a_jour .echeancier-etat{color:var(--green);}
+.echeancier-mois.partiel{border-left-color:var(--orange-500);} .echeancier-mois.partiel .echeancier-etat{color:var(--orange-500);}
+.echeancier-mois.en_retard{border-left-color:var(--red);} .echeancier-mois.en_retard .echeancier-etat{color:var(--red);}
+.echeancier-mois.non_paye{border-left-color:var(--ink-400);} .echeancier-mois.non_paye .echeancier-etat{color:var(--ink-600);}
+.echeancier-mois.sans_frais{border-left-color:var(--line);background:var(--bg);} .echeancier-mois.sans_frais .echeancier-etat{color:var(--ink-400);font-weight:400;}
 .mono{font-family:var(--font-mono);}
 
 /* ---------- Filtres ---------- */

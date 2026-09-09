@@ -43,7 +43,9 @@ export class GenererFraisComponent implements OnInit {
   form = this.fb.group({
     id_type_frais: [null as number | null, Validators.required],
     id_annee_scolaire: [null as number | null, Validators.required],
-    id_classe: [null as number | null],
+    // Obligatoire : facturer toute l'école d'un clic au même tarif était une
+    // écriture massive et irréversible à la main, offerte par défaut.
+    id_classe: [null as number | null, Validators.required],
     montant: [null as number | null],
     premiere_echeance: ['', Validators.required],
     nombre_echeances: [1, [Validators.required, Validators.min(1), Validators.max(24)]],

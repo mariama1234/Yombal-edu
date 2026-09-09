@@ -1,0 +1,353 @@
+@if (chargement()) {
+  <div class="panel"><p class="hint">Chargement de la situation financière…</p></div>
+} @else {
+@if (situation(); as s) {
+
+  @if (message()) { <div class="form-success">{{ message() }}</div> }
+  @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+  <!-- En-tête : année, classe, statut -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        Finances
+        <span class="pill" [class]="s.resume.statut">{{ s.resume.statut_libelle }}</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        @if (s.annees.length) {
+          <label for="annee-finances" class="hint">Année scolaire</label>
+          <select class="input" id="annee-finances" style="width:auto;"
+                  [value]="s.annee?.id ?? ''"
+                  (change)="changerAnnee($any($event.target).value)">
+            @for (a of s.annees; track a.id) {
+              <option [value]="a.id">
+                {{ a.libelle }}{{ a.classe ? ' — ' + a.classe : '' }}
+              </option>
+            }
+          </select>
+        }
+        <button type="button" class="btn-primary" (click)="ouvrirSaisie()"
+                [disabled]="!peutEncaisser()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          Enregistrer un paiement
+        </button>
+      </div>
+    </div>
+
+    @if (!s.annee) {
+      <p class="hint">Aucune année scolaire à afficher pour cet élève.</p>
+    } @else {
+      <p class="hint" style="margin-top:-4px;">
+        {{ s.annee.libelle }}
+        @if (s.scolarite) {
+          — {{ s.scolarite.classe }} ({{ s.scolarite.niveau }})
+        } @else {
+          — aucune inscription cette année-là : seuls les frais restants sont affichés.
+        }
+        @if (!sansFrais() && reste() <= 0) {
+          — tout est soldé, il n'y a rien à encaisser.
+        }
+      </p>
+    }
+  </div>
+
+  <!-- Ce qui manque pour que la pré-inscription devienne une inscription. -->
+  @if (s.confirmation && !s.confirmation.confirmee) {
+    <div class="panel" style="border-color:var(--orange-500);">
+      <div class="panel-head">
+        <div class="panel-title" style="color:var(--orange-500);">
+          {{ s.confirmation.statut_libelle }} — inscription non confirmée
+        </div>
+      </div>
+      @if (!s.confirmation.frais_emis) {
+        <p class="hint" style="margin:0;">
+          Aucun frais d'inscription n'a été émis pour {{ s.annee?.libelle }}.
+          Ce sont ces droits, une fois entièrement réglés, qui confirment
+          l'inscription : tant qu'ils n'existent pas, {{ s.eleve.prenom }} reste
+          pré-inscrit quoi qu'il verse par ailleurs.
+        </p>
+      } @else {
+        <p class="hint" style="margin:0;">
+          Droits d'inscription :
+          <strong>{{ s.confirmation.droits_payes | number:'1.0-0' }} F réglés</strong>
+          sur {{ s.confirmation.droits_dus | number:'1.0-0' }} F —
+          il reste <strong>{{ s.confirmation.droits_restants | number:'1.0-0' }} F</strong>.
+          L'inscription se confirmera d'elle-même au solde ; une mensualité versée
+          entre-temps ne la confirme pas.
+        </p>
+      }
+    </div>
+  }
+
+  <!-- Résumé §3 / §16 : le montant initial n'est jamais masqué -->
+  <div class="tile-grid-generic">
+    <div class="tile-generic">
+      <div class="tile-generic-label">Total des frais</div>
+      <div class="tile-generic-value">{{ s.resume.total_du | number:'1.0-0' }} F</div>
+      <div class="tile-generic-meta">
+        @if (sansFrais()) {
+          aucun frais émis pour cette année
+        } @else if (s.resume.remise > 0) {
+          {{ s.resume.frais_initial | number:'1.0-0' }} F
+          − {{ s.resume.remise | number:'1.0-0' }} F de remise
+        } @else {
+          {{ s.resume.nombre_frais }} frais applicable(s)
+        }
+      </div>
+    </div>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Total payé</div>
+      <div class="tile-generic-value">{{ s.resume.total_paye | number:'1.0-0' }} F</div>
+      <div class="tile-generic-meta">
+        {{ s.resume.taux | number:'1.0-1' }} % du total dû
+      </div>
+    </div>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Reste à payer</div>
+      <div class="tile-generic-value">{{ s.resume.reste | number:'1.0-0' }} F</div>
+      <div class="tile-generic-meta">
+        @if (s.resume.frais_en_retard) {
+          {{ s.resume.frais_en_retard }} échéance(s) dépassée(s)
+        } @else if (s.resume.prochaine_echeance) {
+          prochaine échéance le {{ s.resume.prochaine_echeance | date:'dd/MM/yyyy' }}
+        } @else {
+          aucune échéance ouverte
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- Saisie d'un paiement §7 -->
+  @if (saisieOuverte() && sansFrais()) {
+    <div class="panel" style="border-color:var(--orange-500);">
+      <div class="panel-head">
+        <div class="panel-title" style="color:var(--orange-500);">
+          Aucun frais émis pour {{ s.annee?.libelle }}
+        </div>
+        <a class="btn-primary" routerLink="/finances/generer">Générer les frais</a>
+      </div>
+      <p class="hint" style="margin:0;">
+        Un paiement s'impute sur une échéance : tant qu'aucun frais n'a été émis
+        pour {{ s.eleve.prenom }}, il n'y a rien à régler. Génère la scolarité de
+        @if (s.scolarite) { sa classe ({{ s.scolarite.classe }}) } @else { son année },
+        puis reviens ici — le premier règlement confirmera son inscription.
+      </p>
+    </div>
+  } @else if (saisieOuverte()) {
+    <form class="form-section" [formGroup]="formPaiement">
+      <div class="form-section-title">Enregistrer un paiement</div>
+      <div class="form-section-sub">
+        {{ s.eleve.nom_complet }} — {{ s.annee?.libelle }}. Sans mois précisé, le
+        montant solde les échéances de la plus ancienne à la plus récente, et un
+        reçu est produit pour chacune.
+      </div>
+      <div class="form-grid cols-3">
+        <div class="field">
+          <label for="montant">Montant (F CFA)</label>
+          <input class="input" id="montant" type="number" formControlName="montant"
+                 [max]="reste()">
+          <span class="hint">Reste à payer : {{ reste() | number:'1.0-0' }} F.</span>
+        </div>
+        <div class="field">
+          <label for="mois-paiement">Mois / échéance</label>
+          <select class="input" id="mois-paiement" formControlName="mois">
+            <option value="">La plus ancienne d'abord</option>
+            @for (m of moisOuverts(); track m.mois) {
+              <option [value]="m.mois">
+                {{ m.libelle }} — reste {{ m.reste | number:'1.0-0' }} F
+              </option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="date-paiement">Date du paiement</label>
+          <input class="input" id="date-paiement" type="date" formControlName="date_paiement">
+          <span class="hint">Vide = aujourd'hui.</span>
+        </div>
+        <div class="field span-2">
+          <label>Moyen de paiement</label>
+          <div class="radio-pills" style="flex-wrap:wrap;">
+            @for (m of methodes; track m.value) {
+              <label class="radio-pill"
+                     [class.checked]="formPaiement.get('methode')?.value === m.value">
+                <input type="radio" formControlName="methode" [value]="m.value"> {{ m.label }}
+              </label>
+            }
+          </div>
+        </div>
+        <div class="field">
+          <label for="reference">Référence <span class="hint">(mobile money)</span></label>
+          <input class="input" id="reference" formControlName="reference_transaction"
+                 placeholder="TXN-88213">
+        </div>
+        <div class="field span-2">
+          <label for="commentaire">Commentaire</label>
+          <input class="input" id="commentaire" formControlName="commentaire"
+                 placeholder="Réglé par la mère, reçu samedi…">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-ghost" (click)="fermer()">Annuler</button>
+        <button type="button" class="btn-primary" (click)="encaisser()" [disabled]="occupe()">
+          {{ occupe() ? 'Enregistrement…' : 'Valider le paiement' }}
+        </button>
+      </div>
+    </form>
+  }
+
+  <!-- Détail des frais §4 -->
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Détail des frais</div></div>
+    <table class="simple">
+      <thead>
+        <tr>
+          <th>Frais</th><th>Échéance</th><th>Montant</th><th>Remise</th>
+          <th>Payé</th><th>Reste</th><th>Statut</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (f of s.frais; track f.id) {
+          <tr>
+            <td><strong>{{ f.libelle }}</strong></td>
+            <td class="mono">
+              {{ f.echeance ? (f.echeance | date:'dd/MM/yyyy') : '—' }}
+              @if (f.en_retard) { <span class="pill en_retard">échue</span> }
+            </td>
+            <td class="mono">
+              {{ f.montant | number:'1.0-0' }}
+              @if (f.remise > 0) {
+                <span class="hint">(initial {{ f.montant_initial | number:'1.0-0' }})</span>
+              }
+            </td>
+            <td class="mono">{{ f.remise > 0 ? (f.remise | number:'1.0-0') : '—' }}</td>
+            <td class="mono">{{ f.paye | number:'1.0-0' }}</td>
+            <td class="mono">{{ f.reste | number:'1.0-0' }}</td>
+            <td><span class="pill" [class]="f.statut">{{ f.statut_libelle }}</span></td>
+            <td style="text-align:right;">
+              <button type="button" class="panel-link" (click)="ouvrirRemise(f)">Remise</button>
+            </td>
+          </tr>
+          @if (remiseOuverte() === f.id) {
+            <tr>
+              <td colspan="8">
+                <form class="form-section" [formGroup]="formRemise" style="margin:0;">
+                  <div class="form-section-title">Remise sur « {{ f.libelle }} »</div>
+                  <div class="form-section-sub">
+                    Le montant initial de {{ f.montant_initial | number:'1.0-0' }} F reste
+                    affiché : c'est lui qu'on relit si la famille conteste.
+                  </div>
+                  <div class="form-grid">
+                    <div class="field">
+                      <label [for]="'remise-' + f.id">Remise accordée (F CFA)</label>
+                      <input class="input" [id]="'remise-' + f.id" type="number"
+                             formControlName="remise" [max]="f.montant_initial">
+                    </div>
+                    <div class="field">
+                      <label [for]="'motif-' + f.id">Motif</label>
+                      <input class="input" [id]="'motif-' + f.id" formControlName="motif_remise"
+                             placeholder="Fratrie, bourse, geste commercial…">
+                    </div>
+                  </div>
+                  <div class="form-actions">
+                    <button type="button" class="btn-ghost" (click)="fermer()">Annuler</button>
+                    <button type="button" class="btn-primary" [disabled]="occupe()"
+                            (click)="appliquerRemise(f.id)">
+                      {{ occupe() ? 'Enregistrement…' : 'Appliquer la remise' }}
+                    </button>
+                  </div>
+                </form>
+              </td>
+            </tr>
+          }
+        } @empty {
+          <tr>
+            <td colspan="8" class="hint">
+              Aucun frais pour cette année. Génère-les depuis Finances → Générer les frais.
+            </td>
+          </tr>
+        }
+      </tbody>
+      @if (s.frais.length) {
+        <tfoot>
+          <tr>
+            <td colspan="2" style="font-weight:600;">Total</td>
+            <td class="mono" style="font-weight:600;">{{ s.resume.total_du | number:'1.0-0' }}</td>
+            <td class="mono" style="font-weight:600;">{{ s.resume.remise | number:'1.0-0' }}</td>
+            <td class="mono" style="font-weight:600;">{{ s.resume.total_paye | number:'1.0-0' }}</td>
+            <td class="mono" style="font-weight:600;">{{ s.resume.reste | number:'1.0-0' }}</td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      }
+    </table>
+  </div>
+
+  <!-- Échéancier mensuel §5 -->
+  @if (s.echeancier.length) {
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Échéancier {{ s.annee?.libelle }}</div>
+      </div>
+      <div class="echeancier">
+        @for (m of s.echeancier; track m.libelle) {
+          <div class="echeancier-mois" [class]="m.statut">
+            <div class="echeancier-nom">{{ m.libelle }}</div>
+            <div class="echeancier-etat">{{ m.statut_libelle }}</div>
+            @if (m.statut !== 'sans_frais') {
+              <div class="echeancier-montant mono">
+                {{ m.paye | number:'1.0-0' }} / {{ m.du | number:'1.0-0' }} F
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- Historique des paiements §9 / §20 -->
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Historique des paiements</div></div>
+    <table class="simple">
+      <thead>
+        <tr>
+          <th>Reçu</th><th>Date</th><th>Frais</th><th>Montant</th>
+          <th>Moyen</th><th>Référence</th><th>Enregistré par</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (p of s.paiements; track p.id) {
+          <tr>
+            <td class="mono">{{ p.numero_recu ?? '—' }}</td>
+            <td class="mono">{{ p.date | date:'dd/MM/yyyy' }}</td>
+            <td>
+              {{ p.frais }}
+              @if (p.commentaire) { <div class="hint">{{ p.commentaire }}</div> }
+            </td>
+            <td class="mono">{{ p.montant | number:'1.0-0' }} F</td>
+            <td>{{ p.methode_libelle }}</td>
+            <td class="mono">{{ p.reference_transaction ?? '—' }}</td>
+            <td>{{ p.enregistre_par ?? '—' }}</td>
+            <td style="text-align:right;">
+              @if (p.id_recu) {
+                <button type="button" class="panel-link"
+                        [disabled]="telechargement() === p.id_recu"
+                        (click)="telechargerRecu(p.id_recu)">
+                  {{ telechargement() === p.id_recu ? 'Préparation…' : 'Reçu PDF' }}
+                </button>
+              }
+            </td>
+          </tr>
+        } @empty {
+          <tr>
+            <td colspan="8" class="hint">Aucun paiement enregistré pour cette année.</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+} @else {
+  <div class="panel">
+    <p class="hint">{{ erreur() ?? "La situation financière n'a pas pu être chargée." }}</p>
+  </div>
+}
+}

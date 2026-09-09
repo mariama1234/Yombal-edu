@@ -43,6 +43,39 @@ def _format_export(request):
     return demande
 
 
+def _reference(modele, brut, ecole, nom):
+    """
+    Résout un identifiant passé dans l'URL, en refusant ce qui n'est pas de
+    l'école appelante.
+
+    Un identifiant inconnu est refusé plutôt qu'ignoré : filtrer sur une classe
+    d'une autre école doit dire « inconnue », pas afficher toute l'école.
+    """
+    if not brut:
+        return None
+    try:
+        return modele.objects.get(pk=brut, id_ecole=ecole)
+    except (modele.DoesNotExist, ValueError, TypeError):
+        raise ValidationError({nom: f"{nom.capitalize()} inconnu(e) pour cette école."})
+
+
+def _pagination(request, taille_defaut=20, taille_max=200):
+    """Lit `?page=` et `?page_size=`, en refusant les valeurs illisibles."""
+    def entier(nom, defaut):
+        brut = request.query_params.get(nom)
+        if not brut:
+            return defaut
+        try:
+            valeur = int(brut)
+        except (TypeError, ValueError):
+            raise ValidationError({nom: "Nombre entier attendu."})
+        if valeur < 1:
+            raise ValidationError({nom: "Valeur minimale : 1."})
+        return valeur
+
+    return entier("page", 1), min(entier("page_size", taille_defaut), taille_max)
+
+
 def _date_param(request, nom):
     """Lit une date de l'URL, en refusant explicitement les valeurs illisibles."""
     brut = request.query_params.get(nom)
@@ -312,10 +345,214 @@ class EleveViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin
     # inscrits cette année-là.
     chemin_annee = "inscriptions__id_annee_scolaire"
 
+    # Trois façons de lire « les élèves de l'année », via ?inscription=
+    ETATS_INSCRIPTION = ("confirmee", "en_attente", "toutes")
+
+    def get_queryset(self):
+        """
+        Restreint la liste d'une année aux inscriptions réellement confirmées.
+
+        Une place réservée n'est pas une inscription : tant que rien n'a été
+        encaissé, l'inscription reste « pré-inscrite » et l'élève n'a pas à
+        figurer parmi les inscrits — sinon les effectifs, les listes d'appel
+        et les bulletins comptent des élèves qui ne sont peut-être jamais
+        venus. `?inscription=en_attente` donne justement ceux-là, et
+        `?inscription=toutes` retrouve l'ancien comportement.
+
+        Le filtre passe par un `pk__in` plutôt qu'un second `.filter()` sur la
+        relation : deux filtres sur `inscriptions__` visent deux lignes
+        différentes, et un élève inscrit ailleurs cette année ressortirait.
+        """
+        qs = super().get_queryset()
+        brut = self.request.query_params.get("id_annee_scolaire")
+        if not brut:
+            return qs
+
+        etat = self.request.query_params.get("inscription") or "confirmee"
+        if etat not in self.ETATS_INSCRIPTION:
+            raise ValidationError({
+                "inscription": "Attendu : " + ", ".join(self.ETATS_INSCRIPTION) + "."
+            })
+        if etat == "toutes":
+            return qs
+
+        statuts = (models.Inscription.STATUTS_CONFIRMES if etat == "confirmee"
+                   else [models.Inscription.Statut.EN_ATTENTE])
+        return qs.filter(pk__in=models.Inscription.objects
+                         .filter(id_annee_scolaire=brut, statut__in=statuts)
+                         .values("id_eleve"))
+
     def get_serializer_class(self):
         if self.action == "inscrire":
             return serializers.EleveInscriptionSerializer
         return super().get_serializer_class()
+
+    @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"], url_path="a-reinscrire")
+    def a_reinscrire(self, request):
+        """
+        File d'attente de la rentrée :
+        GET /api/eleves/a-reinscrire/?id_annee_scolaire=&classe=&niveau=&q=
+
+        Les élèves déjà passés par l'école et qui n'ont aucune inscription sur
+        l'année visée. Sans cet écran ils disparaissaient de la liste dès
+        qu'on basculait sur la nouvelle année, sans que rien ne signale qu'ils
+        attendaient d'être réinscrits.
+        """
+        ecole = request.user.id_ecole
+        annee = _annee_demandee(request, ecole)
+        if annee is None:
+            return Response({"annee": None, "eleves": [],
+                             "detail": "Aucune année scolaire active."})
+        params = request.query_params
+        try:
+            eleves = scolarite.eleves_sans_inscription(
+                ecole, annee,
+                classe_source=_reference(models.Classe, params.get("classe"), ecole, "classe"),
+                niveau_source=_reference(models.Niveau, params.get("niveau"), ecole, "niveau"),
+                recherche=params.get("q"),
+            )
+        except scolarite.ErreurScolarite as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        # Cinq cents lignes d'un coup ne se traitent pas : on réinscrit classe
+        # par classe, une page à la fois. La pagination est faite ici plutôt
+        # que par DRF parce que la liste est construite en mémoire — c'est le
+        # regroupement « une seule ligne par élève, la plus récente » qui
+        # l'exige, et il ne s'exprime pas en SQL sans fenêtrage.
+        page, taille = _pagination(request)
+        debut = (page - 1) * taille
+        tranche = eleves[debut:debut + taille]
+        pages = max(1, -(-len(eleves) // taille))
+        return Response({
+            "annee": annee.libelle,
+            "id_annee_scolaire": annee.pk,
+            "total": len(eleves),
+            "page": page,
+            "pages": pages,
+            "taille_page": taille,
+            "precedent": page > 1,
+            "suivant": page < pages,
+            "eleves": tranche,
+        })
+
+    @extend_schema(responses=dict)
+    @action(detail=True, methods=["get"], url_path="reinscription",
+            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    def contexte_reinscription(self, request, pk=None):
+        """
+        De quoi pré-remplir l'écran de réinscription d'un élève :
+        GET /api/eleves/{id}/reinscription/?id_annee_scolaire=
+
+        L'écran ne doit demander qu'une chose — la classe d'arrivée. D'où il
+        vient, l'année visée et les classes possibles se déduisent, et les
+        faire ressaisir serait une invitation à l'erreur.
+        """
+        ecole = request.user.id_ecole
+        try:
+            eleve = models.Eleve.objects.get(pk=pk, id_ecole=ecole)
+        except (models.Eleve.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Élève introuvable."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        annee = _annee_demandee(request, ecole)
+        if annee is None:
+            return Response({"detail": "Aucune année scolaire active."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        precedente = (models.Inscription.objects
+                      .filter(id_eleve=eleve)
+                      .exclude(statut=models.Inscription.Statut.ANNULEE)
+                      .exclude(id_annee_scolaire=annee)
+                      .select_related("id_classe", "id_classe__id_niveau",
+                                      "id_annee_scolaire")
+                      .order_by("-id_annee_scolaire__date_debut").first())
+        existante = (models.Inscription.objects
+                     .filter(id_eleve=eleve, id_annee_scolaire=annee)
+                     .select_related("id_classe").first())
+
+        classes = (models.Classe.objects
+                   .filter(id_ecole=ecole, id_annee_scolaire=annee)
+                   .select_related("id_niveau").order_by("nom"))
+
+        return Response({
+            "eleve": {
+                "id": eleve.pk,
+                "matricule": eleve.matricule,
+                "nom": eleve.nom,
+                "prenom": eleve.prenom,
+                "nom_complet": f"{eleve.prenom} {eleve.nom}".strip(),
+                "sexe": eleve.sexe,
+                "statut": eleve.statut,
+                "statut_libelle": eleve.get_statut_display(),
+            },
+            "precedente": None if precedente is None else {
+                "annee": precedente.id_annee_scolaire.libelle,
+                "id_annee_scolaire": precedente.id_annee_scolaire_id,
+                "classe": precedente.id_classe.nom,
+                "id_classe": precedente.id_classe_id,
+                "niveau": precedente.id_classe.id_niveau.libelle,
+                "id_niveau": precedente.id_classe.id_niveau_id,
+            },
+            "annee_cible": {
+                "id": annee.pk,
+                "libelle": annee.libelle,
+                "date_debut": annee.date_debut.isoformat(),
+            },
+            # Renseigné quand l'élève est déjà passé : l'écran l'annonce au
+            # lieu de laisser valider pour échouer ensuite.
+            "deja_inscrit": None if existante is None else {
+                "classe": existante.id_classe.nom,
+                "statut": existante.statut,
+                "statut_libelle": existante.get_statut_display(),
+            },
+            "classes": [{
+                "id": c.pk, "nom": c.nom, "niveau": c.id_niveau.libelle,
+                "id_niveau": c.id_niveau_id,
+                "effectif": c.effectif, "capacite_max": c.capacite_max,
+            } for c in classes],
+        })
+
+    @extend_schema(request=serializers.ReinscriptionEleveSerializer, responses=dict)
+    @action(detail=True, methods=["post"],
+            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    def reinscrire(self, request, pk=None):
+        """
+        Réinscription d'un élève seul : POST /api/eleves/{id}/reinscrire/
+
+        La réinscription en masse fait monter une classe entière ; celle-ci
+        traite le cas courant du redoublant, du changement de série, ou des
+        quelques retardataires qui arrivent un par un.
+        """
+        ecole = request.user.id_ecole
+        # Comme pour l'onglet Finances : `get_object()` filtrerait sur l'année
+        # affichée, et l'élève à réinscrire n'y est justement pas inscrit.
+        try:
+            eleve = models.Eleve.objects.get(pk=pk, id_ecole=ecole)
+        except (models.Eleve.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Élève introuvable."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        entree = serializers.ReinscriptionEleveSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        classe = entree.validated_data["id_classe"]
+        if classe.id_ecole_id != ecole.pk:
+            raise ValidationError({"id_classe": "Cette classe appartient à une autre école."})
+
+        try:
+            resultat = scolarite.reinscrire_eleve(
+                ecole, eleve, classe,
+                date_inscription=entree.validated_data.get("date_inscription"))
+        except scolarite.ErreurScolarite as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        journaliser(
+            request, models.JournalActivite.Action.CREATION, entite="inscription",
+            id_entite=resultat["id_inscription"],
+            description=f"Réinscription de {resultat['eleve']} en {classe.nom} "
+                        f"({resultat['annee']})",
+        )
+        return Response(resultat, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"])
     def inscrire(self, request):
@@ -452,6 +689,37 @@ class EleveViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnneeMixin
         et assiduité en une réponse — l'écran les affiche ensemble.
         """
         return Response(scolarite.dossier(request.user.id_ecole, self.get_object()))
+
+    @extend_schema(responses=dict)
+    @action(detail=True, methods=["get"],
+            permission_classes=[permissions.IsAuthenticated, EstAdminOuCaissier])
+    def finances(self, request, pk=None):
+        """
+        Situation financière de l'élève :
+        GET /api/eleves/{id}/finances/?id_annee_scolaire=
+
+        Résumé, détail des frais, échéancier mensuel et historique des
+        paiements — pour **une** année scolaire, jamais toutes confondues.
+        Sans paramètre, l'année active ; à défaut, la plus récente où l'élève
+        a laissé une trace, pour qu'un ancien élève garde un dossier lisible.
+        """
+        ecole = request.user.id_ecole
+        # `get_object()` passerait par `FiltreParAnneeMixin`, qui ne garde que
+        # les élèves *inscrits* l'année demandée : consulter l'ardoise d'un
+        # ancien élève radié en cours d'année répondrait 404. L'école reste,
+        # elle, vérifiée — c'est la seule cloison qui compte ici.
+        try:
+            eleve = models.Eleve.objects.get(pk=pk, id_ecole=ecole)
+        except (models.Eleve.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Élève introuvable."},
+                            status=status.HTTP_404_NOT_FOUND)
+        annee = None
+        if request.query_params.get("id_annee_scolaire"):
+            annee = _annee_demandee(request, ecole)
+        try:
+            return Response(finances.situation_eleve(ecole, eleve, annee))
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
 
     def _periode(self, request):
         try:
@@ -1163,6 +1431,40 @@ class FraisEleveViewSet(CoherenceEcoleMixin, JournalisationMixin, FiltreParAnnee
         except finances.ErreurFinance as exc:
             raise ValidationError({"detail": str(exc)})
 
+    @extend_schema(responses=dict)
+    @action(detail=False, methods=["get"], url_path="situation")
+    def situation(self, request):
+        """
+        Une ligne par élève :
+        GET /api/frais-eleves/situation/?id_annee_scolaire=&classe=&niveau=&statut=&q=
+
+        La liste des frais répond « quelles échéances sont ouvertes » ; celle-ci
+        répond « qui est à jour », qui est la question de la direction.
+        """
+        ecole = request.user.id_ecole
+        annee = _annee_demandee(request, ecole)
+        if annee is None:
+            return Response({"annee": None, "eleves": [],
+                             "totaux": {"eleves": 0, "du": 0, "paye": 0, "reste": 0},
+                             "repartition": {},
+                             "detail": "Aucune année scolaire active."})
+        params = request.query_params
+        statut = params.get("statut") or None
+        if statut and statut not in finances.StatutFinancier.VALEURS:
+            raise ValidationError({
+                "statut": "Attendu : " + ", ".join(finances.StatutFinancier.VALEURS) + "."
+            })
+        try:
+            return Response(finances.situation_globale(
+                ecole, annee,
+                classe=_reference(models.Classe, params.get("classe"), ecole, "classe"),
+                niveau=_reference(models.Niveau, params.get("niveau"), ecole, "niveau"),
+                statut=statut,
+                recherche=params.get("q"),
+            ))
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
+
     @action(detail=False, methods=["get"], url_path="impayes/export")
     def exporter_impayes(self, request):
         """GET /api/frais-eleves/impayes/export/?format=xlsx|pdf"""
@@ -1193,13 +1495,92 @@ class PaiementViewSet(CoherenceEcoleMixin, JournalisationMixin, viewsets.ModelVi
         qs = super().get_queryset().filter(
             id_frais_eleve__id_eleve__id_ecole_id=self.request.user.id_ecole_id)
         params = self.request.query_params
-        if params.get("methode"):
-            qs = qs.filter(methode=params["methode"])
+        # Les filtres suivent ce que l'écran de recherche propose : un élève,
+        # une classe, une année, un type de frais, une référence de transaction.
+        for parametre, champ in (
+            ("methode", "methode"),
+            ("eleve", "id_frais_eleve__id_eleve"),
+            ("annee", "id_frais_eleve__id_annee_scolaire"),
+            ("id_annee_scolaire", "id_frais_eleve__id_annee_scolaire"),
+            ("type_frais", "id_frais_eleve__id_type_frais"),
+            ("frais", "id_frais_eleve"),
+            ("classe", "id_frais_eleve__id_eleve__inscriptions__id_classe"),
+        ):
+            if params.get(parametre):
+                qs = qs.filter(**{champ: params[parametre]})
+        if params.get("reference"):
+            qs = qs.filter(reference_transaction__icontains=params["reference"])
+        if params.get("mois"):
+            # « 2026-10 » : le mois de l'échéance réglée, pas celui du versement.
+            try:
+                an, numero = str(params["mois"]).split("-")[:2]
+                qs = qs.filter(id_frais_eleve__echeance__year=int(an),
+                               id_frais_eleve__echeance__month=int(numero))
+            except (ValueError, TypeError):
+                raise ValidationError({"mois": "Mois attendu au format AAAA-MM."})
         if params.get("debut"):
             qs = qs.filter(date_paiement__date__gte=params["debut"])
         if params.get("fin"):
             qs = qs.filter(date_paiement__date__lte=params["fin"])
-        return qs
+        return qs.distinct()
+
+    @extend_schema(request=serializers.EncaissementSerializer, responses=dict)
+    @action(detail=False, methods=["post"])
+    def encaisser(self, request):
+        """
+        Encaissement depuis le dossier de l'élève :
+        POST /api/paiements/encaisser/
+
+        On saisit un élève et un montant ; le serveur retrouve l'inscription,
+        l'année et les échéances ouvertes, et impute de la plus ancienne à la
+        plus récente. Un versement qui couvre deux mensualités produit deux
+        paiements, chacun avec son reçu — la répartition n'est pas laissée à
+        l'appréciation de la personne au guichet.
+
+        C'est le chemin qu'emprunterait aussi un encaissement automatique :
+        la caisse ne doit pas dépendre de la porte d'entrée du règlement.
+        """
+        entree = serializers.EncaissementSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        donnees = entree.validated_data
+        ecole = request.user.id_ecole
+
+        for champ in ("id_eleve", "id_annee_scolaire", "id_type_frais"):
+            objet = donnees.get(champ)
+            if objet is not None and ecole_de(objet) != ecole.pk:
+                raise ValidationError({champ: "Cet élément appartient à une autre école."})
+
+        try:
+            paiements = finances.affecter_paiement(
+                ecole,
+                donnees["id_eleve"],
+                donnees["montant"],
+                donnees["methode"],
+                annee=donnees.get("id_annee_scolaire"),
+                type_frais=donnees.get("id_type_frais"),
+                mois=donnees.get("mois"),
+                reference=donnees.get("reference_transaction"),
+                commentaire=donnees.get("commentaire"),
+                date_paiement=donnees.get("date_paiement"),
+                utilisateur=request.user,
+            )
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        eleve = donnees["id_eleve"]
+        journaliser(
+            request, models.JournalActivite.Action.CREATION, entite="paiement",
+            id_entite=paiements[0].pk,
+            description=f"Encaissement de {donnees['montant']} F pour "
+                        f"{eleve.prenom} {eleve.nom} "
+                        f"({len(paiements)} échéance(s) soldée(s) ou entamée(s))",
+        )
+        annee = (donnees.get("id_annee_scolaire")
+                 or paiements[0].id_frais_eleve.id_annee_scolaire)
+        return Response({
+            "paiements": serializers.PaiementSerializer(paiements, many=True).data,
+            "situation": finances.situation_eleve(ecole, eleve, annee),
+        }, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"], url_path="export")
     def exporter(self, request):

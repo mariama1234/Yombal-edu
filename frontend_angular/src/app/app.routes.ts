@@ -44,6 +44,10 @@ export const routes: Routes = [
         path: 'eleves/:id/dossier',
         loadComponent: () => import('./features/eleves/eleve-dossier.component').then((m) => m.EleveDossierComponent),
       },
+      {
+        path: 'eleves/:id/reinscrire',
+        loadComponent: () => import('./features/eleves/eleve-reinscription.component').then((m) => m.EleveReinscriptionComponent),
+      },
 
       // ---- Pédagogie (module dédié : saisie en grille, bulletins,
       //      palmarès ; les référentiels passent par le CRUD générique) ----

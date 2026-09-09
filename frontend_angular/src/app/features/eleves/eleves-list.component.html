@@ -1,13 +1,15 @@
 <div class="page-head">
   <div>
     <h1>Élèves</h1>
-    <p>{{ total() }} élèves inscrits.</p>
+    <p>
+      @switch (vue()) {
+        @case ('inscrits') { {{ total() }} élève(s) inscrit(s) en {{ libelleAnnee() }}. }
+        @case ('attente') { {{ total() }} pré-inscrit(s) : place réservée, aucun règlement encaissé. }
+        @case ('a_reinscrire') { {{ total() }} élève(s) de l'année précédente pas encore réinscrit(s). }
+      }
+    </p>
   </div>
   <div style="display:flex; gap:10px;">
-    <a class="btn-ghost" routerLink="/eleves/reinscrire">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 3v6h-6"/></svg>
-      Réinscrire une promotion
-    </a>
     <a class="btn-ghost" routerLink="/eleves/importer">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
       Importer une liste
@@ -19,12 +21,43 @@
   </div>
 </div>
 
-<div class="filters">
-  <div class="chip" [class.active]="filtreStatut() === ''" (click)="filtrer('')">Tous</div>
-  <div class="chip" [class.active]="filtreStatut() === 'actif'" (click)="filtrer('actif')">Actifs</div>
-  <div class="chip" [class.active]="filtreStatut() === 'transfere'" (click)="filtrer('transfere')">Transférés</div>
-  <div class="chip" [class.active]="filtreStatut() === 'radie'" (click)="filtrer('radie')">Radiés</div>
+<div class="tabs">
+  <button class="tab" [class.active]="vue() === 'inscrits'" (click)="changerVue('inscrits')">Inscrits</button>
+  <button class="tab" [class.active]="vue() === 'attente'" (click)="changerVue('attente')">Pré-inscrits</button>
+  <button class="tab" [class.active]="vue() === 'a_reinscrire'" (click)="changerVue('a_reinscrire')">À réinscrire</button>
 </div>
+
+@if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+@if (vue() === 'a_reinscrire') {
+  <div class="filters">
+    <select class="input" style="width:auto;" [value]="niveauSource()"
+            (change)="filtrerFile('niveau', $any($event.target).value)">
+      <option value="">Tous les niveaux</option>
+      @for (n of niveaux(); track n.id) { <option [value]="n.id">{{ n.libelle }}</option> }
+    </select>
+
+    <select class="input" style="width:auto;" [value]="classeSource()"
+            (change)="filtrerFile('classe', $any($event.target).value)">
+      <option value="">Toutes les classes de départ</option>
+      @for (c of classesSource(); track c.id) { <option [value]="c.id">{{ c.nom }}</option> }
+    </select>
+
+    <span style="margin-left:auto; display:flex; align-items:center; gap:14px;">
+      <a class="panel-link" routerLink="/eleves/reinscrire">Réinscrire toute la classe →</a>
+      <span style="font-size:12.5px; color:var(--ink-400);">
+        Page {{ page() }} / {{ pages() }} — {{ total() }} élève(s) au total
+      </span>
+    </span>
+  </div>
+} @else {
+  <div class="filters">
+    <div class="chip" [class.active]="filtreStatut() === ''" (click)="filtrer('')">Tous</div>
+    <div class="chip" [class.active]="filtreStatut() === 'actif'" (click)="filtrer('actif')">Actifs</div>
+    <div class="chip" [class.active]="filtreStatut() === 'transfere'" (click)="filtrer('transfere')">Transférés</div>
+    <div class="chip" [class.active]="filtreStatut() === 'radie'" (click)="filtrer('radie')">Radiés</div>
+  </div>
+}
 
 @if (recherche().trim()) {
   <p style="font-size:12.5px; color:var(--ink-600); margin:0 0 12px;">
@@ -37,18 +70,70 @@
 <div class="panel">
   @if (loading()) {
     <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
+  } @else if (vue() === 'a_reinscrire') {
+
+    @if (aReinscrire().length === 0) {
+      <p style="color:var(--ink-400); font-size:13px;">
+        @if (recherche().trim() || classeSource() || niveauSource()) {
+          Aucun élève à réinscrire ne correspond à ces filtres.
+        } @else {
+          Personne en attente : tous les élèves de l'année précédente ont été traités.
+        }
+      </p>
+    } @else {
+      <table class="simple">
+        <thead>
+          <tr><th>Élève</th><th>Matricule</th><th>Dernière classe</th><th>Année</th><th></th></tr>
+        </thead>
+        <tbody>
+          @for (e of aReinscrire(); track e.id) {
+            <tr style="cursor:pointer;" (click)="reinscrire(e)">
+              <td>
+                <div style="display:flex; align-items:center; gap:10px;">
+                  <div class="avatar" style="width:30px;height:30px;font-size:11px;">{{ initiales(e) }}</div>
+                  <strong>{{ e.prenom }} {{ e.nom }}</strong>
+                </div>
+              </td>
+              <td class="mono">{{ e.matricule }}</td>
+              <td>{{ e.derniere_classe }} <span class="hint">({{ e.dernier_niveau }})</span></td>
+              <td class="mono">{{ e.derniere_annee }}</td>
+              <td style="text-align:right;">
+                <span class="panel-link">Réinscrire →</span>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+
+      <div class="pagination">
+        <span>
+          {{ (page() - 1) * taillePage + 1 }}–{{ (page() - 1) * taillePage + aReinscrire().length }}
+          sur {{ total() }}
+        </span>
+        <span style="display:flex; gap:8px;">
+          <button type="button" class="btn-ghost" [disabled]="!precedent()"
+                  (click)="allerPage(-1)">← Précédent</button>
+          <button type="button" class="btn-ghost" [disabled]="!suivant()"
+                  (click)="allerPage(1)">Suivant →</button>
+        </span>
+      </div>
+    }
+
   } @else if (eleves().length === 0) {
     <p style="color:var(--ink-400); font-size:13px;">
       @if (recherche().trim()) {
         Aucun élève ne correspond à « {{ recherche() }} ».
+      } @else if (vue() === 'attente') {
+        Aucun pré-inscrit : tous ceux qui ont réservé une place ont réglé au moins une échéance.
       } @else {
-        Aucun élève pour ce filtre.
+        Aucun élève inscrit en {{ libelleAnnee() }} pour ce filtre.
+        Regarde l'onglet « À réinscrire ».
       }
     </p>
   } @else {
     <table class="simple">
       <thead>
-        <tr><th>Élève</th><th>Matricule</th><th>Sexe</th><th>Statut</th><th></th></tr>
+        <tr><th>Élève</th><th>Matricule</th><th>Classe</th><th>Inscription</th><th>Statut</th><th></th></tr>
       </thead>
       <tbody>
         @for (e of eleves(); track e.id) {
@@ -60,7 +145,16 @@
               </div>
             </td>
             <td class="mono">{{ e.matricule }}</td>
-            <td>{{ e.sexe ?? '—' }}</td>
+            <td>{{ e.classe ?? '—' }}</td>
+            <td>
+              @if (e.inscription_statut === 'en_attente') {
+                <span class="pill non_paye">{{ e.inscription_libelle }}</span>
+              } @else if (e.inscription_libelle) {
+                <span class="pill a_jour">{{ e.inscription_libelle }}</span>
+              } @else {
+                <span class="hint">—</span>
+              }
+            </td>
             <td><span class="pill" [class]="e.statut">{{ e.statut }}</span></td>
             <td style="text-align:right;">
               <a class="panel-link" [routerLink]="['/eleves', e.id, 'dossier']">Dossier →</a>

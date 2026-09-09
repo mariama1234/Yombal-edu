@@ -47,12 +47,14 @@
 <div class="tabs">
   <button class="tab" [class.active]="onglet() === 'impayes'" (click)="changerOnglet('impayes')">Impayés</button>
   <button class="tab" [class.active]="onglet() === 'tous'" (click)="changerOnglet('tous')">Tous les frais</button>
+  <button class="tab" [class.active]="onglet() === 'eleves'" (click)="changerOnglet('eleves')">Par élève</button>
 </div>
 
 <div class="filters">
   <div class="search" style="max-width:260px;">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-    <input type="text" placeholder="Rechercher un élève…" [ngModel]="recherche()" (ngModelChange)="recherche.set($event)">
+    <input type="text" placeholder="Rechercher un élève…" [ngModel]="recherche()"
+           (ngModelChange)="surRecherche($event)">
   </div>
 
   <select class="input" style="width:auto;" [ngModel]="classe()" (ngModelChange)="classe.set($event); charger()">
@@ -60,12 +62,23 @@
     @for (c of classes(); track c.id) { <option [value]="c.id">{{ c.nom }}</option> }
   </select>
 
-  <select class="input" style="width:auto;" [ngModel]="typeFrais()" (ngModelChange)="typeFrais.set($event); charger()">
-    <option value="">Tous les types de frais</option>
-    @for (t of typesFrais(); track t.id) { <option [value]="t.id">{{ t.libelle }}</option> }
-  </select>
+  @if (onglet() === 'eleves') {
+    <select class="input" style="width:auto;" [ngModel]="niveau()" (ngModelChange)="niveau.set($event); charger()">
+      <option value="">Tous les niveaux</option>
+      @for (n of niveaux(); track n.id) { <option [value]="n.id">{{ n.libelle }}</option> }
+    </select>
 
-  <button class="chip" [class.active]="echus()" (click)="basculerEchus()">Échéance dépassée</button>
+    <select class="input" style="width:auto;" [ngModel]="statut()" (ngModelChange)="statut.set($event); charger()">
+      @for (s of statuts; track s.value) { <option [value]="s.value">{{ s.label }}</option> }
+    </select>
+  } @else {
+    <select class="input" style="width:auto;" [ngModel]="typeFrais()" (ngModelChange)="typeFrais.set($event); charger()">
+      <option value="">Tous les types de frais</option>
+      @for (t of typesFrais(); track t.id) { <option [value]="t.id">{{ t.libelle }}</option> }
+    </select>
+
+    <button class="chip" [class.active]="echus()" (click)="basculerEchus()">Échéance dépassée</button>
+  }
 
   <div style="margin-left:auto; display:flex; gap:8px;">
     <button class="btn-ghost" (click)="exporter('xlsx')" [disabled]="telechargement()">Export Excel</button>
@@ -73,6 +86,93 @@
   </div>
 </div>
 
+@if (onglet() === 'eleves') {
+  <div class="panel">
+    @if (loading()) {
+      <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
+    } @else {
+    @if (situation(); as vue) {
+      <div class="filters" style="margin-bottom:14px;">
+        <span class="chip" [class.active]="statut() === 'a_jour'"
+              (click)="statut.set(statut() === 'a_jour' ? '' : 'a_jour'); charger()">
+          🟢 À jour · {{ vue.repartition.a_jour ?? 0 }}
+        </span>
+        <span class="chip" [class.active]="statut() === 'partiel'"
+              (click)="statut.set(statut() === 'partiel' ? '' : 'partiel'); charger()">
+          🟠 Partiel · {{ vue.repartition.partiel ?? 0 }}
+        </span>
+        <span class="chip" [class.active]="statut() === 'en_retard'"
+              (click)="statut.set(statut() === 'en_retard' ? '' : 'en_retard'); charger()">
+          🔴 En retard · {{ vue.repartition.en_retard ?? 0 }}
+        </span>
+        <span class="chip" [class.active]="statut() === 'non_paye'"
+              (click)="statut.set(statut() === 'non_paye' ? '' : 'non_paye'); charger()">
+          ⚪ Non payé · {{ vue.repartition.non_paye ?? 0 }}
+        </span>
+        <span class="chip" [class.active]="statut() === 'sans_frais'"
+              (click)="statut.set(statut() === 'sans_frais' ? '' : 'sans_frais'); charger()">
+          ▫️ Aucun frais · {{ vue.repartition.sans_frais ?? 0 }}
+        </span>
+        <span style="margin-left:auto; font-size:12.5px; color:var(--ink-400);">
+          {{ vue.annee ?? '—' }}
+        </span>
+      </div>
+
+      @if (eleves().length === 0) {
+        <p style="color:var(--ink-400); font-size:13px;">
+          {{ vue.detail ?? 'Aucun élève ne correspond à ces filtres.' }}
+        </p>
+      } @else {
+        <table class="simple">
+          <thead>
+            <tr>
+              <th>Élève</th><th>Classe</th><th>Niveau</th>
+              <th>Total dû</th><th>Payé</th><th>Reste</th><th>Statut</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (e of eleves(); track e.id_eleve) {
+              <tr>
+                <td>
+                  <strong>{{ e.nom_complet }}</strong>
+                  <div class="hint mono">{{ e.matricule }}</div>
+                </td>
+                <td>{{ e.classe }}</td>
+                <td>{{ e.niveau }}</td>
+                <td class="mono">
+                  {{ e.du | number:'1.0-0' }}
+                  @if (e.remise > 0) {
+                    <div class="hint">remise {{ e.remise | number:'1.0-0' }}</div>
+                  }
+                </td>
+                <td class="mono">{{ e.paye | number:'1.0-0' }}</td>
+                <td class="mono">{{ e.reste | number:'1.0-0' }}</td>
+                <td><span class="pill" [class]="e.statut">{{ e.statut_libelle }}</span></td>
+                <td style="text-align:right;">
+                  <a class="panel-link" [routerLink]="['/eleves', e.id_eleve, 'dossier']">
+                    Dossier financier →
+                  </a>
+                </td>
+              </tr>
+            }
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3" style="font-weight:600;">
+                Total affiché — {{ vue.totaux.eleves }} élève(s)
+              </td>
+              <td class="mono" style="font-weight:600;">{{ vue.totaux.du | number:'1.0-0' }}</td>
+              <td class="mono" style="font-weight:600;">{{ vue.totaux.paye | number:'1.0-0' }}</td>
+              <td class="mono" style="font-weight:600;">{{ vue.totaux.reste | number:'1.0-0' }}</td>
+              <td colspan="2"></td>
+            </tr>
+          </tfoot>
+        </table>
+      }
+    }
+    }
+  </div>
+} @else {
 <div class="panel">
   @if (loading()) {
     <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
@@ -117,3 +217,4 @@
     </table>
   }
 </div>
+}

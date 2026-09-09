@@ -32,14 +32,11 @@ Convention de statuts, pour lever une ambiguïté récurrente :
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Q
 
-from . import models
-
-ZERO = Decimal("0")
+from . import finances, models
 
 
 class ErreurScolarite(Exception):
@@ -53,6 +50,12 @@ class ErreurScolarite(Exception):
 # Une inscription annulée ne compte ni dans l'effectif, ni dans les élèves à
 # réinscrire, ni dans les listes de classe.
 INSCRIPTIONS_VIVES = ~Q(statut=models.Inscription.Statut.ANNULEE)
+
+# Un pré-inscrit a bien une inscription vive — sa place est réservée, ses frais
+# sont émis — mais il ne compte pas encore parmi les inscrits de l'année. La
+# distinction ne sert qu'aux listes d'élèves : l'effectif d'une classe, lui,
+# compte les places réservées, sinon on les réattribuerait à quelqu'un d'autre.
+INSCRIPTIONS_CONFIRMEES = Q(statut__in=models.Inscription.STATUTS_CONFIRMES)
 
 
 def recaler_effectif(*classes):
@@ -330,6 +333,156 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
 
 
 # ---------------------------------------------------------------------------
+# Réinscription d'un élève seul
+# ---------------------------------------------------------------------------
+
+def eleves_sans_inscription(ecole, annee, classe_source=None, niveau_source=None,
+                            recherche=None):
+    """
+    Élèves déjà passés par l'école mais qui n'ont aucune inscription sur
+    `annee` — la file d'attente de la rentrée.
+
+    La réinscription en masse traite une classe entière d'un coup ; elle ne
+    répond pas au cas courant de « il en reste douze, et chacun va dans une
+    classe différente ». Sans cette liste, ces douze-là disparaissaient
+    simplement de l'écran Élèves dès qu'on affichait la nouvelle année, sans
+    que rien ne signale qu'ils attendaient.
+
+    Chaque ligne porte la dernière classe connue : c'est elle qui dit vers
+    quoi l'élève doit monter.
+    """
+    _verifier_ecole(ecole, annee=annee)
+
+    deja = models.Inscription.objects.filter(id_annee_scolaire=annee).values("id_eleve")
+    precedentes = (models.Inscription.objects
+                   .filter(id_eleve__id_ecole=ecole,
+                           id_annee_scolaire__date_debut__lt=annee.date_debut)
+                   .filter(INSCRIPTIONS_VIVES)
+                   .exclude(id_eleve__in=deja)
+                   .select_related("id_eleve", "id_classe", "id_classe__id_niveau",
+                                   "id_annee_scolaire"))
+    if classe_source is not None:
+        precedentes = precedentes.filter(id_classe=classe_source)
+    if niveau_source is not None:
+        precedentes = precedentes.filter(id_classe__id_niveau=niveau_source)
+    if recherche:
+        terme = str(recherche).strip()
+        precedentes = precedentes.filter(
+            Q(id_eleve__nom__icontains=terme)
+            | Q(id_eleve__prenom__icontains=terme)
+            | Q(id_eleve__matricule__icontains=terme)
+        )
+
+    # Un élève peut avoir plusieurs années derrière lui : on ne garde que la
+    # plus récente, c'est la seule qui renseigne sur son niveau actuel.
+    derniere = {}
+    for inscription in precedentes.order_by("id_annee_scolaire__date_debut"):
+        derniere[inscription.id_eleve_id] = inscription
+
+    lignes = []
+    for inscription in derniere.values():
+        eleve = inscription.id_eleve
+        # Un élève radié ou transféré n'attend pas une réinscription : il est
+        # parti. Le proposer reviendrait à demander douze fois par jour
+        # pourquoi il est encore là.
+        if eleve.statut != models.Eleve.Statut.ACTIF:
+            continue
+        lignes.append({
+            "id": eleve.pk,
+            "matricule": eleve.matricule,
+            "nom": eleve.nom,
+            "prenom": eleve.prenom,
+            "nom_complet": f"{eleve.prenom} {eleve.nom}".strip(),
+            "sexe": eleve.sexe,
+            "derniere_annee": inscription.id_annee_scolaire.libelle,
+            "id_derniere_classe": inscription.id_classe_id,
+            "derniere_classe": inscription.id_classe.nom,
+            "id_dernier_niveau": inscription.id_classe.id_niveau_id,
+            "dernier_niveau": inscription.id_classe.id_niveau.libelle,
+        })
+    lignes.sort(key=lambda l: (l["derniere_classe"], l["nom"], l["prenom"]))
+    return lignes
+
+
+@transaction.atomic
+def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None):
+    """
+    Réinscrit **un** élève dans une classe de l'année suivante.
+
+    L'inscription naît « pré-inscrite » : la place est retenue et les frais
+    pourront être émis, mais l'élève n'entre dans la liste des inscrits qu'au
+    premier règlement (voir `finances.confirmer_inscription`).
+
+    Le dépassement de capacité avertit sans bloquer, comme pour la
+    réinscription en masse : une classe surchargée à la rentrée est une
+    réalité, pas une faute de saisie.
+    """
+    _verifier_ecole(ecole, eleve=eleve, classe=classe_cible)
+
+    annee_cible = classe_cible.id_annee_scolaire
+    date_inscription = date_inscription or annee_cible.date_debut or date.today()
+
+    if eleve.statut != models.Eleve.Statut.ACTIF:
+        raise ErreurScolarite(
+            f"{eleve.prenom} {eleve.nom} n'est plus actif "
+            f"({eleve.get_statut_display().lower()}) : il ne peut pas être réinscrit."
+        )
+
+    existante = (models.Inscription.objects
+                 .filter(id_eleve=eleve, id_annee_scolaire=annee_cible)
+                 .select_related("id_classe").first())
+    if existante is not None:
+        raise ErreurScolarite(
+            f"{eleve.prenom} {eleve.nom} est déjà inscrit en "
+            f"{existante.id_classe.nom} pour {annee_cible.libelle}."
+        )
+
+    precedente = (models.Inscription.objects
+                  .filter(id_eleve=eleve)
+                  .filter(INSCRIPTIONS_VIVES)
+                  .exclude(id_annee_scolaire=annee_cible)
+                  .order_by("-id_annee_scolaire__date_debut").first())
+    if precedente is None:
+        raise ErreurScolarite(
+            f"{eleve.prenom} {eleve.nom} n'a aucune scolarité antérieure : "
+            "passez par « Inscrire un élève »."
+        )
+
+    inscription = models.Inscription.objects.create(
+        id_eleve=eleve,
+        id_classe=classe_cible,
+        id_annee_scolaire=annee_cible,
+        date_inscription=date_inscription,
+    )
+    recaler_effectif(classe_cible)
+    classe_cible.refresh_from_db(fields=["effectif"])
+
+    avertissement = None
+    if classe_cible.capacite_max and classe_cible.effectif > classe_cible.capacite_max:
+        avertissement = (
+            f"{classe_cible.nom} compte {classe_cible.effectif} élèves pour une "
+            f"capacité de {classe_cible.capacite_max}."
+        )
+
+    return {
+        "id_inscription": inscription.pk,
+        "id_eleve": eleve.pk,
+        "eleve": f"{eleve.prenom} {eleve.nom}".strip(),
+        "annee_precedente": precedente.id_annee_scolaire.libelle,
+        "classe_precedente": precedente.id_classe.nom,
+        "annee": annee_cible.libelle,
+        "id_annee_scolaire": annee_cible.pk,
+        "classe": classe_cible.nom,
+        "id_classe": classe_cible.pk,
+        "date_inscription": date_inscription.isoformat(),
+        "statut": inscription.statut,
+        "statut_libelle": inscription.get_statut_display(),
+        "effectif_classe": classe_cible.effectif,
+        "avertissement": avertissement,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Dossier numérique (1.2 de la priorisation)
 # ---------------------------------------------------------------------------
 
@@ -372,14 +525,16 @@ def dossier(ecole, eleve):
                  .select_related("id_classe", "id_periode")
                  .order_by("-id_periode__date_debut"))
 
-    # `FraisEleve.montant_paye` est une propriété Python, pas une colonne : la
-    # somme des encaissements se prend sur les paiements rattachés. En deux
-    # requêtes et non un `aggregate` unique — la jointure sur les paiements
-    # dupliquerait les lignes de frais et gonflerait le total dû d'autant.
-    du = (models.FraisEleve.objects.filter(id_eleve=eleve)
-          .aggregate(total=Sum("montant_du"))["total"]) or ZERO
-    paye = (models.Paiement.objects.filter(id_frais_eleve__id_eleve=eleve)
-            .aggregate(total=Sum("montant"))["total"]) or ZERO
+    # Situation financière de l'année en cours, et d'elle seule.
+    #
+    # Le dossier agrégeait auparavant toutes les années confondues : l'ardoise
+    # de CE2 s'additionnait à celle de CM2, et le total affiché ne
+    # correspondait à aucune facture réelle. Le détail complet — frais,
+    # échéancier, paiements — vit dans `finances.situation_eleve`, appelé par
+    # l'onglet Finances ; ici on n'en garde que le résumé.
+    annee_financiere = courante.id_annee_scolaire if courante is not None else None
+    situation = finances.situation_eleve(ecole, eleve, annee_financiere)
+    resume = situation["resume"]
 
     absences = models.Absence.objects.filter(id_eleve=eleve).aggregate(
         absences=Count("pk", filter=Q(statut=models.Absence.Statut.ABSENT)),
@@ -447,14 +602,18 @@ def dossier(ecole, eleve):
             "appreciation": b.appreciation_generale,
         } for b in bulletins],
         "finances": {
-            "total_du": du,
-            "total_paye": paye,
-            "solde": du - paye,
-            "frais_impayes": models.FraisEleve.objects.filter(
-                id_eleve=eleve,
-                statut__in=[models.FraisEleve.Statut.IMPAYE,
-                            models.FraisEleve.Statut.PARTIEL],
-            ).count(),
+            "id_annee_scolaire": (situation["annee"]["id"] if situation["annee"] else None),
+            "annee": (situation["annee"]["libelle"] if situation["annee"] else None),
+            "frais_initial": resume["frais_initial"],
+            "remise": resume["remise"],
+            "total_du": resume["total_du"],
+            "total_paye": resume["total_paye"],
+            "solde": resume["reste"],
+            "statut": resume["statut"],
+            "statut_libelle": resume["statut_libelle"],
+            "frais_impayes": resume["nombre_frais"] - resume["frais_soldes"],
+            "frais_en_retard": resume["frais_en_retard"],
+            "prochaine_echeance": resume["prochaine_echeance"],
         },
         "assiduite": absences,
     }

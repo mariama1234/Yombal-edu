@@ -1,0 +1,130 @@
+<p class="module-eyebrow">Gestion des élèves</p>
+<div class="page-head">
+  <div>
+    <h1>Réinscrire un élève</h1>
+    <p>Il ne reste qu'à choisir la classe dans laquelle il passe.</p>
+  </div>
+  <a class="btn-ghost" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }">
+    ← Retour à la file
+  </a>
+</div>
+
+@if (chargement()) {
+  <div class="panel"><p class="hint">Chargement…</p></div>
+} @else {
+@if (contexte(); as c) {
+
+  @if (resultat()) {
+    <div class="form-success">{{ resultat() }}</div>
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Et maintenant ?</div></div>
+      <p style="font-size:13px; color:var(--ink-600); margin:0 0 14px;">
+        L'inscription est <strong>pré-inscrite</strong> : la place est retenue, mais
+        {{ c.eleve.prenom }} n'entrera dans la liste des inscrits qu'au premier
+        règlement. Génère ses frais, puis encaisse depuis son dossier.
+      </p>
+      <div class="form-actions" style="justify-content:flex-start;">
+        <button type="button" class="btn-primary" (click)="retourFile()">
+          Réinscrire l'élève suivant
+        </button>
+        <a class="btn-ghost" [routerLink]="['/eleves', c.eleve.id, 'dossier']">
+          Ouvrir son dossier
+        </a>
+        <a class="btn-ghost" routerLink="/finances/generer">Générer les frais</a>
+      </div>
+    </div>
+  } @else {
+
+    @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+    @if (c.deja_inscrit) {
+      <div class="panel" style="border-color:var(--orange-500); color:var(--orange-500); font-size:13px;">
+        {{ c.eleve.nom_complet }} est déjà inscrit en <strong>{{ c.deja_inscrit.classe }}</strong>
+        pour {{ c.annee_cible.libelle }} ({{ c.deja_inscrit.statut_libelle }}).
+        Il n'y a rien à réinscrire.
+      </div>
+    }
+
+    <div class="form-section" style="max-width:760px;">
+      <div class="form-section-title">{{ c.eleve.nom_complet }}</div>
+      <div class="form-section-sub">
+        Matricule {{ c.eleve.matricule }} — {{ c.eleve.statut_libelle }}
+      </div>
+
+      <!-- Pré-rempli et non modifiable : la provenance est un fait, pas un choix. -->
+      <div class="form-grid cols-3">
+        <div class="field">
+          <label>Année de départ</label>
+          <input class="input" [value]="c.precedente?.annee ?? '—'" disabled>
+        </div>
+        <div class="field">
+          <label>Classe de départ</label>
+          <input class="input"
+                 [value]="c.precedente ? c.precedente.classe + ' (' + c.precedente.niveau + ')' : '—'"
+                 disabled>
+        </div>
+        <div class="field">
+          <label>Année d'arrivée</label>
+          <input class="input" [value]="c.annee_cible.libelle" disabled>
+        </div>
+      </div>
+
+      @if (!c.precedente) {
+        <div class="form-error">
+          {{ c.eleve.prenom }} n'a aucune scolarité antérieure : passe par
+          « Inscrire un élève » plutôt que par la réinscription.
+        </div>
+      }
+
+      <form [formGroup]="form" (ngSubmit)="valider()">
+        <div class="form-grid">
+          <div class="field">
+            <label for="classe-cible">Classe d'arrivée</label>
+            <select class="input" id="classe-cible" formControlName="id_classe">
+              <option [ngValue]="null">— choisir —</option>
+              @for (cl of classes(); track cl.id) {
+                <option [ngValue]="cl.id">
+                  {{ cl.nom }} — {{ cl.niveau }} ({{ cl.effectif }}/{{ cl.capacite_max }})
+                </option>
+              }
+            </select>
+            @if (classes().length === 0) {
+              <span class="hint hint-error">
+                Aucune classe en {{ c.annee_cible.libelle }} : crée-les d'abord dans « Classes ».
+              </span>
+            } @else if (form.controls.id_classe.touched && form.controls.id_classe.invalid) {
+              <span class="hint hint-error">Choisis la classe dans laquelle il passe.</span>
+            } @else {
+              <span class="hint">
+                Une classe pleine n'est pas bloquée : tu seras seulement averti.
+              </span>
+            }
+          </div>
+
+          <div class="field">
+            <label for="date-inscription">Date d'inscription</label>
+            <input class="input" id="date-inscription" type="date"
+                   formControlName="date_inscription">
+            <span class="hint">Par défaut, le premier jour de l'année scolaire.</span>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <a class="btn-ghost" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }">
+            Annuler
+          </a>
+          <button type="submit" class="btn-primary"
+                  [disabled]="occupe() || !!c.deja_inscrit || !c.precedente">
+            {{ occupe() ? 'Réinscription…' : 'Réinscrire' }}
+          </button>
+        </div>
+      </form>
+    </div>
+  }
+
+} @else {
+  <div class="panel">
+    <p class="hint">{{ erreur() ?? "Cet élève est introuvable." }}</p>
+  </div>
+}
+}

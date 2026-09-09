@@ -41,7 +41,10 @@ export class ReinscriptionComponent implements OnInit {
   form = this.fb.group({
     id_annee_source: [null as number | null, Validators.required],
     id_annee_cible: [null as number | null, Validators.required],
-    id_classe_source: [null as number | null],
+    // Obligatoire : verser toutes les classes d'une année dans une seule
+    // classe d'arrivée n'a pas de sens, et c'était pourtant ce que « Toutes
+    // les classes » proposait en un clic.
+    id_classe_source: [null as number | null, Validators.required],
     id_classe_cible: [null as number | null, Validators.required],
     date_inscription: [''],
   });

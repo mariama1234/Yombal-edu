@@ -57,10 +57,10 @@
       <div class="field">
         <label for="classe">Classe</label>
         <select class="input" id="classe" formControlName="id_classe">
-          <option [ngValue]="null">Toutes les classes</option>
+          <option [ngValue]="null">— choisir —</option>
           @for (c of classes(); track c.id) { <option [ngValue]="c.id">{{ c.nom }}</option> }
         </select>
-        <span class="hint">Laisse vide pour facturer toute l'école.</span>
+        <span class="hint">Une classe à la fois : les tarifs diffèrent d'un niveau à l'autre.</span>
       </div>
 
       <div class="field">

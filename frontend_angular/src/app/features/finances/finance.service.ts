@@ -11,8 +11,11 @@ import {
   Paginated,
   Paiement,
   Relance,
+  ResultatEncaissement,
   ResultatGenerationFrais,
   ResultatRelances,
+  SituationFinanciereEleve,
+  SituationGlobale,
   Soldes,
 } from '../../core/models/models';
 
@@ -57,6 +60,34 @@ export class FinanceService {
     return this.http.get<FraisEleve>(`${this.base}/frais-eleves/${id}/`);
   }
 
+  /** Remise accordée sur un frais, ou correction du montant. */
+  modifierFrais(id: number | string, corps: Record<string, unknown>): Observable<FraisEleve> {
+    return this.http.patch<FraisEleve>(`${this.base}/frais-eleves/${id}/`, corps);
+  }
+
+  /**
+   * Situation d'un élève pour **une** année scolaire.
+   *
+   * L'année est explicite plutôt que déduite : mélanger deux années
+   * additionnerait deux ardoises qui n'ont jamais été facturées ensemble.
+   */
+  situationEleve(
+    idEleve: number | string,
+    idAnnee?: number | string | null,
+  ): Observable<SituationFinanciereEleve> {
+    return this.http.get<SituationFinanciereEleve>(
+      `${this.base}/eleves/${idEleve}/finances/`,
+      { params: this.params({ id_annee_scolaire: idAnnee }) },
+    );
+  }
+
+  /** Une ligne par élève : qui est à jour, qui ne l'est pas. */
+  situationGlobale(filtres: Filtres = {}): Observable<SituationGlobale> {
+    return this.http.get<SituationGlobale>(`${this.base}/frais-eleves/situation/`, {
+      params: this.params(filtres),
+    });
+  }
+
   /** `valider: false` renvoie l'aperçu sans rien écrire. */
   genererFrais(corps: Record<string, unknown>): Observable<ResultatGenerationFrais> {
     return this.http.post<ResultatGenerationFrais>(
@@ -64,8 +95,18 @@ export class FinanceService {
   }
 
   // ---- Paiements et reçus ---------------------------------------------
+  /** Encaissement sur une ligne de frais précise (écran « Encaisser »). */
   encaisser(corps: Record<string, unknown>): Observable<Paiement> {
     return this.http.post<Paiement>(`${this.base}/paiements/`, corps);
+  }
+
+  /**
+   * Encaissement saisi depuis le dossier : on donne l'élève et le montant,
+   * le serveur retrouve les échéances ouvertes et répartit. Il renvoie la
+   * situation déjà recalculée — l'écran n'a pas à redemander le dossier.
+   */
+  encaisserPourEleve(corps: Record<string, unknown>): Observable<ResultatEncaissement> {
+    return this.http.post<ResultatEncaissement>(`${this.base}/paiements/encaisser/`, corps);
   }
 
   paiements(filtres: Filtres = {}): Observable<Paginated<Paiement>> {

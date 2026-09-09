@@ -2,7 +2,15 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { ApercuImport, Eleve, EleveInscriptionPayload, Paginated } from '../../core/models/models';
+import {
+  ApercuImport,
+  ContexteReinscription,
+  Eleve,
+  EleveInscriptionPayload,
+  FileReinscription,
+  Paginated,
+  ResultatReinscriptionEleve,
+} from '../../core/models/models';
 
 @Injectable({ providedIn: 'root' })
 export class EleveService {
@@ -17,6 +25,33 @@ export class EleveService {
 
   get(id: number): Observable<Eleve> {
     return this.http.get<Eleve>(`${this.base}/${id}/`);
+  }
+
+  /**
+   * Élèves d'une année précédente sans inscription sur l'année visée.
+   *
+   * Ils ne sont dans aucune liste : ni chez les inscrits — ils ne le sont pas
+   * encore — ni chez les partants. C'est la file de la rentrée.
+   */
+  aReinscrire(params: Record<string, string> = {}): Observable<FileReinscription> {
+    const query = new URLSearchParams(params).toString();
+    return this.http.get<FileReinscription>(
+      `${this.base}/a-reinscrire/${query ? '?' + query : ''}`);
+  }
+
+  /** Provenance, année visée et classes possibles : le pré-remplissage de l'écran. */
+  contexteReinscription(
+    id: number,
+    params: Record<string, string> = {},
+  ): Observable<ContexteReinscription> {
+    const query = new URLSearchParams(params).toString();
+    return this.http.get<ContexteReinscription>(
+      `${this.base}/${id}/reinscription/${query ? '?' + query : ''}`);
+  }
+
+  /** Réinscrit un élève seul dans une classe de l'année suivante. */
+  reinscrire(id: number, corps: Record<string, unknown>): Observable<ResultatReinscriptionEleve> {
+    return this.http.post<ResultatReinscriptionEleve>(`${this.base}/${id}/reinscrire/`, corps);
   }
 
   /** Endpoint composite : crée l'élève + son inscription + (optionnel) son parent en un appel. */

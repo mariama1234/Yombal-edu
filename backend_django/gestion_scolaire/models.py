@@ -9,6 +9,7 @@ from decimal import Decimal
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models, transaction
 from django.core.validators import MinValueValidator
+from django.utils import timezone
 
 
 # =====================================================================
@@ -289,15 +290,29 @@ class Classe(models.Model):
 
 class Inscription(models.Model):
     class Statut(models.TextChoices):
-        EN_COURS = "en_cours", "En cours"
+        # Une inscription naît « en attente » : la place est réservée, la
+        # classe est choisie, les frais peuvent être émis — mais l'élève ne
+        # compte pas encore parmi les inscrits de l'année. Le premier
+        # encaissement la fait passer « en cours » (voir
+        # `finances.confirmer_inscription`). Sans cet état intermédiaire, un
+        # élève pré-inscrit et jamais payé était indiscernable d'un élève à
+        # jour dans toutes les listes.
+        EN_ATTENTE = "en_attente", "Pré-inscrit"
+        # « Inscrit » et non « En cours » : c'est le mot que l'école emploie,
+        # et le seul qui s'oppose lisiblement à « Pré-inscrit » dans une liste.
+        # « En cours » se lisait comme une démarche inachevée.
+        EN_COURS = "en_cours", "Inscrit"
         TERMINEE = "terminee", "Terminée"
         ANNULEE = "annulee", "Annulée"
+
+    # Les états qui font d'un élève un inscrit de l'année pour de bon.
+    STATUTS_CONFIRMES = ("en_cours", "terminee")
 
     id_eleve = models.ForeignKey(Eleve, on_delete=models.CASCADE, related_name="inscriptions", db_column="id_eleve")
     id_classe = models.ForeignKey(Classe, on_delete=models.CASCADE, related_name="inscriptions", db_column="id_classe")
     id_annee_scolaire = models.ForeignKey(AnneeScolaire, on_delete=models.CASCADE, related_name="inscriptions", db_column="id_annee_scolaire")
     date_inscription = models.DateField()
-    statut = models.CharField(max_length=20, choices=Statut.choices, default=Statut.EN_COURS)
+    statut = models.CharField(max_length=20, choices=Statut.choices, default=Statut.EN_ATTENTE)
 
     class Meta:
         db_table = "inscription"
@@ -588,6 +603,13 @@ class FraisEleve(models.Model):
     id_type_frais = models.ForeignKey(TypeFrais, on_delete=models.CASCADE, related_name="frais_eleves", db_column="id_type_frais")
     id_annee_scolaire = models.ForeignKey(AnneeScolaire, on_delete=models.CASCADE, related_name="frais", db_column="id_annee_scolaire")
     montant_du = models.DecimalField(max_digits=12, decimal_places=2)
+    # La remise est portée à côté du montant initial, jamais soustraite de
+    # `montant_du` : une famille qui conteste veut lire le tarif de départ et
+    # la réduction accordée, pas un montant déjà rogné dont plus personne ne
+    # sait d'où il vient.
+    remise = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+                                 validators=[MinValueValidator(Decimal("0"))])
+    motif_remise = models.CharField(max_length=255, blank=True, null=True)
     echeance = models.DateField(blank=True, null=True)
     statut = models.CharField(max_length=10, choices=Statut.choices, default=Statut.IMPAYE)
 
@@ -596,12 +618,24 @@ class FraisEleve(models.Model):
         ordering = ["echeance", "id"]
 
     @property
+    def montant_net(self):
+        """Ce que la famille doit réellement : montant initial moins la remise."""
+        return self.montant_du - (self.remise or Decimal("0"))
+
+    @property
     def montant_paye(self):
-        return sum(p.montant for p in self.paiements.all())
+        return sum((p.montant for p in self.paiements.all()), Decimal("0"))
 
     @property
     def solde_restant(self):
-        return self.montant_du - self.montant_paye
+        return self.montant_net - self.montant_paye
+
+    def est_en_retard(self, aujourdhui=None):
+        """Échéance dépassée et solde non nul — le 🔴 du tableau de bord."""
+        if self.echeance is None or self.solde_restant <= 0:
+            return False
+        from django.utils import timezone as _tz
+        return self.echeance < (aujourdhui or _tz.localdate())
 
 
 class Paiement(models.Model):
@@ -614,9 +648,13 @@ class Paiement(models.Model):
 
     id_frais_eleve = models.ForeignKey(FraisEleve, on_delete=models.CASCADE, related_name="paiements", db_column="id_frais_eleve")
     montant = models.DecimalField(max_digits=12, decimal_places=2)
-    date_paiement = models.DateTimeField(auto_now_add=True)
+    # `default` et non `auto_now_add` : une école encaisse souvent le lundi un
+    # règlement reçu le samedi, et le reçu doit porter la date réelle. Sans
+    # valeur fournie, on retombe sur « maintenant », comme avant.
+    date_paiement = models.DateTimeField(default=timezone.now)
     methode = models.CharField(max_length=20, choices=Methode.choices)
     reference_transaction = models.CharField(max_length=100, blank=True, null=True)
+    commentaire = models.TextField(blank=True, null=True)
     id_utilisateur_caissier = models.ForeignKey(Utilisateur, on_delete=models.SET_NULL, null=True, blank=True,
                                                   related_name="paiements_encaisses", db_column="id_utilisateur_caissier")
 

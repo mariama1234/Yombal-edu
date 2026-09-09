@@ -364,10 +364,49 @@ class EleveSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
     champ_unique = "matricule"
     message_unicite = "Un élève porte déjà ce matricule dans votre école."
 
+    # État de l'inscription sur l'année consultée, à ne pas confondre avec
+    # `statut` : celui-ci dit si l'élève fait partie de l'école (actif, radié,
+    # transféré), celui-là où en est sa scolarité de l'année. Un élève
+    # « actif » peut n'être que pré-inscrit, et c'est précisément la nuance
+    # qu'une liste qui n'affiche que « actif » faisait disparaître.
+    inscription_statut = serializers.SerializerMethodField()
+    inscription_libelle = serializers.SerializerMethodField()
+    classe = serializers.SerializerMethodField()
+
     class Meta:
         model = models.Eleve
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+
+    def _inscription(self, obj):
+        """
+        Inscription de l'élève sur l'année demandée dans l'URL.
+
+        Sans année précisée — une recherche globale, par exemple — on prend la
+        plus récente : afficher l'état d'une année qu'on n'a pas demandée
+        serait pire que de n'en afficher aucun.
+        """
+        if not hasattr(obj, "_cache_inscription"):
+            requete = self.context.get("request")
+            annee = requete.query_params.get("id_annee_scolaire") if requete else None
+            qs = obj.inscriptions.select_related("id_classe")
+            if annee:
+                qs = qs.filter(id_annee_scolaire=annee)
+            obj._cache_inscription = qs.order_by(
+                "-id_annee_scolaire__date_debut", "-date_inscription").first()
+        return obj._cache_inscription
+
+    def get_inscription_statut(self, obj) -> str | None:
+        inscription = self._inscription(obj)
+        return inscription.statut if inscription else None
+
+    def get_inscription_libelle(self, obj) -> str | None:
+        inscription = self._inscription(obj)
+        return inscription.get_statut_display() if inscription else None
+
+    def get_classe(self, obj) -> str | None:
+        inscription = self._inscription(obj)
+        return inscription.id_classe.nom if inscription else None
 
 
 class EleveInscriptionSerializer(serializers.Serializer):
@@ -500,6 +539,18 @@ class TransfertSerializer(serializers.Serializer):
     etablissement = serializers.CharField(max_length=200)
     date_effet = serializers.DateField(required=False, allow_null=True)
     commentaire = serializers.CharField(required=False, allow_blank=True)
+
+
+class ReinscriptionEleveSerializer(serializers.Serializer):
+    """
+    Entrée de POST /api/eleves/{id}/reinscrire/ — un élève, une classe.
+
+    Distinct de `ReinscriptionSerializer`, qui fait monter une promotion
+    entière : ici on ne donne que la classe d'arrivée, l'année s'en déduit.
+    Demander l'année en plus laisserait saisir un couple incohérent.
+    """
+    id_classe = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all())
+    date_inscription = serializers.DateField(required=False, allow_null=True)
 
 
 class ReinscriptionSerializer(serializers.Serializer):
@@ -644,14 +695,56 @@ class TypeFraisSerializer(serializers.ModelSerializer):
 
 
 class FraisEleveSerializer(serializers.ModelSerializer):
+    montant_net = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     montant_paye = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     solde_restant = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     eleve_nom = serializers.CharField(source="id_eleve.nom", read_only=True)
     eleve_prenom = serializers.CharField(source="id_eleve.prenom", read_only=True)
+    type_frais = serializers.CharField(source="id_type_frais.get_libelle_display",
+                                       read_only=True)
+    en_retard = serializers.SerializerMethodField()
 
     class Meta:
         model = models.FraisEleve
         fields = "__all__"
+
+    def get_en_retard(self, obj) -> bool:
+        return obj.est_en_retard()
+
+    def validate(self, attrs):
+        """
+        Une remise ne peut ni être négative, ni dépasser le tarif, ni descendre
+        sous ce que la famille a déjà versé — sinon le solde passerait au
+        négatif et la caisse devrait de l'argent à l'élève.
+        """
+        montant = attrs.get("montant_du",
+                            getattr(self.instance, "montant_du", None))
+        remise = attrs.get("remise", getattr(self.instance, "remise", None) or 0)
+        if montant is not None and remise is not None and remise > montant:
+            raise serializers.ValidationError(
+                {"remise": "La remise ne peut pas dépasser le montant du frais."}
+            )
+        if self.instance is not None and montant is not None and remise is not None:
+            deja = self.instance.montant_paye
+            if montant - remise < deja:
+                raise serializers.ValidationError({
+                    "remise": f"{deja} F ont déjà été encaissés sur ce frais : "
+                              "le montant net ne peut pas descendre en dessous."
+                })
+        return attrs
+
+    def update(self, instance, validated_data):
+        """
+        Une remise accordée après coup peut solder le frais sans qu'un centime
+        de plus soit versé : le statut doit suivre, sans quoi la ligne resterait
+        « impayée » dans les listes et les relances.
+        """
+        frais = super().update(instance, validated_data)
+        finances.recalculer_statut(frais)
+        # Une remise peut solder les droits d'inscription sans versement : la
+        # pré-inscription doit alors se confirmer comme après un paiement.
+        finances.confirmer_inscription(frais.id_eleve_id, frais.id_annee_scolaire_id)
+        return frais
 
 
 class PaiementSerializer(serializers.ModelSerializer):
@@ -667,6 +760,11 @@ class PaiementSerializer(serializers.ModelSerializer):
         model = models.Paiement
         fields = "__all__"
         read_only_fields = ["id_utilisateur_caissier"]
+        extra_kwargs = {
+            # Une école encaisse souvent le lundi un règlement reçu le samedi :
+            # la date doit pouvoir être saisie. Omise, elle vaut « maintenant ».
+            "date_paiement": {"required": False},
+        }
 
     @staticmethod
     def _recu(obj):
@@ -875,6 +973,33 @@ class GenerationFraisSerializer(serializers.Serializer):
                 premiere, attrs.get("nombre_echeances", 1))
         attrs["echeances"] = sorted(set(echeances))
         return attrs
+
+
+class EncaissementSerializer(serializers.Serializer):
+    """
+    Entrée de POST /api/paiements/encaisser/ — le paiement vu depuis le
+    dossier de l'élève, et non depuis une ligne de frais.
+
+    L'administrateur saisit « Amadou a versé 50 000 F en espèces le 5 octobre » ;
+    c'est le serveur qui retrouve l'inscription, l'année, les échéances
+    ouvertes et répartit le montant. Passer par `id_frais_eleve` obligerait à
+    connaître d'avance la ligne exacte — impossible pour un règlement qui
+    couvre deux mensualités, et hors de portée d'un encaissement automatique.
+    """
+    id_eleve = serializers.PrimaryKeyRelatedField(queryset=models.Eleve.objects.all())
+    id_annee_scolaire = serializers.PrimaryKeyRelatedField(
+        queryset=models.AnneeScolaire.objects.all(), required=False, allow_null=True)
+    id_type_frais = serializers.PrimaryKeyRelatedField(
+        queryset=models.TypeFrais.objects.all(), required=False, allow_null=True)
+    mois = serializers.RegexField(r"^\d{4}-\d{2}$", required=False, allow_blank=True,
+                                  allow_null=True)
+    montant = serializers.DecimalField(max_digits=12, decimal_places=2)
+    methode = serializers.ChoiceField(choices=models.Paiement.Methode.choices)
+    date_paiement = serializers.DateTimeField(required=False, allow_null=True)
+    reference_transaction = serializers.CharField(required=False, allow_blank=True,
+                                                  allow_null=True, max_length=100)
+    commentaire = serializers.CharField(required=False, allow_blank=True,
+                                        allow_null=True)
 
 
 class GenerationRelancesSerializer(serializers.Serializer):

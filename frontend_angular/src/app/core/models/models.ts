@@ -80,7 +80,12 @@ export interface Eleve {
   adresse?: string;
   photo_url?: string;
   date_premiere_inscription?: string;
+  /** Présence dans l'école — à ne pas confondre avec l'état de l'inscription. */
   statut: 'actif' | 'radie' | 'transfere' | 'diplome';
+  /** Où en est sa scolarité sur l'année consultée. */
+  inscription_statut?: 'en_attente' | 'en_cours' | 'terminee' | 'annulee' | null;
+  inscription_libelle?: string | null;
+  classe?: string | null;
 }
 
 /** Une ligne du fichier importé, telle que le serveur l'a comprise. */
@@ -247,17 +252,36 @@ export interface TypeFrais {
   frequence?: string;
 }
 
+export type MethodePaiement =
+  | 'orange_money' | 'wave' | 'free_money' | 'carte_bancaire' | 'especes';
+
+/**
+ * Statut d'ensemble d'un élève ou d'un mois, calculé côté serveur.
+ *
+ * `sans_frais` n'est pas « à jour » : rien n'a été facturé, donc rien n'a été
+ * payé. Les deux donnent un reste à zéro, pour des raisons opposées.
+ */
+export type StatutFinancier =
+  | 'a_jour' | 'partiel' | 'en_retard' | 'non_paye' | 'sans_frais';
+
 export interface FraisEleve {
   id: number;
   id_eleve: number;
   eleve_nom?: string;
   eleve_prenom?: string;
   id_type_frais: number;
+  type_frais?: string;
   id_annee_scolaire: number;
+  /** Tarif avant remise : jamais masqué, même quand une remise s'applique. */
   montant_du: number;
+  remise?: number;
+  motif_remise?: string | null;
+  /** montant_du − remise : ce que la famille doit réellement. */
+  montant_net?: number;
   montant_paye?: number;
   solde_restant?: number;
   echeance?: string;
+  en_retard?: boolean;
   statut: 'paye' | 'partiel' | 'impaye';
 }
 
@@ -267,8 +291,9 @@ export interface Paiement {
   eleve_nom?: string;
   montant: number;
   date_paiement: string;
-  methode: 'orange_money' | 'wave' | 'free_money' | 'carte_bancaire' | 'especes';
+  methode: MethodePaiement;
   reference_transaction?: string;
+  commentaire?: string | null;
   /** Reçu généré automatiquement à l'encaissement. */
   id_recu?: number | null;
   numero_recu?: string | null;
@@ -394,6 +419,18 @@ export interface Bilan {
   };
   recouvrement: { attendu: number; encaisse: number; reste: number; taux: number };
   impayes: { nombre: number; montant: number; echus: number; eleves_concernes: number };
+  /** Combien d'élèves dans chaque situation — le montant global ne le dit pas. */
+  eleves?: Record<StatutFinancier | 'total', number>;
+  derniers_paiements?: {
+    id: number;
+    date: string;
+    montant: number;
+    eleve: string;
+    id_eleve: number;
+    type_frais: string;
+    methode: string;
+    reference_transaction: string | null;
+  }[];
   recettes: { total: number; par_type_frais: LigneVentilation[]; par_methode: LigneVentilation[] };
   depenses: { total: number; par_categorie: LigneVentilation[] };
   resultat: { recettes: number; depenses: number; solde: number };
@@ -461,11 +498,23 @@ export interface DossierEleve {
     rang_classe: number | null;
     appreciation: string | null;
   }[];
+  /**
+   * Résumé de l'année en cours, et d'elle seule : le détail complet vit dans
+   * `SituationFinanciereEleve`, servi par l'onglet Finances.
+   */
   finances: {
+    id_annee_scolaire: number | null;
+    annee: string | null;
+    frais_initial: number;
+    remise: number;
     total_du: number;
     total_paye: number;
     solde: number;
+    statut: StatutFinancier;
+    statut_libelle: string;
     frais_impayes: number;
+    frais_en_retard: number;
+    prochaine_echeance: string | null;
   };
   assiduite: { absences: number; retards: number; non_justifiees: number };
 }
@@ -682,4 +731,238 @@ export interface SyntheseEcole {
   /** Matières de la plus faible à la plus forte. */
   matieres?: (BlocStatistique & { matiere: string })[];
   evolution?: (BlocStatistique & { periode: string })[];
+}
+
+// ---------------------------------------------------------------------------
+// Situation financière — dossier de l'élève et vue d'ensemble
+// ---------------------------------------------------------------------------
+
+/** Une ligne de frais telle que l'affiche l'onglet Finances du dossier. */
+export interface LigneFrais {
+  id: number;
+  libelle: string;
+  type_frais: string;
+  id_type_frais: number;
+  mois: string | null;
+  echeance: string | null;
+  montant_initial: number;
+  remise: number;
+  motif_remise: string | null;
+  montant: number;
+  paye: number;
+  reste: number;
+  statut: 'paye' | 'partiel' | 'impaye';
+  statut_libelle: string;
+  en_retard: boolean;
+}
+
+/** Un mois de l'échéancier. `sans_frais` = rien n'était dû ce mois-là. */
+export interface LigneEcheancier {
+  mois: string | null;
+  libelle: string;
+  du: number;
+  paye: number;
+  reste: number;
+  statut: StatutFinancier;
+  statut_libelle: string;
+}
+
+export interface LignePaiement {
+  id: number;
+  date: string;
+  montant: number;
+  id_frais_eleve: number;
+  frais: string;
+  type_frais: string;
+  mois: string | null;
+  methode: MethodePaiement;
+  methode_libelle: string;
+  reference_transaction: string | null;
+  commentaire: string | null;
+  id_recu: number | null;
+  numero_recu: string | null;
+  enregistre_par: string | null;
+  statut: string;
+}
+
+/** Réponse de GET /eleves/{id}/finances/?id_annee_scolaire= */
+export interface SituationFinanciereEleve {
+  eleve: {
+    id: number;
+    matricule: string;
+    nom: string;
+    prenom: string;
+    nom_complet: string;
+    statut: string;
+  };
+  annee: {
+    id: number;
+    libelle: string;
+    statut: string;
+    date_debut: string;
+    date_fin: string;
+  } | null;
+  /** Toutes les années où l'élève a laissé une trace : le sélecteur du dossier. */
+  annees: {
+    id: number;
+    libelle: string;
+    statut: string;
+    classe: string | null;
+    niveau: string | null;
+  }[];
+  scolarite: {
+    id_inscription: number;
+    id_classe: number;
+    classe: string;
+    niveau: string;
+    date_inscription: string;
+    statut: string;
+  } | null;
+  resume: {
+    frais_initial: number;
+    remise: number;
+    total_du: number;
+    total_paye: number;
+    reste: number;
+    statut: StatutFinancier;
+    statut_libelle: string;
+    taux: number;
+    nombre_frais: number;
+    frais_soldes: number;
+    frais_en_retard: number;
+    prochaine_echeance: string | null;
+  };
+  /**
+   * Où en est la confirmation de l'inscription : ce sont les droits
+   * d'inscription, intégralement réglés, qui font passer de « Pré-inscrit »
+   * à « Inscrit ».
+   */
+  confirmation: {
+    statut: string | null;
+    statut_libelle: string | null;
+    confirmee: boolean;
+    /** Faux = aucun frais d'inscription émis : rien ne peut confirmer. */
+    frais_emis: boolean;
+    droits_dus: number;
+    droits_payes: number;
+    droits_restants: number;
+  } | null;
+  frais: LigneFrais[];
+  echeancier: LigneEcheancier[];
+  paiements: LignePaiement[];
+}
+
+/** Réponse de POST /paiements/encaisser/ : les écritures et le dossier remis à jour. */
+export interface ResultatEncaissement {
+  paiements: Paiement[];
+  situation: SituationFinanciereEleve;
+}
+
+/** Réponse de GET /frais-eleves/situation/ — un élève par ligne. */
+export interface SituationGlobale {
+  annee: string | null;
+  id_annee_scolaire?: number;
+  eleves: {
+    id_eleve: number;
+    matricule: string;
+    nom_complet: string;
+    id_classe: number;
+    classe: string;
+    id_niveau: number;
+    niveau: string;
+    frais_initial: number;
+    remise: number;
+    du: number;
+    paye: number;
+    reste: number;
+    statut: StatutFinancier;
+    statut_libelle: string;
+  }[];
+  totaux: { eleves: number; du: number; paye: number; reste: number };
+  repartition: Partial<Record<StatutFinancier, number>>;
+  detail?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Rentrée : file d'attente et réinscription individuelle
+// ---------------------------------------------------------------------------
+
+/** Une ligne de GET /eleves/a-reinscrire/ : l'élève, et d'où il vient. */
+export interface EleveAReinscrire {
+  id: number;
+  matricule: string;
+  nom: string;
+  prenom: string;
+  nom_complet: string;
+  sexe: string | null;
+  derniere_annee: string;
+  id_derniere_classe: number;
+  derniere_classe: string;
+  id_dernier_niveau: number;
+  dernier_niveau: string;
+}
+
+export interface FileReinscription {
+  annee: string | null;
+  id_annee_scolaire?: number;
+  total: number;
+  page: number;
+  pages: number;
+  taille_page: number;
+  precedent: boolean;
+  suivant: boolean;
+  eleves: EleveAReinscrire[];
+  detail?: string;
+}
+
+/** Réponse de GET /eleves/{id}/reinscription/ : de quoi pré-remplir l'écran. */
+export interface ContexteReinscription {
+  eleve: {
+    id: number;
+    matricule: string;
+    nom: string;
+    prenom: string;
+    nom_complet: string;
+    sexe: string | null;
+    statut: string;
+    statut_libelle: string;
+  };
+  precedente: {
+    annee: string;
+    id_annee_scolaire: number;
+    classe: string;
+    id_classe: number;
+    niveau: string;
+    id_niveau: number;
+  } | null;
+  annee_cible: { id: number; libelle: string; date_debut: string };
+  /** Renseigné si l'élève est déjà passé : l'écran le dit au lieu d'échouer. */
+  deja_inscrit: { classe: string; statut: string; statut_libelle: string } | null;
+  classes: {
+    id: number;
+    nom: string;
+    niveau: string;
+    id_niveau: number;
+    effectif: number;
+    capacite_max: number;
+  }[];
+}
+
+/** Réponse de POST /eleves/{id}/reinscrire/. */
+export interface ResultatReinscriptionEleve {
+  id_inscription: number;
+  id_eleve: number;
+  eleve: string;
+  annee_precedente: string;
+  classe_precedente: string;
+  annee: string;
+  id_annee_scolaire: number;
+  classe: string;
+  id_classe: number;
+  date_inscription: string;
+  /** `en_attente` tant qu'aucun frais n'a été réglé. */
+  statut: 'en_attente' | 'en_cours' | 'terminee' | 'annulee';
+  statut_libelle: string;
+  effectif_classe: number;
+  avertissement: string | null;
 }

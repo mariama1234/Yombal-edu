@@ -48,12 +48,12 @@
       <div class="field">
         <label for="classe-source">Classe de départ</label>
         <select class="input" id="classe-source" formControlName="id_classe_source">
-          <option [ngValue]="null">Toutes les classes</option>
+          <option [ngValue]="null">— choisir —</option>
           @for (c of classesSource(); track c.id) {
             <option [ngValue]="c.id">{{ c.nom }} ({{ c.effectif }} élèves)</option>
           }
         </select>
-        <span class="hint">Vide = toute la promotion de l'année.</span>
+        <span class="hint">Une classe à la fois : elle part entière vers la classe d'arrivée.</span>
       </div>
 
       <div class="field">
