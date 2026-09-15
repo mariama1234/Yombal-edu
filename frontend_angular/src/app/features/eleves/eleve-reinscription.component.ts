@@ -38,6 +38,12 @@ export class EleveReinscriptionComponent implements OnInit {
   occupe = signal(false);
   erreur = signal<string | null>(null);
   resultat = signal<string | null>(null);
+  /** Frais au choix retenus pour la nouvelle année. */
+  fraisCoches = signal<number[]>([]);
+
+  private idClasse = signal<number | null>(null);
+  /** Niveau de la classe d'arrivée : il fixe le montant de chaque frais. */
+  niveauCible = computed(() => this.classes().find((c) => c.id === this.idClasse())?.id_niveau ?? null);
 
   form = this.fb.group({
     id_classe: [null as number | null, Validators.required],
@@ -47,9 +53,13 @@ export class EleveReinscriptionComponent implements OnInit {
   /** Classes de l'année cible, celle de l'an passé exclue de fait. */
   classes = computed(() => this.contexte()?.classes ?? []);
 
+  fraisDOffice = computed(() => (this.contexte()?.types_frais ?? []).filter((t) => t.d_office));
+  fraisOptionnels = computed(() => (this.contexte()?.types_frais ?? []).filter((t) => !t.d_office));
+
   ngOnInit(): void {
     this.idEleve = Number(this.route.snapshot.paramMap.get('id'));
     this.charger();
+    this.form.controls.id_classe.valueChanges.subscribe((v) => this.idClasse.set(v));
   }
 
   private charger(): void {
@@ -62,6 +72,8 @@ export class EleveReinscriptionComponent implements OnInit {
       next: (c) => {
         this.contexte.set(c);
         this.form.patchValue({ date_inscription: c.annee_cible.date_debut });
+        // Ce que la famille avait l'an passé arrive coché : on décoche ce qui change.
+        this.fraisCoches.set(c.types_frais.filter((t) => t.reconduit).map((t) => t.id));
         this.chargement.set(false);
       },
       error: (e) => {
@@ -81,12 +93,14 @@ export class EleveReinscriptionComponent implements OnInit {
       .reinscrire(this.idEleve, {
         id_classe: v.id_classe,
         date_inscription: v.date_inscription || null,
+        frais_optionnels: this.fraisCoches(),
       })
       .subscribe({
         next: (r) => {
           this.resultat.set(
             `${r.eleve} passe de ${r.classe_precedente} (${r.annee_precedente}) `
             + `à ${r.classe} pour ${r.annee}.`
+            + (r.frais_emis ? ` ${r.frais_emis} ligne(s) de frais émise(s).` : '')
             + (r.avertissement ? ` ${r.avertissement}` : ''),
           );
           this.occupe.set(false);
@@ -96,6 +110,17 @@ export class EleveReinscriptionComponent implements OnInit {
           this.occupe.set(false);
         },
       });
+  }
+
+  /** Montant d'un frais pour le niveau de la classe choisie, sinon le montant par défaut. */
+  montantPour(type: { montant_defaut: number; tarifs: Record<string, number> }): number {
+    const niveau = this.niveauCible();
+    const tarif = niveau !== null ? type.tarifs?.[String(niveau)] : undefined;
+    return Number(tarif ?? type.montant_defaut);
+  }
+
+  basculerFrais(id: number): void {
+    this.fraisCoches.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
   }
 
   /** Enchaîner : la file d'attente est le lieu naturel où revenir. */

@@ -44,14 +44,16 @@ export interface Niveau {
   id: number;
   id_ecole: number;
   libelle: string;
+  /** Montant de chaque frais pour ce niveau, par identifiant de type de frais. */
+  tarifs?: Record<string, number>;
 }
 
 export interface Classe {
   id: number;
   id_ecole: number;
   id_annee_scolaire: number;
-  id_niveau: number;
-  niveau_libelle?: string;
+  id_niveau: number | null;
+  niveau_libelle?: string | null;
   enseignant_nom?: string | null;
   nom: string;
   effectif: number;
@@ -148,6 +150,8 @@ export interface EleveInscriptionPayload {
   parent_telephone?: string;
   parent_email?: string;
   parent_lien?: 'pere' | 'mere' | 'tuteur' | 'autre';
+  /** Types de frais cochés en plus de l'inscription et des mensualités. */
+  frais_optionnels?: number[];
 }
 
 export interface Enseignant {
@@ -247,7 +251,11 @@ export interface EmploiDuTemps {
 export interface TypeFrais {
   id: number;
   id_ecole: number;
-  libelle: 'inscription' | 'mensualite' | 'demi_pension' | 'transport' | 'uniforme' | 'fournitures' | 'autre';
+  /** Nom choisi par l'établissement. */
+  libelle: string;
+  /** Ce qui décide des règles : inscription et mensualité sont facturées d'office. */
+  nature: 'inscription' | 'mensualite' | 'autre';
+  nature_libelle?: string;
   montant_defaut: number;
   frequence?: string;
 }
@@ -371,7 +379,8 @@ export interface ResultatGenerationFrais {
   classe: string;
   eleves: number;
   echeances: string[];
-  montant: number;
+  /** `null` quand le montant varie selon le niveau de chaque élève. */
+  montant: number | null;
   crees: number;
   ignores: number;
   total_genere: number;
@@ -454,6 +463,8 @@ export interface DossierEleve {
     date_naissance: string | null;
     adresse: string | null;
     photo_url: string | null;
+    /** Une photo est enregistrée : elle se lit par GET /eleves/{id}/photo/. */
+    a_photo: boolean;
     date_premiere_inscription: string | null;
     statut: 'actif' | 'radie' | 'transfere' | 'diplome';
     statut_libelle: string;
@@ -528,7 +539,18 @@ export interface ResultatReinscription {
   date_inscription: string;
   concernes: number;
   reinscrits: number;
+  /** Lignes de frais créées (0 dans l'aperçu). */
+  frais_emis: number;
   ignores: number;
+  /** Élèves de la classe de départ décochés : ils restent à réinscrire. */
+  non_retenus: number;
+  eleves: {
+    id: number;
+    matricule: string;
+    nom_complet: string;
+    deja_inscrit: boolean;
+    retenu: boolean;
+  }[];
   effectif_cible: number;
   avertissement: string | null;
   applique: boolean;
@@ -833,8 +855,8 @@ export interface SituationFinanciereEleve {
     prochaine_echeance: string | null;
   };
   /**
-   * Où en est la confirmation de l'inscription : ce sont les droits
-   * d'inscription, intégralement réglés, qui font passer de « Pré-inscrit »
+   * Où en est la confirmation de l'inscription : droits d'inscription ET
+   * premier mois, intégralement réglés, font passer de « Inscrit incomplet »
    * à « Inscrit ».
    */
   confirmation: {
@@ -846,6 +868,13 @@ export interface SituationFinanciereEleve {
     droits_dus: number;
     droits_payes: number;
     droits_restants: number;
+    /** Faux = aucune mensualité émise : rien ne peut confirmer. */
+    premier_mois_emis: boolean;
+    /** « Octobre 2026 ». */
+    premier_mois: string | null;
+    premier_mois_du: number;
+    premier_mois_paye: number;
+    premier_mois_restant: number;
   } | null;
   frais: LigneFrais[];
   echeancier: LigneEcheancier[];
@@ -932,17 +961,30 @@ export interface ContexteReinscription {
     id_annee_scolaire: number;
     classe: string;
     id_classe: number;
-    niveau: string;
-    id_niveau: number;
+    niveau: string | null;
+    id_niveau: number | null;
   } | null;
   annee_cible: { id: number; libelle: string; date_debut: string };
   /** Renseigné si l'élève est déjà passé : l'écran le dit au lieu d'échouer. */
   deja_inscrit: { classe: string; statut: string; statut_libelle: string } | null;
+  /** Catalogue des frais : ceux d'office imposés, ceux de l'an passé pré-cochés. */
+  types_frais: {
+    id: number;
+    libelle: string;
+    libelle_affiche: string;
+    nature: 'inscription' | 'mensualite' | 'autre';
+    montant_defaut: number;
+    mensuel: boolean;
+    d_office: boolean;
+    reconduit: boolean;
+    /** Montant par identifiant de niveau ; absent, le montant par défaut s'applique. */
+    tarifs: Record<string, number>;
+  }[];
   classes: {
     id: number;
     nom: string;
-    niveau: string;
-    id_niveau: number;
+    niveau: string | null;
+    id_niveau: number | null;
     effectif: number;
     capacite_max: number;
   }[];
@@ -963,6 +1005,32 @@ export interface ResultatReinscriptionEleve {
   /** `en_attente` tant qu'aucun frais n'a été réglé. */
   statut: 'en_attente' | 'en_cours' | 'terminee' | 'annulee';
   statut_libelle: string;
+  /** Lignes de frais créées pour la nouvelle année. */
+  frais_emis: number;
   effectif_classe: number;
   avertissement: string | null;
+}
+
+/** Facture d'un élève pour une année : renvoyée à l'inscription et ouverte au guichet. */
+export interface FactureEleve {
+  id_eleve: number;
+  matricule: string;
+  nom: string;
+  prenom: string;
+  classe: string | null;
+  id_annee_scolaire: number;
+  annee: string;
+  statut_inscription: string | null;
+  statut_inscription_libelle: string | null;
+  lignes: {
+    id: number;
+    libelle: string;
+    echeance: string | null;
+    montant: number;
+    paye: number;
+    reste: number;
+  }[];
+  total_du: number;
+  total_paye: number;
+  reste: number;
 }

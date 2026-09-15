@@ -44,11 +44,13 @@ router.register(r"documents", views.DocumentViewSet, basename="document")
 router.register(r"rapports", views.RapportViewSet, basename="rapport")
 router.register(r"parametres", views.ParametreEcoleViewSet, basename="parametre")
 router.register(r"journal-activite", views.JournalActiviteViewSet, basename="journal-activite")
+router.register(r"corbeille", views.CorbeilleViewSet, basename="corbeille")
 
 urlpatterns = [
     path("auth/token/", views.ConnexionView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/moi/", views.MoiView.as_view(), name="moi"),
     path("finances/bilan/", views.BilanFinancierView.as_view(), name="finances-bilan"),
+    path("tarifs/grille/", views.GrilleTarifsView.as_view(), name="tarifs-grille"),
     path("", include(router.urls)),
 ]

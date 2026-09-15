@@ -71,6 +71,14 @@ export const routes: Routes = [
         loadComponent: () => import('./features/finances/finances-list.component').then((m) => m.FinancesListComponent),
       },
       {
+        path: 'finances/caisse',
+        loadComponent: () => import('./features/finances/caisse.component').then((m) => m.CaisseComponent),
+      },
+      {
+        path: 'finances/tarifs',
+        loadComponent: () => import('./features/finances/tarifs-niveaux.component').then((m) => m.TarifsNiveauxComponent),
+      },
+      {
         path: 'finances/encaisser/:idFrais',
         loadComponent: () => import('./features/finances/paiement-form.component').then((m) => m.PaiementFormComponent),
       },
@@ -89,6 +97,12 @@ export const routes: Routes = [
       {
         path: 'finances/bilan',
         loadComponent: () => import('./features/finances/bilan-financier.component').then((m) => m.BilanFinancierComponent),
+      },
+
+      // Éléments supprimés, depuis n'importe quel module (`?module=classes`).
+      {
+        path: 'corbeille',
+        loadComponent: () => import('./features/corbeille/corbeille.component').then((m) => m.CorbeilleComponent),
       },
 
       // ---- Modules via le système CRUD générique ----

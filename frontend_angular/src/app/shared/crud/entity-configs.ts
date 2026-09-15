@@ -54,7 +54,10 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       + 'rattache à un niveau, qui sert aussi à filtrer les listes.',
     columns: [{ key: 'libelle', label: 'Niveau' }],
     fields: [
-      { key: 'libelle', label: 'Libellé du niveau', type: 'text', required: true, placeholder: '6ème' },
+      {
+        key: 'libelle', label: 'Libellé du niveau', type: 'text', required: true, placeholder: '6ème',
+        aide: 'Les montants des frais pour ce niveau se règlent dans Finances → Tarifs par niveau.',
+      },
     ],
   },
 
@@ -275,9 +278,12 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     key: 'classes',
     filtreParAnnee: true,
     endpoint: 'classes',
-    titre: 'Classes & niveaux',
+    titre: 'Classes',
     titreSingulier: 'une classe',
     eyebrow: 'Pédagogie',
+    filtres: [
+      { param: 'id_niveau', tous: 'Tous les niveaux', optionsEndpoint: 'niveaux', optionsLabelKey: 'libelle', obligatoire: true },
+    ],
     description: 'Classes actives de l\u2019établissement.',
     columns: [
       { key: 'nom', label: 'Classe' },
@@ -287,7 +293,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     ],
     fields: [
       { key: 'nom', label: 'Nom de la classe', type: 'text', required: true, placeholder: '6ème A' },
-      { key: 'id_niveau', label: 'Niveau', type: 'select', required: true, optionsEndpoint: 'niveaux', optionsLabelKey: 'libelle' },
+      { key: 'id_niveau', label: 'Niveau (facultatif)', type: 'select', optionsEndpoint: 'niveaux', optionsLabelKey: 'libelle' },
       { key: 'id_annee_scolaire', label: 'Année scolaire', type: 'select', required: true, optionsEndpoint: 'annees-scolaires', optionsLabelKey: 'libelle' },
       { key: 'capacite_max', label: 'Capacité maximale', type: 'number', required: true },
       { key: 'id_enseignant_principal', label: 'Professeur principal', type: 'select', optionsEndpoint: 'enseignants', optionsLabelKey: 'matricule' },
@@ -300,20 +306,38 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     titre: 'Types de frais',
     titreSingulier: 'un type de frais',
     eyebrow: 'Gestion financière',
-    description: 'Catalogue des frais applicables (mensualité, transport, uniforme...).',
+    description:
+      'Les frais de votre établissement, sous le nom que vous leur donnez. La nature '
+      + 'dit comment le logiciel les traite : les frais d’inscription et la mensualité '
+      + 'sont facturés d’office à l’inscription, les autres frais se cochent.',
     columns: [
-      { key: 'libelle', label: 'Libellé' },
+      { key: 'libelle', label: 'Frais' },
+      { key: 'nature_libelle', label: 'Nature' },
       { key: 'montant_defaut', label: 'Montant par défaut', type: 'number' },
       { key: 'frequence', label: 'Fréquence' },
     ],
     fields: [
       {
-        key: 'libelle', label: 'Libellé', type: 'select', required: true,
-        options: ['inscription', 'mensualite', 'demi_pension', 'transport', 'uniforme', 'fournitures', 'autre']
-          .map(v => ({ value: v, label: v.replace('_', ' ') })),
+        key: 'libelle', label: 'Nom du frais', type: 'text', required: true, span2: true,
+        placeholder: 'Transport, Adiya, Cantine…',
       },
-      { key: 'montant_defaut', label: 'Montant par défaut (F CFA)', type: 'number', required: true },
-      { key: 'frequence', label: 'Fréquence', type: 'text', placeholder: 'Mensuelle' },
+      {
+        key: 'nature', label: 'Nature', type: 'select', required: true,
+        aide: 'Une seule « Frais d’inscription » et une seule « Mensualité » par établissement.',
+        options: [
+          { value: 'autre', label: 'Autre frais (à cocher à l’inscription)' },
+          { value: 'inscription', label: 'Frais d’inscription (dus d’office)' },
+          { value: 'mensualite', label: 'Mensualité (due chaque mois)' },
+        ],
+      },
+      {
+        key: 'montant_defaut', label: 'Montant par défaut (F CFA)', type: 'number', required: true,
+        aide: 'Pour l’inscription et la mensualité, le tarif du niveau prime s’il est renseigné.',
+      },
+      {
+        key: 'frequence', label: 'Fréquence', type: 'text', placeholder: 'Mensuelle, Unique…',
+        aide: 'Un frais dont la fréquence contient « mensuel » est présenté par mois.',
+      },
     ],
   },
 

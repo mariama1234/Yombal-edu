@@ -6,16 +6,29 @@
       <p>{{ config.description }}</p>
     </div>
     @if (!config.lectureSeule) {
-      <a class="btn-primary" [routerLink]="['nouveau']">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-        Ajouter {{ config.titreSingulier }}
-      </a>
+      <div style="display:flex; gap:10px;">
+        <a class="btn-ghost" routerLink="/corbeille" [queryParams]="{ module: config.key }">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14"/></svg>
+          Corbeille
+        </a>
+        <a class="btn-primary" [routerLink]="['nouveau']">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          Ajouter {{ config.titreSingulier }}
+        </a>
+      </div>
     }
   </div>
 
   @if (erreur()) {
     <div class="panel" style="border-color:var(--red); color:var(--red); font-size:13px;">
       {{ erreur() }}
+    </div>
+  }
+
+  @if (dernierSupprime()) {
+    <div class="panel" style="font-size:13px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <span>« {{ dernierSupprime() }} » a été placé dans la corbeille.</span>
+      <a class="panel-link" routerLink="/corbeille" [queryParams]="{ module: config.key }">Restaurer depuis la corbeille →</a>
     </div>
   }
 
@@ -26,12 +39,31 @@
     </div>
   }
 
+  @if (config.filtres?.length) {
+    <div class="filters">
+      @for (filtre of config.filtres ?? []; track filtre.param) {
+        <select class="input" style="width:auto;" (change)="filtrer(filtre.param, $any($event.target).value)">
+          @if (!filtre.obligatoire) {
+            <option value="" [selected]="!valeursFiltres()[filtre.param]">{{ filtre.tous }}</option>
+          }
+          @for (option of optionsFiltres()[filtre.param] ?? []; track option.id) {
+            <option [value]="option.id" [selected]="valeursFiltres()[filtre.param] === '' + option.id">
+              {{ libelleOption(filtre, option) }}
+            </option>
+          }
+        </select>
+      }
+    </div>
+  }
+
   <div class="panel">
     @if (loading()) {
       <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
     } @else if (items().length === 0) {
       <p style="color:var(--ink-400); font-size:13px;">
-        @if (config.filtreParAnnee && libelleAnnee()) {
+        @if (filtreActif()) {
+          Aucun élément ne correspond à ce filtre.
+        } @else if (config.filtreParAnnee && libelleAnnee()) {
           Aucun élément en {{ libelleAnnee() }}.
         } @else {
           Aucun élément pour le moment.
@@ -73,7 +105,7 @@
                 @if (!config.lectureSeule) {
                   <a class="panel-link" [routerLink]="[item.id]">Modifier</a>
                   &nbsp;·&nbsp;
-                  <button class="panel-link" style="color:var(--red)" (click)="supprimer(item.id)">Supprimer</button>
+                  <button class="panel-link" style="color:var(--red)" (click)="supprimer(item)">Supprimer</button>
                 } @else {
                   <span style="color:var(--ink-400); font-size:12px;">Consultation seule</span>
                 }

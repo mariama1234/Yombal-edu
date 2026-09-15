@@ -4,7 +4,7 @@
 @if (situation(); as s) {
 
   @if (message()) { <div class="form-success">{{ message() }}</div> }
-  @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+  @if (erreur() && !saisieOuverte()) { <div class="form-error">{{ erreur() }}</div> }
 
   <!-- En-tête : année, classe, statut -->
   <div class="panel">
@@ -40,7 +40,7 @@
       <p class="hint" style="margin-top:-4px;">
         {{ s.annee.libelle }}
         @if (s.scolarite) {
-          — {{ s.scolarite.classe }} ({{ s.scolarite.niveau }})
+          — {{ s.scolarite.classe }}@if (s.scolarite.niveau) { ({{ s.scolarite.niveau }}) }
         } @else {
           — aucune inscription cette année-là : seuls les frais restants sont affichés.
         }
@@ -51,31 +51,44 @@
     }
   </div>
 
-  <!-- Ce qui manque pour que la pré-inscription devienne une inscription. -->
+  <!-- Ce qui manque pour que l'inscription soit complète. -->
   @if (s.confirmation && !s.confirmation.confirmee) {
     <div class="panel" style="border-color:var(--orange-500);">
       <div class="panel-head">
         <div class="panel-title" style="color:var(--orange-500);">
-          {{ s.confirmation.statut_libelle }} — inscription non confirmée
+          {{ s.confirmation.statut_libelle }} — il manque encore un règlement
         </div>
       </div>
-      @if (!s.confirmation.frais_emis) {
-        <p class="hint" style="margin:0;">
-          Aucun frais d'inscription n'a été émis pour {{ s.annee?.libelle }}.
-          Ce sont ces droits, une fois entièrement réglés, qui confirment
-          l'inscription : tant qu'ils n'existent pas, {{ s.eleve.prenom }} reste
-          pré-inscrit quoi qu'il verse par ailleurs.
-        </p>
-      } @else {
-        <p class="hint" style="margin:0;">
+      <p class="hint" style="margin:0 0 8px;">
+        {{ s.eleve.prenom }} sera inscrit une fois réglés les droits d'inscription
+        <strong>et</strong> le premier mois. L'inscription se confirme d'elle-même au solde des deux.
+      </p>
+      <ul style="margin:0; padding-left:18px; font-size:13px; line-height:1.9;">
+        <li>
           Droits d'inscription :
-          <strong>{{ s.confirmation.droits_payes | number:'1.0-0' }} F réglés</strong>
-          sur {{ s.confirmation.droits_dus | number:'1.0-0' }} F —
-          il reste <strong>{{ s.confirmation.droits_restants | number:'1.0-0' }} F</strong>.
-          L'inscription se confirmera d'elle-même au solde ; une mensualité versée
-          entre-temps ne la confirme pas.
-        </p>
-      }
+          @if (!s.confirmation.frais_emis) {
+            <strong style="color:var(--red);">aucun frais d'inscription émis pour {{ s.annee?.libelle }}</strong>
+          } @else if (s.confirmation.droits_restants <= 0) {
+            ✅ réglés ({{ s.confirmation.droits_dus | number:'1.0-0' }} F)
+          } @else {
+            {{ s.confirmation.droits_payes | number:'1.0-0' }} F réglés sur
+            {{ s.confirmation.droits_dus | number:'1.0-0' }} F — reste
+            <strong>{{ s.confirmation.droits_restants | number:'1.0-0' }} F</strong>
+          }
+        </li>
+        <li>
+          Premier mois{{ s.confirmation.premier_mois ? ' (' + s.confirmation.premier_mois + ')' : '' }} :
+          @if (!s.confirmation.premier_mois_emis) {
+            <strong style="color:var(--red);">aucune mensualité émise</strong>
+          } @else if (s.confirmation.premier_mois_restant <= 0) {
+            ✅ réglé ({{ s.confirmation.premier_mois_du | number:'1.0-0' }} F)
+          } @else {
+            {{ s.confirmation.premier_mois_paye | number:'1.0-0' }} F réglés sur
+            {{ s.confirmation.premier_mois_du | number:'1.0-0' }} F — reste
+            <strong>{{ s.confirmation.premier_mois_restant | number:'1.0-0' }} F</strong>
+          }
+        </li>
+      </ul>
     </div>
   }
 
@@ -117,82 +130,108 @@
     </div>
   </div>
 
-  <!-- Saisie d'un paiement §7 -->
-  @if (saisieOuverte() && sansFrais()) {
-    <div class="panel" style="border-color:var(--orange-500);">
-      <div class="panel-head">
-        <div class="panel-title" style="color:var(--orange-500);">
-          Aucun frais émis pour {{ s.annee?.libelle }}
-        </div>
-        <a class="btn-primary" routerLink="/finances/generer">Générer les frais</a>
-      </div>
-      <p class="hint" style="margin:0;">
-        Un paiement s'impute sur une échéance : tant qu'aucun frais n'a été émis
-        pour {{ s.eleve.prenom }}, il n'y a rien à régler. Génère la scolarité de
-        @if (s.scolarite) { sa classe ({{ s.scolarite.classe }}) } @else { son année },
-        puis reviens ici — le premier règlement confirmera son inscription.
-      </p>
-    </div>
-  } @else if (saisieOuverte()) {
-    <form class="form-section" [formGroup]="formPaiement">
-      <div class="form-section-title">Enregistrer un paiement</div>
-      <div class="form-section-sub">
-        {{ s.eleve.nom_complet }} — {{ s.annee?.libelle }}. Sans mois précisé, le
-        montant solde les échéances de la plus ancienne à la plus récente, et un
-        reçu est produit pour chacune.
-      </div>
-      <div class="form-grid cols-3">
-        <div class="field">
-          <label for="montant">Montant (F CFA)</label>
-          <input class="input" id="montant" type="number" formControlName="montant"
-                 [max]="reste()">
-          <span class="hint">Reste à payer : {{ reste() | number:'1.0-0' }} F.</span>
-        </div>
-        <div class="field">
-          <label for="mois-paiement">Mois / échéance</label>
-          <select class="input" id="mois-paiement" formControlName="mois">
-            <option value="">La plus ancienne d'abord</option>
-            @for (m of moisOuverts(); track m.mois) {
-              <option [value]="m.mois">
-                {{ m.libelle }} — reste {{ m.reste | number:'1.0-0' }} F
-              </option>
-            }
-          </select>
-        </div>
-        <div class="field">
-          <label for="date-paiement">Date du paiement</label>
-          <input class="input" id="date-paiement" type="date" formControlName="date_paiement">
-          <span class="hint">Vide = aujourd'hui.</span>
-        </div>
-        <div class="field span-2">
-          <label>Moyen de paiement</label>
-          <div class="radio-pills" style="flex-wrap:wrap;">
-            @for (m of methodes; track m.value) {
-              <label class="radio-pill"
-                     [class.checked]="formPaiement.get('methode')?.value === m.value">
-                <input type="radio" formControlName="methode" [value]="m.value"> {{ m.label }}
-              </label>
-            }
+  <!-- Saisie d'un paiement §7 : une fenêtre par-dessus le dossier -->
+  @if (saisieOuverte()) {
+    <div (click)="fermer()"
+         style="position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:1000; display:flex; align-items:flex-start; justify-content:center; padding:48px 16px; overflow-y:auto;">
+      <div role="dialog" aria-modal="true" aria-labelledby="titre-paiement" (click)="$event.stopPropagation()"
+           style="background:var(--surface); border-radius:14px; width:100%; max-width:640px; padding:22px 24px; box-shadow:0 20px 50px rgba(0,0,0,0.25);">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
+          <div>
+            <div id="titre-paiement" class="form-section-title" style="margin:0;">Enregistrer un paiement</div>
+            <div class="form-section-sub" style="margin:4px 0 0;">
+              {{ s.eleve.nom_complet }} — {{ s.annee?.libelle }}
+            </div>
           </div>
+          <button type="button" class="icon-btn" aria-label="Fermer" (click)="fermer()">✕</button>
         </div>
-        <div class="field">
-          <label for="reference">Référence <span class="hint">(mobile money)</span></label>
-          <input class="input" id="reference" formControlName="reference_transaction"
-                 placeholder="TXN-88213">
-        </div>
-        <div class="field span-2">
-          <label for="commentaire">Commentaire</label>
-          <input class="input" id="commentaire" formControlName="commentaire"
-                 placeholder="Réglé par la mère, reçu samedi…">
-        </div>
+
+        @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+        @if (sansFrais()) {
+          <p style="font-size:13px; color:var(--ink-600); margin:0 0 14px;">
+            Aucun frais n'a été émis pour {{ s.eleve.prenom }} en {{ s.annee?.libelle }} : il n'y a
+            rien sur quoi imputer un paiement. Génère d'abord ses frais, puis reviens ici.
+          </p>
+          <div class="form-actions">
+            <button type="button" class="btn-ghost" (click)="fermer()">Fermer</button>
+            <a class="btn-primary" routerLink="/finances/generer">Générer les frais</a>
+          </div>
+        } @else {
+          <form [formGroup]="formPaiement" (ngSubmit)="encaisser()">
+            <div class="field">
+              <label>Frais à régler</label>
+              <span class="hint">
+                Coche les frais payés. Sans case cochée, le montant solde les frais du plus ancien au plus récent.
+              </span>
+              <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px; max-height:240px; overflow-y:auto; border:1px solid var(--line); border-radius:10px; padding:10px 12px;">
+                @for (f of fraisOuverts(); track f.id) {
+                  <label style="display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:400; cursor:pointer;">
+                    <input type="checkbox" [checked]="fraisCoches().includes(f.id)" (change)="basculerFrais(f.id)">
+                    <span style="flex:1;">
+                      {{ f.libelle }}
+                      @if (f.echeance) { <span class="hint">— {{ f.echeance | date:'dd/MM/yyyy' }}</span> }
+                    </span>
+                    <span class="mono">{{ f.reste | number:'1.0-0' }} F</span>
+                  </label>
+                }
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <div class="field">
+                <label for="montant">Montant payé (F CFA)</label>
+                <input class="input" id="montant" type="number" formControlName="montant" [max]="plafond()">
+                <span class="hint">
+                  @if (fraisCoches().length) {
+                    Frais cochés : {{ totalCoche() | number:'1.0-0' }} F
+                  } @else {
+                    Reste à payer : {{ reste() | number:'1.0-0' }} F
+                  }
+                </span>
+              </div>
+              <div class="field">
+                <label for="date-paiement">Date du paiement</label>
+                <input class="input" id="date-paiement" type="date" formControlName="date_paiement">
+                <span class="hint">Vide = aujourd'hui.</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Moyen de paiement</label>
+              <div class="radio-pills" style="flex-wrap:wrap;">
+                @for (m of methodes; track m.value) {
+                  <label class="radio-pill"
+                         [class.checked]="formPaiement.get('methode')?.value === m.value">
+                    <input type="radio" formControlName="methode" [value]="m.value"> {{ m.label }}
+                  </label>
+                }
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <div class="field">
+                <label for="reference">Référence <span class="hint">(mobile money)</span></label>
+                <input class="input" id="reference" formControlName="reference_transaction"
+                       placeholder="TXN-88213">
+              </div>
+              <div class="field">
+                <label for="commentaire">Commentaire</label>
+                <input class="input" id="commentaire" formControlName="commentaire"
+                       placeholder="Réglé par la mère, reçu samedi…">
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" class="btn-ghost" (click)="fermer()">Annuler</button>
+              <button type="submit" class="btn-primary" [disabled]="occupe()">
+                {{ occupe() ? 'Enregistrement…' : 'Valider le paiement' }}
+              </button>
+            </div>
+          </form>
+        }
       </div>
-      <div class="form-actions">
-        <button type="button" class="btn-ghost" (click)="fermer()">Annuler</button>
-        <button type="button" class="btn-primary" (click)="encaisser()" [disabled]="occupe()">
-          {{ occupe() ? 'Enregistrement…' : 'Valider le paiement' }}
-        </button>
-      </div>
-    </form>
+    </div>
   }
 
   <!-- Détail des frais §4 -->

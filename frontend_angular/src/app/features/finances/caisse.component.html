@@ -1,0 +1,146 @@
+<p class="module-eyebrow">Finances</p>
+<div class="page-head">
+  <div>
+    <h1>Caisse</h1>
+    <p>Saisis le matricule figurant sur la facture de l'élève, puis le montant payé.</p>
+  </div>
+  <a class="btn-ghost" routerLink="/finances">Frais &amp; encaissements</a>
+</div>
+
+@if (erreur()) { <div class="form-error" style="max-width:720px;">{{ erreur() }}</div> }
+
+@if (recu(); as r) {
+  <div class="panel" style="max-width:720px;">
+    <div class="panel-head">
+      <div class="panel-title">Reçu de paiement n° {{ r.numero }}</div>
+      @if (r.statut) {
+        <span class="pill" [class.a_jour]="r.statut === 'Inscrit'" [class.non_paye]="r.statut !== 'Inscrit'">{{ r.statut }}</span>
+      }
+    </div>
+    <table class="simple">
+      <tbody>
+        <tr><td>Matricule</td><td class="mono">{{ r.matricule }}</td></tr>
+        <tr><td>Nom</td><td>{{ r.nom }}</td></tr>
+        <tr><td>Prénom</td><td>{{ r.prenom }}</td></tr>
+        <tr><td>Classe</td><td>{{ r.classe ?? '—' }}</td></tr>
+        <tr><td>Date</td><td class="mono">{{ r.date | date: 'dd/MM/yyyy HH:mm' }}</td></tr>
+        <tr><td>Montant payé</td><td class="mono"><strong>{{ r.montant | number: '1.0-0' }} F</strong></td></tr>
+        <tr><td>Montant restant</td><td class="mono"><strong>{{ r.reste | number: '1.0-0' }} F</strong></td></tr>
+      </tbody>
+    </table>
+    <div class="form-actions">
+      <button type="button" class="btn-ghost" (click)="nouvelEncaissement()">Nouvel encaissement</button>
+      <button type="button" class="btn-primary" (click)="imprimerRecu()">Imprimer le reçu (PDF)</button>
+    </div>
+  </div>
+} @else {
+  <form class="form-section" style="max-width:720px;" (ngSubmit)="rechercher()">
+    <div class="form-section-title">Matricule</div>
+    <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+      <div class="field" style="flex:1; min-width:220px; margin:0;">
+        <label for="matricule">Matricule de l'élève</label>
+        <input class="input mono" id="matricule" name="matricule" [(ngModel)]="matricule"
+               placeholder="ELV-2026-0001" autocomplete="off">
+      </div>
+      <button type="submit" class="btn-primary" [disabled]="occupe()">
+        {{ occupe() && !facture() ? 'Recherche…' : 'Rechercher' }}
+      </button>
+    </div>
+  </form>
+
+  @if (facture(); as f) {
+    <div class="panel" style="max-width:720px;">
+      <div class="panel-head">
+        <div class="panel-title">{{ f.prenom }} {{ f.nom }}</div>
+        @if (f.statut_inscription_libelle) {
+          <span class="pill" [class.a_jour]="f.statut_inscription === 'en_cours'"
+                [class.non_paye]="f.statut_inscription !== 'en_cours'">{{ f.statut_inscription_libelle }}</span>
+        }
+      </div>
+
+      <table class="simple">
+        <tbody>
+          <tr><td>Matricule</td><td class="mono">{{ f.matricule }}</td></tr>
+          <tr><td>Nom</td><td>{{ f.nom }}</td></tr>
+          <tr><td>Prénom</td><td>{{ f.prenom }}</td></tr>
+          <tr><td>Classe</td><td>{{ f.classe ?? '—' }} ({{ f.annee }})</td></tr>
+        </tbody>
+      </table>
+
+      <table class="simple" style="margin-top:14px;">
+        <thead>
+          <tr>
+            <th style="width:32px;"></th>
+            <th>Frais</th>
+            <th style="text-align:right;">Montant</th>
+            <th style="text-align:right;">Réglé</th>
+            <th style="text-align:right;">Reste</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (l of f.lignes; track l.id) {
+            <tr>
+              <td>
+                @if (l.reste > 0) {
+                  <input type="checkbox" [checked]="fraisCoches().includes(l.id)"
+                         (change)="basculerFrais(l.id)" [attr.aria-label]="'Régler ' + l.libelle">
+                }
+              </td>
+              <td>{{ l.libelle }}</td>
+              <td class="mono" style="text-align:right;">{{ l.montant | number: '1.0-0' }}</td>
+              <td class="mono" style="text-align:right;">{{ l.paye | number: '1.0-0' }}</td>
+              <td class="mono" style="text-align:right;">{{ l.reste | number: '1.0-0' }}</td>
+            </tr>
+          }
+          <tr>
+            <td></td>
+            <td><strong>Total</strong></td>
+            <td class="mono" style="text-align:right;"><strong>{{ f.total_du | number: '1.0-0' }}</strong></td>
+            <td class="mono" style="text-align:right;">{{ f.total_paye | number: '1.0-0' }}</td>
+            <td class="mono" style="text-align:right;"><strong>{{ f.reste | number: '1.0-0' }} F</strong></td>
+          </tr>
+        </tbody>
+      </table>
+
+      @if (f.reste <= 0) {
+        <p style="font-size:13px; color:var(--ink-600); margin:14px 0 0;">Rien à encaisser : tout est réglé.</p>
+      } @else {
+        <form (ngSubmit)="encaisser()" style="margin-top:16px;">
+          <div class="form-grid">
+            <div class="field">
+              <label for="montant">Montant payé (F CFA)</label>
+              <input class="input" id="montant" name="montant" type="number" min="1"
+                     [max]="f.reste" [(ngModel)]="montant" required>
+              <span class="hint">
+                @if (fraisCoches().length) {
+                  Paiement sur les frais cochés uniquement.
+                } @else {
+                  Reste à payer : {{ f.reste | number: '1.0-0' }} F — coche des frais pour cibler le paiement.
+                }
+              </span>
+            </div>
+            <div class="field">
+              <label for="methode">Moyen de paiement</label>
+              <select class="input" id="methode" name="methode" [(ngModel)]="methode">
+                @for (m of methodes; track m.value) {
+                  <option [ngValue]="m.value">{{ m.label }}</option>
+                }
+              </select>
+            </div>
+          </div>
+          @if (methode !== 'especes') {
+            <div class="field">
+              <label for="reference">Référence de la transaction</label>
+              <input class="input" id="reference" name="reference" [(ngModel)]="reference">
+            </div>
+          }
+          <div class="form-actions">
+            <button type="submit" class="btn-primary" [disabled]="occupe()">
+              {{ occupe() ? 'Encaissement…' : 'Encaisser' }}
+            </button>
+          </div>
+        </form>
+      }
+    </div>
+  }
+}

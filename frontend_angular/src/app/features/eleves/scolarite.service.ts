@@ -39,6 +39,23 @@ export class ScolariteService {
     });
   }
 
+  // ---- Photo -----------------------------------------------------------
+  // Lue en binaire : elle est derrière l'authentification, qu'une balise
+  // <img src> n'enverrait pas.
+  photo(idEleve: number | string): Observable<Blob> {
+    return this.http.get(`${this.base}/eleves/${idEleve}/photo/`, { responseType: 'blob' });
+  }
+
+  envoyerPhoto(idEleve: number | string, fichier: File): Observable<unknown> {
+    const donnees = new FormData();
+    donnees.append('photo', fichier);
+    return this.http.post(`${this.base}/eleves/${idEleve}/photo/`, donnees);
+  }
+
+  supprimerPhoto(idEleve: number | string): Observable<unknown> {
+    return this.http.delete(`${this.base}/eleves/${idEleve}/photo/`);
+  }
+
   // ---- Mouvements ------------------------------------------------------
   // Chacun renvoie le dossier remis à jour : l'écran se rafraîchit sans
   // second appel.

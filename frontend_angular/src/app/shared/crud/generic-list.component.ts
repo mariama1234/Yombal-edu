@@ -1,9 +1,9 @@
-import { Component, OnInit, effect, inject, signal } from '@angular/core';
+import { Component, OnInit, effect, inject, signal, untracked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { GenericCrudService } from './generic-crud.service';
 import { ENTITY_CONFIGS } from './entity-configs';
-import { EntityConfig, RowAction } from './crud-config.model';
+import { EntityConfig, FiltreConfig, RowAction } from './crud-config.model';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 
 @Component({
@@ -19,6 +19,13 @@ export class GenericListComponent implements OnInit {
   total = signal(0);
   erreur = signal<string | null>(null);
 
+  /** Libellé du dernier élément envoyé à la corbeille, pour offrir de le récupérer. */
+  dernierSupprime = signal<string | null>(null);
+
+  /** Valeur choisie dans chaque liste déroulante, par paramètre d'URL. */
+  valeursFiltres = signal<Record<string, string>>({});
+  optionsFiltres = signal<Record<string, any[]>>({});
+
   annees = inject(AnneeScolaireService);
 
   constructor(private route: ActivatedRoute, private router: Router, private crud: GenericCrudService<any>) {
@@ -33,6 +40,9 @@ export class GenericListComponent implements OnInit {
   ngOnInit(): void {
     this.route.data.subscribe((data) => {
       this.config = ENTITY_CONFIGS[data['entityKey']];
+      this.valeursFiltres.set({});
+      this.dernierSupprime.set(null);
+      this.chargerFiltres();
       this.charger();
     });
   }
@@ -53,6 +63,19 @@ export class GenericListComponent implements OnInit {
     if (this.config.filtreParAnnee && id !== null) {
       params['id_annee_scolaire'] = String(id);
     }
+    // Hors suivi : l'effet de l'année ne doit pas se relancer à chaque filtre,
+    // `filtrer()` recharge déjà.
+    for (const [param, valeur] of Object.entries(untracked(() => this.valeursFiltres()))) {
+      if (valeur) params[param] = valeur;
+    }
+    // Filtre obligatoire dont les options ne sont pas encore là : on attend
+    // plutôt que d'afficher toute la liste d'un coup. Sans aucune option (pas
+    // de niveau créé), la liste s'affiche entière.
+    const options = untracked(() => this.optionsFiltres());
+    if ((this.config.filtres ?? []).some(
+      (f) => f.obligatoire && !params[f.param] && options[f.param] === undefined)) {
+      return;
+    }
     this.crud.list(this.config.endpoint, params).subscribe({
       next: (res) => {
         this.items.set(res.results);
@@ -63,9 +86,52 @@ export class GenericListComponent implements OnInit {
     });
   }
 
-  supprimer(id: number): void {
-    if (!confirm('Supprimer cet élément ?')) return;
-    this.crud.remove(this.config.endpoint, id).subscribe(() => this.charger());
+  private chargerFiltres(): void {
+    this.optionsFiltres.set({});
+    for (const filtre of this.config.filtres ?? []) {
+      // Une liste déroulante doit tout proposer, pas la première page.
+      this.crud.list(filtre.optionsEndpoint, { page_size: '200' }).subscribe({
+        next: (res) => {
+          const options = res.results ?? [];
+          this.optionsFiltres.update((o) => ({ ...o, [filtre.param]: options }));
+          if (filtre.obligatoire && options.length && !this.valeursFiltres()[filtre.param]) {
+            this.valeursFiltres.update((v) => ({ ...v, [filtre.param]: String(options[0].id) }));
+          }
+          if (filtre.obligatoire) this.charger();
+        },
+        error: () => {
+          this.optionsFiltres.update((o) => ({ ...o, [filtre.param]: [] }));
+          if (filtre.obligatoire) this.charger();
+        },
+      });
+    }
+  }
+
+  libelleOption(filtre: FiltreConfig, option: any): string {
+    return option[filtre.optionsLabelKey || 'nom'] ?? `#${option.id}`;
+  }
+
+  filtrer(param: string, valeur: string): void {
+    this.valeursFiltres.update((v) => ({ ...v, [param]: valeur }));
+    this.charger();
+  }
+
+  filtreActif(): boolean {
+    return Object.values(this.valeursFiltres()).some((v) => !!v);
+  }
+
+  supprimer(item: any): void {
+    if (!confirm('Supprimer cet élément ? Il restera récupérable depuis la corbeille.')) return;
+    this.erreur.set(null);
+    this.dernierSupprime.set(null);
+    this.crud.remove(this.config.endpoint, item.id).subscribe({
+      next: () => {
+        const colonne = this.config.columns[0]?.key;
+        this.dernierSupprime.set(String((colonne && item[colonne]) ?? `#${item.id}`));
+        this.charger();
+      },
+      error: (e) => this.erreur.set(e?.error?.detail ?? 'La suppression a échoué.'),
+    });
   }
 
   ouvrirNouveau(): void {

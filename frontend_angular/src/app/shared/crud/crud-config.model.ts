@@ -46,6 +46,24 @@ export interface RowAction {
   visibleSi?: { champ: string; valeur: unknown };
 }
 
+/**
+ * Liste déroulante au-dessus du tableau, qui restreint la liste par un
+ * paramètre d'URL (ex: les classes d'un niveau).
+ */
+export interface FiltreConfig {
+  /** Paramètre envoyé à l'API, que l'endpoint doit réellement accepter. */
+  param: string;
+  /** Libellé de l'option qui retire le filtre, ex: « Tous les niveaux ». */
+  tous: string;
+  optionsEndpoint: string;
+  optionsLabelKey?: string;
+  /**
+   * Pas d'option « tous » : la liste montre une valeur à la fois, la première
+   * par défaut, et jamais tout d'un coup.
+   */
+  obligatoire?: boolean;
+}
+
 export interface EntityConfig {
   key: string;
   endpoint: string;
@@ -59,6 +77,8 @@ export interface EntityConfig {
   lectureSeule?: boolean;
   /** Actions métier proposées sur chaque ligne. */
   actions?: RowAction[];
+  /** Listes déroulantes de filtrage au-dessus du tableau. */
+  filtres?: FiltreConfig[];
   /**
    * La liste suit l'année scolaire choisie dans le bandeau haut.
    *

@@ -1,14 +1,43 @@
-import { Component, OnInit, signal, inject } from '@angular/core';
+import { Component, OnInit, computed, signal, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
-import { forkJoin } from 'rxjs';
+import { RouterLink } from '@angular/router';
+import { forkJoin, of } from 'rxjs';
+import { catchError } from 'rxjs/operators';
 import { HttpClient } from '@angular/common/http';
 import { EleveService } from './eleve.service';
 import { AuthService } from '../../core/services/auth.service';
+import { FinanceService } from '../finances/finance.service';
 import { environment } from '../../../environments/environment';
-import { Classe, Niveau, AnneeScolaire, Paginated } from '../../core/models/models';
+import {
+  AnneeScolaire,
+  Classe,
+  FactureEleve,
+  Niveau,
+  Paginated,
+  TypeFrais,
+} from '../../core/models/models';
 
+/** Dus d'office, dans cet ordre : ils ne se cochent pas. */
+const FRAIS_D_OFFICE: TypeFrais['nature'][] = ['inscription', 'mensualite'];
+
+/** Les montants arrivent de l'API en chaînes décimales (« 30000.00 ») ou vides. */
+function nombre(valeur: unknown): number | null {
+  if (valeur === null || valeur === undefined || valeur === '') return null;
+  const n = Number(valeur);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Inscription d'un élève, jusqu'à la facture.
+ *
+ * Le niveau fixe le montant de chaque frais, d'après la grille des tarifs :
+ * tant qu'il n'est pas choisi, aucun montant n'est affiché. Les frais dus
+ * d'office viennent en tête, les autres se présentent en cartes à cocher, et
+ * le total suit chaque case. À l'enregistrement, l'écran laisse place à la
+ * facture — matricule et montant total dû — que la famille présentera à la
+ * caisse.
+ */
 @Component({
   selector: 'app-eleve-form',
   standalone: true,
@@ -17,12 +46,25 @@ import { Classe, Niveau, AnneeScolaire, Paginated } from '../../core/models/mode
 })
 export class EleveFormComponent implements OnInit {
   private fb = inject(FormBuilder);
+  private http = inject(HttpClient);
+  private eleveService = inject(EleveService);
+  private auth = inject(AuthService);
+  private finance = inject(FinanceService);
+
   enregistrement = signal(false);
   erreur = signal<string | null>(null);
+  /** Renseignée après l'enregistrement : l'écran affiche alors la facture. */
+  facture = signal<FactureEleve | null>(null);
 
   niveaux = signal<Niveau[]>([]);
   classes = signal<Classe[]>([]);
   annees = signal<AnneeScolaire[]>([]);
+  typesFrais = signal<TypeFrais[]>([]);
+  /** Types de frais cochés, par identifiant. */
+  fraisCoches = signal<number[]>([]);
+
+  private idNiveau = signal<string>('');
+  private idAnnee = signal<string>('');
 
   form = this.fb.group({
     // Section 1 — Informations de l'élève
@@ -32,8 +74,8 @@ export class EleveFormComponent implements OnInit {
     sexe: ['F', Validators.required],
     adresse: [''],
 
-    // Section 2 — Scolarité
-    id_niveau: [''], // utilisé seulement pour filtrer la liste des classes côté écran
+    // Section 2 — Scolarité : le niveau est obligatoire, il fixe les tarifs.
+    id_niveau: ['', Validators.required],
     id_classe: ['', Validators.required],
     id_annee_scolaire: ['', Validators.required],
     date_inscription: [new Date().toISOString().slice(0, 10), Validators.required],
@@ -45,72 +87,112 @@ export class EleveFormComponent implements OnInit {
     parent_email: [''],
   });
 
-  constructor(
-    private eleveService: EleveService,
-    private auth: AuthService,
-    private http: HttpClient,
-    private router: Router
-  ) {}
+  niveauChoisi = computed(() => this.niveaux().find((n) => String(n.id) === this.idNiveau()) ?? null);
+
+  /** Frais dus d'office de l'établissement : son inscription, puis sa mensualité. */
+  fraisDOffice = computed(() =>
+    FRAIS_D_OFFICE
+      .map((nature) => this.typesFrais().find((t) => t.nature === nature))
+      .filter((t): t is TypeFrais => !!t));
+
+  /** Tous les autres frais, par ordre alphabétique. */
+  fraisOptionnels = computed(() =>
+    this.typesFrais()
+      .filter((t) => !FRAIS_D_OFFICE.includes(t.nature))
+      .sort((a, b) => a.libelle.localeCompare(b.libelle)));
+
+  totalDOffice = computed(() => this.fraisDOffice().reduce((somme, t) => somme + this.montantPour(t), 0));
+
+  totalOptions = computed(() =>
+    this.fraisOptionnels()
+      .filter((t) => this.fraisCoches().includes(t.id))
+      .reduce((somme, t) => somme + this.montantPour(t), 0));
+
+  /** Le total à payer, recalculé à chaque case cochée. */
+  total = computed(() => this.totalDOffice() + this.totalOptions());
+
+  /** Classes de l'année et du niveau choisis. */
+  classesFiltrees = computed(() =>
+    this.classes().filter(
+      (c) =>
+        (!this.idAnnee() || String(c.id_annee_scolaire) === this.idAnnee())
+        && (!this.idNiveau() || String(c.id_niveau) === this.idNiveau()),
+    ));
+
+  anneeSansClasse = computed(() =>
+    !!this.idAnnee() && !this.classes().some((c) => String(c.id_annee_scolaire) === this.idAnnee()));
+
+  libelleAnnee = computed(() => this.annees().find((a) => String(a.id) === this.idAnnee())?.libelle ?? '');
 
   ngOnInit(): void {
+    const aucunFrais: Paginated<TypeFrais> = { count: 0, next: null, previous: null, results: [] };
     forkJoin({
-      niveaux: this.http.get<Paginated<Niveau>>(`${environment.apiUrl}/niveaux/`),
-      classes: this.http.get<Paginated<Classe>>(`${environment.apiUrl}/classes/`),
+      niveaux: this.http.get<Paginated<Niveau>>(`${environment.apiUrl}/niveaux/?page_size=200`),
+      // Toutes les classes : au-delà de vingt, la première page en oubliait.
+      classes: this.http.get<Paginated<Classe>>(`${environment.apiUrl}/classes/?page_size=200`),
       annees: this.http.get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/`),
-    }).subscribe(({ niveaux, classes, annees }) => {
+      // Le catalogue n'empêche pas d'inscrire s'il ne se charge pas.
+      typesFrais: this.http
+        .get<Paginated<TypeFrais>>(`${environment.apiUrl}/types-frais/?page_size=200`)
+        .pipe(catchError(() => of(aucunFrais))),
+    }).subscribe(({ niveaux, classes, annees, typesFrais }) => {
       this.niveaux.set(niveaux.results);
       this.classes.set(classes.results);
       this.annees.set(annees.results);
+      this.typesFrais.set(typesFrais.results ?? []);
+      this.preselectionnerAnnee();
+    });
 
-      // Pré-sélection de l'année active. Quand plusieurs années sont marquées
-      // actives, celle qui porte des classes est la seule sur laquelle on
-      // puisse inscrire : la retenir évite d'ouvrir le formulaire sur une
-      // année vide, où aucune classe n'est proposable.
-      const actives = annees.results.filter((a) => a.statut === 'active');
-      const utilisable =
-        actives.find((a) => classes.results.some((c) => c.id_annee_scolaire === a.id)) ??
-        actives[0];
-      if (utilisable) {
-        this.form.patchValue({ id_annee_scolaire: utilisable.id as any });
+    this.form.controls.id_niveau.valueChanges.subscribe((v) => {
+      this.idNiveau.set(v ?? '');
+      // Une classe d'un autre niveau ne peut pas rester choisie.
+      const classe = this.form.controls.id_classe.value;
+      if (classe && !this.classesFiltrees().some((c) => String(c.id) === String(classe))) {
+        this.form.patchValue({ id_classe: '' }, { emitEvent: false });
       }
     });
 
     // Changer d'année vide la classe : une classe appartient à une année, et
     // le serveur refuse l'inscription si les deux ne concordent pas.
-    this.form.get('id_annee_scolaire')?.valueChanges.subscribe(() => {
+    this.form.controls.id_annee_scolaire.valueChanges.subscribe((v) => {
+      this.idAnnee.set(v ?? '');
       this.form.patchValue({ id_classe: '' }, { emitEvent: false });
       this.erreur.set(null);
     });
   }
 
   /**
-   * Classes proposables : celles de l'année sélectionnée, éventuellement
-   * restreintes au niveau choisi.
-   *
-   * Le filtre sur l'année est ce qui manquait : le formulaire proposait
-   * toutes les classes de l'école, y compris celles d'une autre année, et
-   * l'inscription partait alors se faire refuser côté serveur.
+   * Pré-sélection de l'année active. Quand plusieurs années sont marquées
+   * actives, celle qui porte des classes est la seule sur laquelle on puisse
+   * inscrire.
    */
-  classesFiltrees(): Classe[] {
-    const idAnnee = this.form.get('id_annee_scolaire')?.value;
-    const idNiveau = this.form.get('id_niveau')?.value;
-    return this.classes().filter(
-      (c) =>
-        (!idAnnee || String(c.id_annee_scolaire) === String(idAnnee)) &&
-        (!idNiveau || String(c.id_niveau) === String(idNiveau)),
-    );
+  private preselectionnerAnnee(): void {
+    const actives = this.annees().filter((a) => a.statut === 'active');
+    const utilisable =
+      actives.find((a) => this.classes().some((c) => c.id_annee_scolaire === a.id)) ?? actives[0];
+    if (utilisable) this.form.patchValue({ id_annee_scolaire: String(utilisable.id) });
   }
 
-  /** Vrai quand l'année choisie ne comporte encore aucune classe. */
-  anneeSansClasse(): boolean {
-    const idAnnee = this.form.get('id_annee_scolaire')?.value;
-    if (!idAnnee) return false;
-    return !this.classes().some((c) => String(c.id_annee_scolaire) === String(idAnnee));
+  /** Montant d'un frais pour le niveau choisi — même règle que le serveur. */
+  montantPour(type: TypeFrais): number {
+    return nombre(this.niveauChoisi()?.tarifs?.[String(type.id)]) ?? nombre(type.montant_defaut) ?? 0;
   }
 
-  libelleAnnee(): string {
-    const idAnnee = this.form.get('id_annee_scolaire')?.value;
-    return this.annees().find((a) => String(a.id) === String(idAnnee))?.libelle ?? '';
+  /** Vrai quand le niveau choisi a son propre montant pour ce frais. */
+  aTarifNiveau(type: TypeFrais): boolean {
+    return nombre(this.niveauChoisi()?.tarifs?.[String(type.id)]) !== null;
+  }
+
+  mensuel(type: TypeFrais): boolean {
+    return type.nature === 'mensualite' || (type.frequence ?? '').toLowerCase().includes('mens');
+  }
+
+  estCoche(type: TypeFrais): boolean {
+    return this.fraisCoches().includes(type.id);
+  }
+
+  basculerFrais(id: number): void {
+    this.fraisCoches.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
   }
 
   submit(): void {
@@ -137,18 +219,41 @@ export class EleveFormComponent implements OnInit {
         parent_telephone: v.parent_telephone || undefined,
         parent_email: v.parent_email || undefined,
         parent_lien: v.parent_lien as any,
+        frais_optionnels: this.fraisCoches(),
       })
       .subscribe({
-        next: () => {
+        next: (eleve) => {
           this.enregistrement.set(false);
-          this.router.navigate(['/eleves']);
+          this.facture.set((eleve as unknown as { facture: FactureEleve }).facture ?? null);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         },
         error: (err) => {
           this.enregistrement.set(false);
           this.erreur.set(this.message(err));
-          console.error(err);
         },
       });
+  }
+
+  telechargerFacture(): void {
+    const f = this.facture();
+    if (!f) return;
+    this.finance
+      .telecharger(`/eleves/${f.id_eleve}/facture/`, { id_annee_scolaire: f.id_annee_scolaire })
+      .subscribe({ error: () => this.erreur.set("La facture n'a pas pu être générée.") });
+  }
+
+  /** Repart d'un formulaire vierge, sur la même année. */
+  nouvelleInscription(): void {
+    const annee = this.form.controls.id_annee_scolaire.value;
+    this.facture.set(null);
+    this.erreur.set(null);
+    this.fraisCoches.set([]);
+    this.form.reset({
+      sexe: 'F',
+      parent_lien: 'mere',
+      id_annee_scolaire: annee,
+      date_inscription: new Date().toISOString().slice(0, 10),
+    });
   }
 
   /**

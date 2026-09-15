@@ -20,7 +20,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from . import (exports, finances, finances_documents, imports_eleves, models,
-               pedagogie, scolarite)
+               pedagogie, photos, scolarite)
 
 Utilisateur = get_user_model()
 MDP = "motdepasse123"
@@ -1061,7 +1061,7 @@ class TestFinances(BaseAPI):
         self.eleve = models.Eleve.objects.create(
             id_ecole=self.ecole, matricule="E-100", nom="Diop", prenom="Omar")
         self.type_frais = models.TypeFrais.objects.create(
-            id_ecole=self.ecole, libelle="mensualite", montant_defaut=25000)
+            id_ecole=self.ecole, libelle="Mensualité", nature="mensualite", montant_defaut=25000)
         self.frais = models.FraisEleve.objects.create(
             id_eleve=self.eleve, id_type_frais=self.type_frais,
             id_annee_scolaire=self.annee, montant_du=25000,
@@ -1119,7 +1119,7 @@ class TestFinances(BaseAPI):
         eleve_b = models.Eleve.objects.create(
             id_ecole=self.autre, matricule="B-1", nom="X", prenom="Y")
         type_b = models.TypeFrais.objects.create(
-            id_ecole=self.autre, libelle="mensualite", montant_defaut=1000)
+            id_ecole=self.autre, libelle="Mensualité", nature="mensualite", montant_defaut=1000)
         annee_b = models.AnneeScolaire.objects.create(
             id_ecole=self.autre, libelle="2026-2027",
             date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31))
@@ -1521,7 +1521,7 @@ class BaseFinances(BaseAPI):
     def setUp(self):
         super().setUp()
         self.type_frais = models.TypeFrais.objects.create(
-            id_ecole=self.ecole, libelle="mensualite", montant_defaut=25000)
+            id_ecole=self.ecole, libelle="Mensualité", nature="mensualite", montant_defaut=25000)
         self.type_depense = models.TypeDepense.objects.create(
             id_ecole=self.ecole, libelle="Loyer")
         self.eleves = [self._inscrire(f"E-{i}", f"Nom{i}") for i in range(1, 4)]
@@ -1628,7 +1628,7 @@ class TestGenerationDesFrais(BaseFinances):
 
     def test_type_de_frais_d_une_autre_ecole_refuse(self):
         type_b = models.TypeFrais.objects.create(
-            id_ecole=self.autre, libelle="mensualite", montant_defaut=1000)
+            id_ecole=self.autre, libelle="Mensualité", nature="mensualite", montant_defaut=1000)
         r = self._generer(id_type_frais=type_b.pk)
         self.assertEqual(r.status_code, 400)
         self.assertEqual(models.FraisEleve.objects.count(), 0)
@@ -1834,7 +1834,7 @@ class TestRelancesAutomatiques(BaseFinances):
         eleve_b = models.Eleve.objects.create(
             id_ecole=self.autre, matricule="B-1", nom="X", prenom="Y")
         type_b = models.TypeFrais.objects.create(
-            id_ecole=self.autre, libelle="mensualite", montant_defaut=1000)
+            id_ecole=self.autre, libelle="Mensualité", nature="mensualite", montant_defaut=1000)
         annee_b = models.AnneeScolaire.objects.create(
             id_ecole=self.autre, libelle="2026-2027",
             date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31))
@@ -2488,7 +2488,7 @@ class TestDossierEleve(BaseScolarite):
         models.EleveParent.objects.create(
             id_eleve=eleve, id_parent=parent, lien_parente="pere", contact_principal=True)
         type_frais = models.TypeFrais.objects.create(
-            id_ecole=self.ecole, libelle="mensualite", montant_defaut=25000)
+            id_ecole=self.ecole, libelle="Mensualité", nature="mensualite", montant_defaut=25000)
         frais = models.FraisEleve.objects.create(
             id_eleve=eleve, id_type_frais=type_frais, id_annee_scolaire=self.annee,
             montant_du=25000)
@@ -2508,7 +2508,7 @@ class TestDossierEleve(BaseScolarite):
         """Deux Sum et une jointure dans le même aggregate gonfleraient le dû."""
         eleve = self.eleves[0]
         type_frais = models.TypeFrais.objects.create(
-            id_ecole=self.ecole, libelle="mensualite", montant_defaut=25000)
+            id_ecole=self.ecole, libelle="Mensualité", nature="mensualite", montant_defaut=25000)
         frais = models.FraisEleve.objects.create(
             id_eleve=eleve, id_type_frais=type_frais, id_annee_scolaire=self.annee,
             montant_du=25000)
@@ -3021,7 +3021,7 @@ class BaseDossierFinancier(BaseFinances):
         self.eleve = self.eleves[0]
 
         self.inscription_frais = models.TypeFrais.objects.create(
-            id_ecole=self.ecole, libelle="inscription", montant_defaut=50000)
+            id_ecole=self.ecole, libelle="Inscription", nature="inscription", montant_defaut=50000)
 
         self.annee_passee = models.AnneeScolaire.objects.create(
             id_ecole=self.ecole, libelle="2025-2026",
@@ -3527,6 +3527,17 @@ class BaseRentree(BaseDossierFinancier):
                 date_inscription=self.annee_passee.date_debut,
                 statut=models.Inscription.Statut.EN_COURS)
 
+    def _premier_mois(self, eleve):
+        """La première mensualité émise d'office par la réinscription."""
+        return (models.FraisEleve.objects
+                .filter(id_eleve=eleve, id_annee_scolaire=self.annee, id_type_frais=self.type_frais)
+                .order_by("echeance").first())
+
+    def _droits(self, eleve):
+        """Les droits d'inscription émis d'office par la réinscription."""
+        return models.FraisEleve.objects.get(
+            id_eleve=eleve, id_annee_scolaire=self.annee, id_type_frais=self.inscription_frais)
+
 
 class TestPreInscription(BaseRentree):
     """Une place réservée n'est pas une inscription tant que rien n'est payé."""
@@ -3558,13 +3569,17 @@ class TestPreInscription(BaseRentree):
                          {self.eleves[0].pk})
 
     def test_les_droits_dinscription_regles_confirment(self):
-        """Ce sont les droits d'inscription qui font l'inscrit, pas le mois."""
+        """Droits d'inscription et premier mois réglés : l'élève est inscrit."""
         reponse = self._reinscrire(self.eleves[0])
         inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
-        droits = self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+        droits = self._droits(self.eleves[0])
 
         self._payer(droits, 50000)
+        inscription.refresh_from_db()
+        # Les droits seuls ne suffisent pas : il faut aussi le premier mois.
+        self.assertEqual(inscription.statut, "en_attente")
 
+        self._payer(self._premier_mois(self.eleves[0]), 25000)
         inscription.refresh_from_db()
         self.assertEqual(inscription.statut, "en_cours")
         liste = self.client.get("/api/eleves/", {"id_annee_scolaire": self.annee.pk})
@@ -3584,13 +3599,17 @@ class TestPreInscription(BaseRentree):
     def test_des_droits_partiellement_regles_ne_confirment_pas(self):
         reponse = self._reinscrire(self.eleves[0])
         inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
-        droits = self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+        droits = self._droits(self.eleves[0])
 
         self._payer(droits, 30000)
         inscription.refresh_from_db()
         self.assertEqual(inscription.statut, "en_attente")
 
-        # Le complément déclenche la confirmation.
+        # Premier mois réglé, puis le complément des droits : c'est ce dernier
+        # versement qui confirme.
+        self._payer(self._premier_mois(self.eleves[0]), 25000)
+        inscription.refresh_from_db()
+        self.assertEqual(inscription.statut, "en_attente")
         self._payer(droits, 20000)
         inscription.refresh_from_db()
         self.assertEqual(inscription.statut, "en_cours")
@@ -3599,8 +3618,9 @@ class TestPreInscription(BaseRentree):
         """Le solde compte, pas l'origine des fonds."""
         reponse = self._reinscrire(self.eleves[0])
         inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
-        droits = self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+        droits = self._droits(self.eleves[0])
         self._payer(droits, 30000)
+        self._payer(self._premier_mois(self.eleves[0]), 25000)
 
         r = self.client.patch(f"/api/frais-eleves/{droits.pk}/",
                               {"remise": "20000"}, format="json")
@@ -3610,6 +3630,8 @@ class TestPreInscription(BaseRentree):
 
     def test_sans_droits_dinscription_emis_rien_ne_confirme(self):
         """Le blocage annoncé : pas de frais d'inscription, pas de confirmation."""
+        # Sans tarif d'inscription au catalogue, rien n'est émis d'office.
+        self.inscription_frais.delete()
         reponse = self._reinscrire(self.eleves[0])
         inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
 
@@ -3636,10 +3658,9 @@ class TestPreInscription(BaseRentree):
         """Tous les chemins de paiement passent par le même verrou."""
         reponse = self._reinscrire(self.eleves[0])
         inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
-        self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
-
         encaissement = self.client.post("/api/paiements/encaisser/", {
-            "id_eleve": self.eleves[0].pk, "montant": "50000", "methode": "wave",
+            # Droits (50 000) et premier mois (25 000), imputés du plus ancien au plus récent.
+            "id_eleve": self.eleves[0].pk, "montant": "75000", "methode": "wave",
         }, format="json")
         self.assertEqual(encaissement.status_code, 201, encaissement.content)
 
@@ -3650,7 +3671,8 @@ class TestPreInscription(BaseRentree):
     def test_les_frais_sont_generables_pour_un_pre_inscrit(self):
         """Sans ça, l'élève n'aurait jamais rien à payer — donc jamais confirmé."""
         self._reinscrire(self.eleves[0])
-        reponse = self._generer(echeances=["2026-11-05"],
+        # Le 5 du mois est déjà émis d'office par la réinscription.
+        reponse = self._generer(echeances=["2026-11-20"],
                                 id_classe=self.classe_cible.pk)
         self.assertEqual(reponse.status_code, 201, reponse.content)
         self.assertEqual(reponse.data["crees"], 1)
@@ -3888,14 +3910,15 @@ class TestEtatInscriptionDansLaListe(BaseRentree):
         ligne = self.resultats(reponse)[0]
         self.assertEqual(ligne["statut"], "actif")
         self.assertEqual(ligne["inscription_statut"], "en_attente")
-        self.assertEqual(ligne["inscription_libelle"], "Pré-inscrit")
+        self.assertEqual(ligne["inscription_libelle"], "Inscrit incomplet")
         self.assertEqual(ligne["classe"], "6ème C")
 
     def test_un_inscrit_confirme_le_dit_aussi(self):
         self.client.post(f"/api/eleves/{self.eleves[0].pk}/reinscrire/",
                          {"id_classe": self.classe_cible.pk}, format="json")
-        droits = self._frais(50000, None, self.inscription_frais, eleve=self.eleves[0])
+        droits = self._droits(self.eleves[0])
         self._payer(droits, 50000)
+        self._payer(self._premier_mois(self.eleves[0]), 25000)
         reponse = self.client.get("/api/eleves/", {"id_annee_scolaire": self.annee.pk})
         ligne = [l for l in self.resultats(reponse) if l["id"] == self.eleves[0].pk][0]
         self.assertEqual(ligne["inscription_statut"], "en_cours")
@@ -3997,3 +4020,881 @@ class TestRecuDePaiement(BaseDossierFinancier):
         contenu, nom, _ = self._pdf()
         self.assertTrue(contenu.startswith(b"%PDF-"))
         self.assertIn("2026-2027", nom)
+
+
+class TestFiltreParClasse(BaseAPI):
+    """La liste des élèves se restreint à une classe, les classes à un niveau."""
+
+    def setUp(self):
+        super().setUp()
+        self.classe_b = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=self.niveau,
+            nom="6ème B", capacite_max=40,
+        )
+        self.awa = self._inscrit("DIOP", self.classe)
+        self.moussa = self._inscrit("FALL", self.classe_b)
+
+    def _inscrit(self, nom, classe):
+        eleve = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule=f"M-{nom}", nom=nom, prenom="Test")
+        models.Inscription.objects.create(
+            id_eleve=eleve, id_classe=classe, id_annee_scolaire=self.annee,
+            date_inscription=date(2026, 10, 1), statut=models.Inscription.Statut.EN_COURS)
+        return eleve
+
+    def _ids(self, **params):
+        reponse = self.client.get("/api/eleves/", params)
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        return {ligne["id"] for ligne in self.resultats(reponse)}
+
+    def test_la_classe_restreint_la_liste(self):
+        self.assertEqual(self._ids(id_annee_scolaire=self.annee.pk),
+                         {self.awa.pk, self.moussa.pk})
+        self.assertEqual(self._ids(id_annee_scolaire=self.annee.pk, classe=self.classe_b.pk),
+                         {self.moussa.pk})
+
+    def test_la_classe_se_cumule_avec_le_statut(self):
+        self.moussa.statut = models.Eleve.Statut.RADIE
+        self.moussa.save(update_fields=["statut"])
+        self.assertEqual(self._ids(id_annee_scolaire=self.annee.pk,
+                                   classe=self.classe_b.pk, statut="radie"), {self.moussa.pk})
+        self.assertEqual(self._ids(id_annee_scolaire=self.annee.pk,
+                                   classe=self.classe.pk, statut="radie"), set())
+
+    def test_la_classe_dune_autre_ecole_est_refusee(self):
+        annee = models.AnneeScolaire.objects.create(
+            id_ecole=self.autre, libelle="2026-2027",
+            date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31))
+        niveau = models.Niveau.objects.create(id_ecole=self.autre, libelle="6ème")
+        classe = models.Classe.objects.create(
+            id_ecole=self.autre, id_annee_scolaire=annee, id_niveau=niveau,
+            nom="6ème A", capacite_max=40)
+        reponse = self.client.get("/api/eleves/", {"classe": classe.pk})
+        self.assertEqual(reponse.status_code, 400)
+
+    def test_les_classes_se_filtrent_par_niveau(self):
+        cinquieme = models.Niveau.objects.create(id_ecole=self.ecole, libelle="5ème")
+        models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=cinquieme,
+            nom="5ème A", capacite_max=40)
+        reponse = self.client.get("/api/classes/", {"id_niveau": cinquieme.pk})
+        self.assertEqual([c["nom"] for c in self.resultats(reponse)], ["5ème A"])
+
+    def test_une_liste_deroulante_obtient_toutes_les_classes(self):
+        for numero in range(25):
+            models.Classe.objects.create(
+                id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=self.niveau,
+                nom=f"6ème {numero:02d}", capacite_max=40)
+        self.assertEqual(len(self.resultats(self.client.get("/api/classes/"))), 20)
+        reponse = self.client.get("/api/classes/", {"page_size": 200})
+        self.assertEqual(len(self.resultats(reponse)), 27)
+
+
+class TestCorbeille(BaseAPI):
+    """Une suppression se défait, avec tout ce qu'elle avait emporté."""
+
+    def setUp(self):
+        super().setUp()
+        self.eleve = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="M-001", nom="Diop", prenom="Awa")
+        models.Inscription.objects.create(
+            id_eleve=self.eleve, id_classe=self.classe, id_annee_scolaire=self.annee,
+            date_inscription=date(2026, 10, 1), statut=models.Inscription.Statut.EN_COURS)
+        scolarite.recaler_effectif(self.classe)
+        self.periode = models.PeriodeScolaire.objects.create(
+            id_annee_scolaire=self.annee, libelle="Trimestre 1",
+            date_debut=date(2026, 10, 1), date_fin=date(2026, 12, 20))
+        self.evaluation = models.Evaluation.objects.create(
+            id_matiere=self.matiere, id_classe=self.classe, id_periode=self.periode,
+            type="devoir", date_evaluation=date(2026, 11, 2))
+        self.note = models.Note.objects.create(
+            id_eleve=self.eleve, id_evaluation=self.evaluation,
+            id_utilisateur=self.enseignant_user, valeur=Decimal("14"))
+        self.salle = models.Salle.objects.create(id_ecole=self.ecole, nom="Salle 1")
+
+    def _supprimer(self, client, url):
+        reponse = client.delete(url)
+        self.assertEqual(reponse.status_code, 204, reponse.content)
+
+    def _restaurer(self, client, entree):
+        return client.post(f"/api/corbeille/{entree.pk}/restaurer/")
+
+    def test_supprimer_place_lelement_et_sa_cascade_dans_la_corbeille(self):
+        self._supprimer(self.client, f"/api/classes/{self.classe.pk}/")
+        self.assertFalse(models.Classe.objects.filter(pk=self.classe.pk).exists())
+        self.assertFalse(models.Note.objects.filter(pk=self.note.pk).exists())
+
+        entree = models.Corbeille.objects.get(entite="classe", id_entite=self.classe.pk)
+        self.assertEqual(entree.id_ecole_id, self.ecole.pk)
+        self.assertEqual(entree.id_utilisateur_id, self.admin.pk)
+        self.assertEqual(entree.resume.get("note"), 1)
+        self.assertEqual(entree.resume.get("inscription"), 1)
+
+        ligne = self.resultats(self.client.get("/api/corbeille/"))[0]
+        self.assertEqual(ligne["libelle"], "6ème A")
+        self.assertIn("1 note", ligne["emporte"])
+        # L'instantané contient des lignes brutes : il ne sort pas par l'API.
+        self.assertNotIn("donnees", ligne)
+
+    def test_restaurer_remet_tout_en_place(self):
+        historique = models.HistoriqueScolaire.objects.get(id_eleve=self.eleve)
+        self._supprimer(self.client, f"/api/classes/{self.classe.pk}/")
+        historique.refresh_from_db()
+        self.assertIsNone(historique.id_nouvelle_classe_id)
+
+        entree = models.Corbeille.objects.get(entite="classe")
+        reponse = self._restaurer(self.client, entree)
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+
+        classe = models.Classe.objects.get(pk=self.classe.pk)
+        self.assertEqual(classe.effectif, 1)
+        self.assertEqual(models.Note.objects.get(pk=self.note.pk).valeur, Decimal("14"))
+        historique.refresh_from_db()
+        self.assertEqual(historique.id_nouvelle_classe_id, self.classe.pk)
+        self.assertFalse(models.Corbeille.objects.filter(pk=entree.pk).exists())
+        self.assertTrue(models.JournalActivite.objects.filter(
+            action="restauration", entite="classe", id_entite=self.classe.pk).exists())
+        # Une entrée restaurée ne se restaure pas deux fois.
+        self.assertEqual(self._restaurer(self.client, entree).status_code, 404)
+
+    def test_un_element_sans_son_parent_ne_revient_pas(self):
+        self._supprimer(self.client, f"/api/notes/{self.note.pk}/")
+        self._supprimer(self.client, f"/api/evaluations/{self.evaluation.pk}/")
+        note = models.Corbeille.objects.get(entite="note")
+        evaluation = models.Corbeille.objects.get(entite="evaluation")
+
+        reponse = self._restaurer(self.client, note)
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn("dépend", reponse.data["detail"])
+        self.assertFalse(models.Note.objects.filter(pk=self.note.pk).exists())
+        self.assertTrue(models.Corbeille.objects.filter(pk=note.pk).exists())
+
+        self.assertEqual(self._restaurer(self.client, evaluation).status_code, 200)
+        self.assertEqual(self._restaurer(self.client, note).status_code, 200)
+        self.assertTrue(models.Note.objects.filter(pk=self.note.pk).exists())
+
+    def test_les_references_mises_a_null_sont_retablies(self):
+        self.classe.id_enseignant_principal = self.enseignant
+        self.classe.save(update_fields=["id_enseignant_principal"])
+        self._supprimer(self.client, f"/api/enseignants/{self.enseignant.pk}/")
+        self.classe.refresh_from_db()
+        self.assertIsNone(self.classe.id_enseignant_principal_id)
+
+        entree = models.Corbeille.objects.get(entite="enseignant")
+        self.assertEqual(self._restaurer(self.client, entree).status_code, 200)
+        self.classe.refresh_from_db()
+        self.assertEqual(self.classe.id_enseignant_principal_id, self.enseignant.pk)
+
+    def test_une_depense_restauree_retrouve_sa_caisse_et_son_budget(self):
+        loyer = models.TypeDepense.objects.create(id_ecole=self.ecole, libelle="Loyer")
+        budget = models.Budget.objects.create(
+            id_type_depense=loyer, id_ecole=self.ecole, id_annee_scolaire=self.annee,
+            categorie="Charges fixes", montant_prevu=Decimal("500000"))
+        reponse = self.client.post("/api/depenses/", {
+            "motif": "Loyer de novembre", "id_type_depense": loyer.pk,
+            "montant": "150000", "date_depense": "2026-11-05",
+        }, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        pk = reponse.data["id"]
+
+        self._supprimer(self.client, f"/api/depenses/{pk}/")
+        budget.refresh_from_db()
+        self.assertEqual(budget.montant_realise, 0)
+        self.assertFalse(models.JournalCaisse.objects.filter(id_ecole=self.ecole).exists())
+
+        entree = models.Corbeille.objects.get(entite="depense")
+        self.assertEqual(self._restaurer(self.client, entree).status_code, 200)
+        budget.refresh_from_db()
+        self.assertEqual(budget.montant_realise, Decimal("150000"))
+        self.assertEqual(models.JournalCaisse.objects.filter(id_depense=pk).count(), 1)
+
+    def test_une_annee_restauree_ne_fait_pas_deux_actives(self):
+        self._supprimer(self.client, f"/api/annees-scolaires/{self.annee.pk}/")
+        nouvelle = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2027-2028",
+            date_debut=date(2027, 10, 1), date_fin=date(2028, 7, 31))
+
+        entree = models.Corbeille.objects.get(entite="annee_scolaire")
+        self.assertEqual(self._restaurer(self.client, entree).status_code, 200)
+        self.assertEqual(models.AnneeScolaire.objects.get(pk=self.annee.pk).statut, "archivee")
+        self.assertEqual(models.AnneeScolaire.objects.get(pk=nouvelle.pk).statut, "active")
+        self.assertTrue(models.Note.objects.filter(pk=self.note.pk).exists())
+
+    def test_une_suppression_bloquee_repond_400(self):
+        """Des notes saisies par ce compte le protègent : refus lisible, pas une 500."""
+        reponse = self.client.delete(f"/api/utilisateurs/{self.enseignant_user.pk}/")
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn("note", reponse.data["detail"])
+        self.assertTrue(Utilisateur.objects.filter(pk=self.enseignant_user.pk).exists())
+        self.assertFalse(models.Corbeille.objects.exists())
+
+    def test_la_corbeille_dune_ecole_est_invisible_pour_une_autre(self):
+        self._supprimer(self.client, f"/api/salles/{self.salle.pk}/")
+        entree = models.Corbeille.objects.get(entite="salle")
+
+        self.assertEqual(self.resultats(self.client_autre.get("/api/corbeille/")), [])
+        self.assertEqual(self._restaurer(self.client_autre, entree).status_code, 404)
+        self.assertEqual(self.client_autre.delete(f"/api/corbeille/{entree.pk}/").status_code, 404)
+        self.assertFalse(models.Salle.objects.filter(pk=self.salle.pk).exists())
+        self.assertTrue(models.Corbeille.objects.filter(pk=entree.pk).exists())
+
+    def test_un_enseignant_ne_voit_et_ne_restaure_que_ses_suppressions(self):
+        prof = self._client(self.enseignant_user.email)
+        self._supprimer(prof, f"/api/notes/{self.note.pk}/")
+        self._supprimer(self.client, f"/api/salles/{self.salle.pk}/")
+        note = models.Corbeille.objects.get(entite="note")
+        salle = models.Corbeille.objects.get(entite="salle")
+
+        self.assertEqual([l["id"] for l in self.resultats(prof.get("/api/corbeille/"))], [note.pk])
+        self.assertEqual(self._restaurer(prof, salle).status_code, 404)
+        self.assertEqual(prof.delete(f"/api/corbeille/{note.pk}/").status_code, 403)
+        self.assertEqual(self._restaurer(prof, note).status_code, 200)
+
+    def test_le_filtre_par_module(self):
+        self._supprimer(self.client, f"/api/salles/{self.salle.pk}/")
+        self._supprimer(self.client, f"/api/notes/{self.note.pk}/")
+        salles = self.resultats(self.client.get("/api/corbeille/", {"endpoint": "salles"}))
+        self.assertEqual([l["entite"] for l in salles], ["salle"])
+        self.assertEqual(self.resultats(self.client.get("/api/corbeille/", {"endpoint": "inconnu"})), [])
+
+    def test_la_suppression_definitive(self):
+        self._supprimer(self.client, f"/api/salles/{self.salle.pk}/")
+        entree = models.Corbeille.objects.get(entite="salle")
+        self._supprimer(self.client, f"/api/corbeille/{entree.pk}/")
+        self.assertFalse(models.Corbeille.objects.filter(pk=entree.pk).exists())
+        self.assertFalse(models.Salle.objects.filter(pk=self.salle.pk).exists())
+        self.assertTrue(models.JournalActivite.objects.filter(
+            action="suppression", description__contains="définitive").exists())
+
+
+class TestNiveauFacultatif(BaseAPI):
+    """Une classe peut exister sans niveau, et aucun écran ne doit s'y casser."""
+
+    def test_une_classe_se_cree_sans_niveau(self):
+        reponse = self.client.post("/api/classes/", {
+            "nom": "Classe unique", "id_annee_scolaire": self.annee.pk, "capacite_max": 30,
+        }, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertIsNone(reponse.data["id_niveau"])
+        self.assertIsNone(reponse.data["niveau_libelle"])
+
+    def test_supprimer_un_niveau_garde_ses_classes(self):
+        self.assertEqual(self.client.delete(f"/api/niveaux/{self.niveau.pk}/").status_code, 204)
+        self.classe.refresh_from_db()
+        self.assertIsNone(self.classe.id_niveau_id)
+
+    def test_les_ecrans_de_leleve_supportent_une_classe_sans_niveau(self):
+        classe = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, nom="Classe unique", capacite_max=30)
+        eleve = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="M-SN", nom="Sarr", prenom="Ndeye")
+        models.Inscription.objects.create(
+            id_eleve=eleve, id_classe=classe, id_annee_scolaire=self.annee,
+            date_inscription=date(2026, 10, 1), statut=models.Inscription.Statut.EN_COURS)
+        for url in (f"/api/eleves/{eleve.pk}/finances/", f"/api/eleves/{eleve.pk}/dossier/",
+                    f"/api/eleves/{eleve.pk}/reinscription/", "/api/frais-eleves/situation/"):
+            reponse = self.client.get(url, {"id_annee_scolaire": self.annee.pk})
+            self.assertEqual(reponse.status_code, 200, (url, reponse.content))
+
+
+class TestFraisALInscription(BaseAPI):
+    """La facture d'inscription : tarifs du niveau, frais cochés, une ligne chacun."""
+
+    def setUp(self):
+        super().setUp()
+        Nature = models.TypeFrais.Nature
+        self.droits = self._type("Inscription", 50000, nature=Nature.INSCRIPTION)
+        self.mensualite = self._type("Mensualité", 25000, "Mensuelle", nature=Nature.MENSUALITE)
+        self.transport = self._type("Transport", 15000, "Mensuelle")
+        self.uniforme = self._type("Uniforme", 20000, "Une fois")
+        models.TarifNiveau.objects.create(
+            id_niveau=self.niveau, id_type_frais=self.droits, montant=Decimal("30000"))
+        models.TarifNiveau.objects.create(
+            id_niveau=self.niveau, id_type_frais=self.mensualite, montant=Decimal("20000"))
+
+    def _type(self, libelle, montant, frequence=None, ecole=None, nature="autre"):
+        return models.TypeFrais.objects.create(
+            id_ecole=ecole or self.ecole, libelle=libelle, nature=nature,
+            montant_defaut=Decimal(montant), frequence=frequence)
+
+    def _inscrire(self, date_inscription="2026-10-01", **extra):
+        return self.client.post("/api/eleves/inscrire/", {
+            "id_ecole": self.ecole.pk, "nom": "Ndiaye", "prenom": "Fatou",
+            "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "date_inscription": date_inscription, **extra,
+        }, format="json")
+
+    def _frais(self, reponse, type_frais):
+        return (models.FraisEleve.objects
+                .filter(id_eleve_id=reponse.data["id"], id_type_frais=type_frais)
+                .order_by("echeance"))
+
+    def test_les_tarifs_du_niveau_sappliquent(self):
+        reponse = self._inscrire()
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual([f.montant_du for f in self._frais(reponse, self.droits)], [Decimal("30000")])
+        self.assertEqual([f.montant_du for f in self._frais(reponse, self.mensualite)],
+                         [Decimal("20000")])
+        self.assertFalse(self._frais(reponse, self.transport).exists())
+        self.assertEqual(Decimal(str(reponse.data["facture"]["total_du"])), Decimal("50000"))
+        self.assertEqual(reponse.data["facture"]["matricule"], reponse.data["matricule"])
+        self.assertEqual(models.Inscription.objects.get(id_eleve_id=reponse.data["id"]).statut,
+                         "en_attente")
+
+    def test_sans_tarif_de_niveau_le_montant_du_type_sapplique(self):
+        models.TarifNiveau.objects.all().delete()
+        reponse = self._inscrire()
+        self.assertEqual([f.montant_du for f in self._frais(reponse, self.droits)], [Decimal("50000")])
+        self.assertEqual([f.montant_du for f in self._frais(reponse, self.mensualite)],
+                         [Decimal("25000")])
+
+    def test_les_frais_coches_sajoutent_une_fois(self):
+        reponse = self._inscrire(frais_optionnels=[self.transport.pk, self.uniforme.pk])
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(self._frais(reponse, self.transport).count(), 1)
+        self.assertEqual(self._frais(reponse, self.uniforme).count(), 1)
+        self.assertEqual(Decimal(str(reponse.data["facture"]["total_du"])), Decimal("85000"))
+
+    def test_un_frais_au_choix_peut_varier_selon_le_niveau(self):
+        models.TarifNiveau.objects.create(
+            id_niveau=self.niveau, id_type_frais=self.transport, montant=Decimal("8000"))
+        reponse = self._inscrire(frais_optionnels=[self.transport.pk])
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual([f.montant_du for f in self._frais(reponse, self.transport)],
+                         [Decimal("8000")])
+
+    def test_un_frais_dune_autre_ecole_est_refuse(self):
+        etranger = self._type("Transport", 10000, ecole=self.autre)
+        reponse = self._inscrire(frais_optionnels=[etranger.pk])
+        self.assertEqual(reponse.status_code, 400)
+        self.assertFalse(models.Eleve.objects.filter(nom="Ndiaye").exists())
+
+    def test_une_ecole_sans_aucun_tarif_inscrit_quand_meme(self):
+        models.TypeFrais.objects.filter(id_ecole=self.ecole).delete()
+        models.TarifNiveau.objects.all().delete()
+        reponse = self._inscrire()
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertFalse(models.FraisEleve.objects.filter(id_eleve_id=reponse.data["id"]).exists())
+
+    def test_regler_droits_et_mensualite_inscrit_leleve(self):
+        reponse = self._inscrire(frais_optionnels=[self.uniforme.pk])
+        id_eleve = reponse.data["id"]
+        partiel = self.client.post("/api/paiements/encaisser/", {
+            "id_eleve": id_eleve, "montant": "40000", "methode": "especes"}, format="json")
+        self.assertEqual(partiel.status_code, 201, partiel.content)
+        self.assertEqual(models.Inscription.objects.get(id_eleve_id=id_eleve).statut, "en_attente")
+
+        # 30 000 + 20 000 atteints : inscrit, même si l'uniforme reste dû.
+        complement = self.client.post("/api/paiements/encaisser/", {
+            "id_eleve": id_eleve, "montant": "10000", "methode": "especes"}, format="json")
+        self.assertEqual(complement.status_code, 201, complement.content)
+        self.assertEqual(models.Inscription.objects.get(id_eleve_id=id_eleve).statut, "en_cours")
+        self.assertEqual(Decimal(str(complement.data["situation"]["resume"]["reste"])),
+                         Decimal("20000"))
+
+
+class TestFraisALaReinscription(BaseAPI):
+    """Réinscrire émet la facture de la nouvelle année, et reconduit les frais choisis l'an passé."""
+
+    def setUp(self):
+        super().setUp()
+        Nature = models.TypeFrais.Nature
+        self.droits = self._type("Inscription", 50000, nature=Nature.INSCRIPTION)
+        self.mensualite = self._type("Mensualité", 25000, "Mensuelle", nature=Nature.MENSUALITE)
+        self.transport = self._type("Transport", 15000, "Mensuelle")
+        self.uniforme = self._type("Uniforme", 20000, "Une fois")
+
+        self.annee_passee = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2025-2026", statut="archivee",
+            date_debut=date(2025, 10, 1), date_fin=date(2026, 7, 31))
+        self.classe_passee = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee_passee, id_niveau=self.niveau,
+            nom="CM2 A", capacite_max=40)
+        self.eleve = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="M-RE", nom="Ba", prenom="Omar")
+        models.Inscription.objects.create(
+            id_eleve=self.eleve, id_classe=self.classe_passee, id_annee_scolaire=self.annee_passee,
+            date_inscription=date(2025, 10, 1), statut=models.Inscription.Statut.EN_COURS)
+        # L'an passé, la famille avait pris le transport.
+        for type_frais in (self.mensualite, self.transport):
+            models.FraisEleve.objects.create(
+                id_eleve=self.eleve, id_type_frais=type_frais, id_annee_scolaire=self.annee_passee,
+                montant_du=type_frais.montant_defaut, echeance=date(2025, 10, 5))
+
+    def _type(self, libelle, montant, frequence=None, ecole=None, nature="autre"):
+        return models.TypeFrais.objects.create(
+            id_ecole=ecole or self.ecole, libelle=libelle, nature=nature,
+            montant_defaut=Decimal(montant), frequence=frequence)
+
+    def _nombre(self, type_frais):
+        return models.FraisEleve.objects.filter(
+            id_eleve=self.eleve, id_annee_scolaire=self.annee, id_type_frais=type_frais).count()
+
+    def test_la_reinscription_dun_eleve_reconduit_ses_frais(self):
+        reponse = self.client.post(f"/api/eleves/{self.eleve.pk}/reinscrire/",
+                                   {"id_classe": self.classe.pk}, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(self._nombre(self.droits), 1)
+        self.assertEqual(self._nombre(self.mensualite), 1)
+        self.assertEqual(self._nombre(self.transport), 1)
+        self.assertEqual(self._nombre(self.uniforme), 0)
+        self.assertEqual(reponse.data["frais_emis"], 3)
+
+    def test_un_choix_explicite_remplace_la_reconduction(self):
+        reponse = self.client.post(f"/api/eleves/{self.eleve.pk}/reinscrire/", {
+            "id_classe": self.classe.pk, "frais_optionnels": [self.uniforme.pk],
+        }, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(self._nombre(self.transport), 0)
+        self.assertEqual(self._nombre(self.uniforme), 1)
+
+    def test_les_tarifs_du_niveau_darrivee_sappliquent(self):
+        models.TarifNiveau.objects.create(
+            id_niveau=self.niveau, id_type_frais=self.droits, montant=Decimal("30000"))
+        self.client.post(f"/api/eleves/{self.eleve.pk}/reinscrire/",
+                         {"id_classe": self.classe.pk}, format="json")
+        droits = models.FraisEleve.objects.get(
+            id_eleve=self.eleve, id_annee_scolaire=self.annee, id_type_frais=self.droits)
+        self.assertEqual(droits.montant_du, Decimal("30000"))
+
+    def test_le_contexte_precoche_les_frais_de_lan_passe(self):
+        reponse = self.client.get(f"/api/eleves/{self.eleve.pk}/reinscription/",
+                                  {"id_annee_scolaire": self.annee.pk})
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        types = {t["id"]: t for t in reponse.data["types_frais"]}
+        self.assertTrue(types[self.transport.pk]["reconduit"])
+        self.assertFalse(types[self.uniforme.pk]["reconduit"])
+        self.assertTrue(types[self.droits.pk]["d_office"])
+        self.assertTrue(types[self.mensualite.pk]["mensuel"])
+
+    def test_un_frais_dune_autre_ecole_annule_la_reinscription(self):
+        etranger = self._type("Transport", 10000, ecole=self.autre)
+        reponse = self.client.post(f"/api/eleves/{self.eleve.pk}/reinscrire/", {
+            "id_classe": self.classe.pk, "frais_optionnels": [etranger.pk],
+        }, format="json")
+        self.assertEqual(reponse.status_code, 400)
+        self.assertFalse(models.Inscription.objects.filter(
+            id_eleve=self.eleve, id_annee_scolaire=self.annee).exists())
+
+    def test_la_reinscription_dune_classe_emet_les_frais_de_chacun(self):
+        corps = {"id_annee_source": self.annee_passee.pk, "id_annee_cible": self.annee.pk,
+                 "id_classe_source": self.classe_passee.pk, "id_classe_cible": self.classe.pk}
+        apercu = self.client.post("/api/inscriptions/reinscrire/", corps, format="json")
+        self.assertEqual(apercu.status_code, 200, apercu.content)
+        self.assertEqual(self._nombre(self.mensualite), 0)
+
+        reponse = self.client.post("/api/inscriptions/reinscrire/",
+                                   {**corps, "valider": True}, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(self._nombre(self.droits), 1)
+        self.assertEqual(self._nombre(self.transport), 1)
+        self.assertEqual(reponse.data["frais_emis"], 3)
+
+
+class TestReinscriptionDeClasseSelective(BaseRentree):
+    """Une classe ne revient pas entière : on coche qui la suit."""
+
+    def _corps(self, **extra):
+        return {"id_annee_source": self.annee_passee.pk, "id_annee_cible": self.annee.pk,
+                "id_classe_source": self.classe_passee.pk,
+                "id_classe_cible": self.classe_cible.pk, **extra}
+
+    def test_lapercu_liste_les_eleves_a_cocher(self):
+        reponse = self.client.post("/api/inscriptions/reinscrire/", self._corps(), format="json")
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.assertEqual({e["id"] for e in reponse.data["eleves"]}, {e.pk for e in self.eleves})
+        self.assertTrue(all(e["retenu"] for e in reponse.data["eleves"]))
+        self.assertFalse(models.Inscription.objects.filter(id_annee_scolaire=self.annee).exists())
+
+    def test_seuls_les_eleves_coches_sont_reinscrits(self):
+        partant = self.eleves[2]
+        reponse = self.client.post("/api/inscriptions/reinscrire/", self._corps(
+            eleves=[self.eleves[0].pk, self.eleves[1].pk], valider=True), format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(reponse.data["reinscrits"], 2)
+        self.assertEqual(reponse.data["non_retenus"], 1)
+        self.assertFalse(models.Inscription.objects.filter(
+            id_eleve=partant, id_annee_scolaire=self.annee).exists())
+        # Le non-retenu reste dans la file : à réinscrire ailleurs ou à sortir.
+        file = self.client.get("/api/eleves/a-reinscrire/", {"id_annee_scolaire": self.annee.pk})
+        self.assertEqual([e["id"] for e in file.data["eleves"]], [partant.pk])
+
+    def test_un_eleve_hors_de_la_classe_est_refuse(self):
+        intrus = models.Eleve.objects.create(
+            id_ecole=self.autre, matricule="X-1", nom="Intrus", prenom="Test")
+        reponse = self.client.post("/api/inscriptions/reinscrire/",
+                                   self._corps(eleves=[intrus.pk], valider=True), format="json")
+        self.assertEqual(reponse.status_code, 400)
+        self.assertFalse(models.Inscription.objects.filter(id_annee_scolaire=self.annee).exists())
+
+    def test_rien_de_coche_rien_decrit(self):
+        reponse = self.client.post("/api/inscriptions/reinscrire/",
+                                   self._corps(eleves=[], valider=True), format="json")
+        self.assertEqual(reponse.status_code, 400)
+        self.assertFalse(models.Inscription.objects.filter(id_annee_scolaire=self.annee).exists())
+
+
+class TestInscritCompletOuIncomplet(BaseRentree):
+    """Inscrit = droits d'inscription et premier mois réglés ; sinon inscrit incomplet."""
+
+    def setUp(self):
+        super().setUp()
+        reponse = self.client.post(f"/api/eleves/{self.eleves[0].pk}/reinscrire/",
+                                   {"id_classe": self.classe_cible.pk}, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.inscription = models.Inscription.objects.get(pk=reponse.data["id_inscription"])
+
+    def test_le_premier_mois_seul_ne_confirme_pas(self):
+        self._payer(self._premier_mois(self.eleves[0]), 25000)
+        self.inscription.refresh_from_db()
+        self.assertEqual(self.inscription.statut, "en_attente")
+        self.assertEqual(self.inscription.get_statut_display(), "Inscrit incomplet")
+
+    def test_les_droits_seuls_ne_confirment_pas(self):
+        self._payer(self._droits(self.eleves[0]), 50000)
+        self.inscription.refresh_from_db()
+        self.assertEqual(self.inscription.statut, "en_attente")
+
+    def test_le_dossier_dit_ce_qui_manque(self):
+        self._payer(self._droits(self.eleves[0]), 50000)
+        confirmation = finances.situation_eleve(
+            self.ecole, self.eleves[0], self.annee)["confirmation"]
+        self.assertFalse(confirmation["confirmee"])
+        self.assertEqual(Decimal(str(confirmation["droits_restants"])), 0)
+        self.assertTrue(confirmation["premier_mois_emis"])
+        self.assertEqual(Decimal(str(confirmation["premier_mois_restant"])), Decimal("25000"))
+
+    def test_les_deux_regles_confirment(self):
+        self._payer(self._droits(self.eleves[0]), 50000)
+        self._payer(self._premier_mois(self.eleves[0]), 25000)
+        self.inscription.refresh_from_db()
+        self.assertEqual(self.inscription.statut, "en_cours")
+
+
+class TestGuichetParMatricule(BaseAPI):
+    """De la facture au reçu : la caissière part du matricule."""
+
+    def setUp(self):
+        super().setUp()
+        models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Inscription", nature="inscription", montant_defaut=Decimal("50000"))
+        models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Mensualité", nature="mensualite", montant_defaut=Decimal("25000"),
+            frequence="Mensuelle")
+        reponse = self.client.post("/api/eleves/inscrire/", {
+            "id_ecole": self.ecole.pk, "nom": "Ndiaye", "prenom": "Fatou",
+            "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "date_inscription": "2026-10-01"}, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.eleve = models.Eleve.objects.get(pk=reponse.data["id"])
+        self._compte("caisse@a.sn", self.ecole, "caissier")
+        self.caisse = self._client("caisse@a.sn")
+
+    def _encaisser(self, montant):
+        return self.caisse.post("/api/paiements/encaisser/", {
+            "id_eleve": self.eleve.pk, "montant": str(montant), "methode": "especes"},
+            format="json")
+
+    def test_le_matricule_ouvre_la_facture(self):
+        reponse = self.caisse.get("/api/eleves/par-matricule/", {"matricule": self.eleve.matricule})
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.assertEqual(reponse.data["nom"], "Ndiaye")
+        self.assertEqual(reponse.data["prenom"], "Fatou")
+        self.assertEqual(reponse.data["classe"], "6ème A")
+        self.assertEqual(Decimal(str(reponse.data["total_du"])), Decimal("75000"))
+        self.assertEqual(reponse.data["statut_inscription_libelle"], "Inscrit incomplet")
+
+    def test_un_matricule_dune_autre_ecole_est_introuvable(self):
+        reponse = self.client_autre.get("/api/eleves/par-matricule/",
+                                        {"matricule": self.eleve.matricule})
+        self.assertEqual(reponse.status_code, 404)
+
+    def test_la_facture_est_un_pdf(self):
+        reponse = self.caisse.get(f"/api/eleves/{self.eleve.pk}/facture/")
+        self.assertEqual(reponse.status_code, 200)
+        self.assertTrue(reponse.content.startswith(b"%PDF-"))
+        self.assertIn("facture", reponse["Content-Disposition"])
+
+    def test_payer_emet_un_recu_et_le_seuil_inscrit(self):
+        reponse = self._encaisser(60000)
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(Decimal(str(reponse.data["situation"]["resume"]["reste"])), Decimal("15000"))
+        ids = ",".join(str(p["id"]) for p in reponse.data["paiements"])
+        recu = self.caisse.get("/api/paiements/recu/", {"ids": ids})
+        self.assertEqual(recu.status_code, 200)
+        self.assertTrue(recu.content.startswith(b"%PDF-"))
+        self.assertEqual(models.Inscription.objects.get(id_eleve=self.eleve).statut, "en_attente")
+
+        self._encaisser(15000)
+        self.assertEqual(models.Inscription.objects.get(id_eleve=self.eleve).statut, "en_cours")
+
+    def test_le_recu_dune_autre_ecole_est_introuvable(self):
+        ids = ",".join(str(p["id"]) for p in self._encaisser(50000).data["paiements"])
+        self.assertEqual(self.client_autre.get("/api/paiements/recu/", {"ids": ids}).status_code, 404)
+
+
+class TestPhotoEleve(BaseAPI):
+    """La photo du dossier : déposée par un administrateur, lue derrière l'authentification."""
+
+    PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+
+    def setUp(self):
+        super().setUp()
+        import shutil
+        import tempfile
+        from django.test import override_settings
+
+        dossier = tempfile.mkdtemp()
+        reglage = override_settings(MEDIA_ROOT=dossier)
+        reglage.enable()
+        self.addCleanup(shutil.rmtree, dossier, ignore_errors=True)
+        self.addCleanup(reglage.disable)
+        self.eleve = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="M-PH", nom="Sow", prenom="Awa")
+        self.url = f"/api/eleves/{self.eleve.pk}/photo/"
+
+    def _envoyer(self, client, contenu, nom="photo.png"):
+        return client.post(self.url, {"photo": SimpleUploadedFile(nom, contenu)},
+                           format="multipart")
+
+    def _lire(self, client):
+        reponse = client.get(self.url)
+        # Lire tout le flux suffit : le client de test ferme alors la réponse lui-même.
+        # Un close() de plus relancerait la fin de requête, qui ferme la connexion
+        # MySQL en pleine transaction de test et fait échouer les tests suivants.
+        contenu = b"".join(reponse.streaming_content) if reponse.status_code == 200 else None
+        return reponse, contenu
+
+    def test_un_admin_depose_la_photo_et_le_dossier_la_signale(self):
+        self.assertEqual(self._envoyer(self.client, self.PNG).status_code, 200)
+        reponse, contenu = self._lire(self.client)
+        self.assertEqual(reponse.status_code, 200)
+        self.assertEqual(reponse["Content-Type"], "image/png")
+        self.assertEqual(contenu, self.PNG)
+        dossier = self.client.get(f"/api/eleves/{self.eleve.pk}/dossier/")
+        self.assertTrue(dossier.data["eleve"]["a_photo"])
+
+    def test_remplacer_la_photo_efface_lancienne(self):
+        self._envoyer(self.client, self.PNG)
+        self.eleve.refresh_from_db()
+        ancienne = photos.chemin(self.eleve)
+        self.assertEqual(self._envoyer(self.client, self.JPEG, "photo.jpg").status_code, 200)
+        self.assertFalse(ancienne.exists())
+        self.assertEqual(self._lire(self.client)[0]["Content-Type"], "image/jpeg")
+
+    def test_un_fichier_qui_nest_pas_une_image_est_refuse(self):
+        reponse = self._envoyer(self.client, b"<?php echo 1; ?>", "photo.png")
+        self.assertEqual(reponse.status_code, 400)
+        self.eleve.refresh_from_db()
+        self.assertIsNone(self.eleve.photo_url)
+
+    def test_une_photo_trop_lourde_est_refusee(self):
+        reponse = self._envoyer(self.client, self.JPEG + b"\x00" * photos.TAILLE_MAX, "photo.jpg")
+        self.assertEqual(reponse.status_code, 400)
+
+    def test_une_autre_ecole_ne_voit_ni_ne_modifie(self):
+        self._envoyer(self.client, self.PNG)
+        self.assertEqual(self._lire(self.client_autre)[0].status_code, 404)
+        self.assertEqual(self._envoyer(self.client_autre, self.JPEG, "x.jpg").status_code, 404)
+
+    def test_un_enseignant_voit_mais_ne_modifie_pas(self):
+        self._envoyer(self.client, self.PNG)
+        prof = self._client(self.enseignant_user.email)
+        self.assertEqual(self._lire(prof)[0].status_code, 200)
+        self.assertEqual(self._envoyer(prof, self.JPEG, "x.jpg").status_code, 403)
+        self.assertEqual(prof.delete(self.url).status_code, 403)
+
+    def test_retirer_la_photo(self):
+        self._envoyer(self.client, self.PNG)
+        self.assertEqual(self.client.delete(self.url).status_code, 204)
+        self.assertEqual(self._lire(self.client)[0].status_code, 404)
+
+
+class TestEncaissementParFraisCoches(BaseAPI):
+    """Le paiement ne va que sur les frais cochés."""
+
+    def setUp(self):
+        super().setUp()
+        models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Inscription", nature="inscription", montant_defaut=Decimal("50000"))
+        models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Mensualité", nature="mensualite", montant_defaut=Decimal("25000"),
+            frequence="Mensuelle")
+        self.transport = models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Transport", montant_defaut=Decimal("15000"),
+            frequence="Mensuelle")
+        reponse = self.client.post("/api/eleves/inscrire/", {
+            "id_ecole": self.ecole.pk, "nom": "Ndiaye", "prenom": "Fatou",
+            "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "date_inscription": "2026-10-01", "frais_optionnels": [self.transport.pk],
+        }, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.eleve = models.Eleve.objects.get(pk=reponse.data["id"])
+        self.frais_transport = models.FraisEleve.objects.get(
+            id_eleve=self.eleve, id_type_frais=self.transport)
+
+    def _encaisser(self, **extra):
+        return self.client.post("/api/paiements/encaisser/", {
+            "id_eleve": self.eleve.pk, "methode": "especes", **extra}, format="json")
+
+    def test_seuls_les_frais_coches_sont_regles(self):
+        reponse = self._encaisser(montant="15000", frais=[self.frais_transport.pk])
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.frais_transport.refresh_from_db()
+        self.assertEqual(self.frais_transport.statut, "paye")
+        self.assertEqual(
+            models.Paiement.objects.filter(id_frais_eleve__id_eleve=self.eleve).count(), 1)
+        # Le transport payé ne vaut pas inscription : droits et mensualité restent dus.
+        self.assertEqual(models.Inscription.objects.get(id_eleve=self.eleve).statut, "en_attente")
+
+    def test_le_montant_ne_depasse_pas_les_frais_coches(self):
+        reponse = self._encaisser(montant="20000", frais=[self.frais_transport.pk])
+        self.assertEqual(reponse.status_code, 400)
+        self.assertFalse(models.Paiement.objects.exists())
+
+    def test_un_frais_dun_autre_eleve_est_refuse(self):
+        autre = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="X-2", nom="Autre", prenom="Eleve")
+        frais = models.FraisEleve.objects.create(
+            id_eleve=autre, id_type_frais=self.transport, id_annee_scolaire=self.annee,
+            montant_du=Decimal("15000"))
+        reponse = self._encaisser(montant="15000", frais=[frais.pk])
+        self.assertEqual(reponse.status_code, 400)
+        self.assertFalse(models.Paiement.objects.exists())
+
+    def test_sans_case_cochee_lordre_habituel_sapplique(self):
+        reponse = self._encaisser(montant="75000")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(models.Inscription.objects.get(id_eleve=self.eleve).statut, "en_cours")
+        self.frais_transport.refresh_from_db()
+        self.assertEqual(self.frais_transport.statut, "impaye")
+
+
+class TestTypesDeFraisLibres(BaseAPI):
+    """Chaque établissement nomme ses frais ; seule la nature pèse sur les règles."""
+
+    def _type(self, client=None, **corps):
+        return (client or self.client).post("/api/types-frais/", corps, format="json")
+
+    def test_une_ecole_cree_ses_propres_frais(self):
+        reponse = self._type(libelle="Adiya", nature="inscription", montant_defaut="10000")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(reponse.data["libelle"], "Adiya")
+        self.assertEqual(reponse.data["nature_libelle"], "Frais d'inscription")
+
+    def test_les_noms_choisis_servent_a_linscription_et_a_la_confirmation(self):
+        self._type(libelle="Adiya", nature="inscription", montant_defaut="10000")
+        self._type(libelle="Cotisation mensuelle", nature="mensualite", montant_defaut="5000",
+                   frequence="Mensuelle")
+        repas = self._type(libelle="Repas du midi", montant_defaut="3000")
+        self.assertEqual(repas.data["nature"], "autre")
+
+        reponse = self.client.post("/api/eleves/inscrire/", {
+            "id_ecole": self.ecole.pk, "nom": "Diallo", "prenom": "Moussa",
+            "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "date_inscription": "2026-10-01", "frais_optionnels": [repas.data["id"]],
+        }, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        libelles = [ligne["libelle"] for ligne in reponse.data["facture"]["lignes"]]
+        self.assertEqual(libelles[0], "Adiya")
+        self.assertTrue(libelles[1].startswith("Cotisation mensuelle"))
+        self.assertEqual(libelles[2], "Repas du midi")
+        self.assertEqual(Decimal(str(reponse.data["facture"]["total_du"])), Decimal("18000"))
+
+        # « Adiya » + « Cotisation mensuelle » réglés : inscrit, quel que soit leur nom.
+        paiement = self.client.post("/api/paiements/encaisser/", {
+            "id_eleve": reponse.data["id"], "montant": "15000", "methode": "especes"},
+            format="json")
+        self.assertEqual(paiement.status_code, 201, paiement.content)
+        self.assertEqual(models.Inscription.objects.get(id_eleve_id=reponse.data["id"]).statut,
+                         "en_cours")
+
+    def test_une_seule_nature_inscription_par_ecole(self):
+        self._type(libelle="Adiya", nature="inscription", montant_defaut="10000")
+        reponse = self._type(libelle="Droits d'entrée", nature="inscription", montant_defaut="5000")
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn("nature", reponse.data)
+
+    def test_deux_frais_ne_portent_pas_le_meme_nom(self):
+        self._type(libelle="Transport", montant_defaut="10000")
+        reponse = self._type(libelle="Transport", montant_defaut="12000")
+        self.assertEqual(reponse.status_code, 400)
+
+    def test_une_autre_ecole_garde_sa_liberte(self):
+        self._type(libelle="Adiya", nature="inscription", montant_defaut="10000")
+        reponse = self._type(self.client_autre, libelle="Adiya", nature="inscription",
+                             montant_defaut="7000")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+
+
+class TestGrilleDesTarifs(BaseAPI):
+    """Un montant par niveau et par frais ; une case vide applique le montant par défaut."""
+
+    def setUp(self):
+        super().setUp()
+        self.inscription = models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Inscription", nature="inscription",
+            montant_defaut=Decimal("50000"))
+        self.transport = models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Transport", montant_defaut=Decimal("10000"),
+            frequence="Mensuelle")
+        self.troisieme = models.Niveau.objects.create(id_ecole=self.ecole, libelle="3ème")
+        self.classe_3e = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=self.troisieme,
+            nom="3ème A", capacite_max=40)
+
+    def _enregistrer(self, tarifs, client=None):
+        return (client or self.client).post("/api/tarifs/grille/", {"tarifs": tarifs}, format="json")
+
+    def _case(self, niveau, type_frais, montant):
+        return {"id_niveau": niveau.pk, "id_type_frais": type_frais.pk, "montant": montant}
+
+    def test_la_grille_senregistre_et_se_relit(self):
+        reponse = self._enregistrer([
+            self._case(self.niveau, self.inscription, "30000"),
+            self._case(self.troisieme, self.inscription, "35000"),
+        ])
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        tarifs = reponse.data["tarifs"]
+        self.assertEqual(Decimal(str(tarifs[f"{self.niveau.pk}-{self.inscription.pk}"])), Decimal("30000"))
+        self.assertEqual(Decimal(str(tarifs[f"{self.troisieme.pk}-{self.inscription.pk}"])), Decimal("35000"))
+        # Les frais dus d'office viennent en premières colonnes.
+        self.assertEqual(reponse.data["types"][0]["id"], self.inscription.pk)
+        self.assertEqual(self.client.get("/api/tarifs/grille/").data["tarifs"], tarifs)
+
+    def test_chaque_niveau_paie_son_tarif(self):
+        self._enregistrer([
+            self._case(self.niveau, self.inscription, "30000"),
+            self._case(self.troisieme, self.inscription, "35000"),
+            self._case(self.troisieme, self.transport, "12000"),
+        ])
+        self.assertEqual(finances.tarif(self.inscription, self.classe), Decimal("30000"))
+        self.assertEqual(finances.tarif(self.inscription, self.classe_3e), Decimal("35000"))
+        self.assertEqual(finances.tarif(self.transport, self.classe), Decimal("10000"))
+        self.assertEqual(finances.tarif(self.transport, self.classe_3e), Decimal("12000"))
+
+    def test_une_case_videe_revient_au_montant_par_defaut(self):
+        self._enregistrer([self._case(self.niveau, self.inscription, "30000")])
+        self._enregistrer([self._case(self.niveau, self.inscription, None)])
+        self.assertFalse(models.TarifNiveau.objects.exists())
+        self.assertEqual(finances.tarif(self.inscription, self.classe), Decimal("50000"))
+
+    def test_le_niveau_expose_ses_tarifs_au_formulaire(self):
+        self._enregistrer([self._case(self.niveau, self.inscription, "30000")])
+        reponse = self.client.get(f"/api/niveaux/{self.niveau.pk}/")
+        self.assertEqual(Decimal(str(reponse.data["tarifs"][str(self.inscription.pk)])), Decimal("30000"))
+
+    def test_un_niveau_dune_autre_ecole_est_refuse(self):
+        niveau_b = models.Niveau.objects.create(id_ecole=self.autre, libelle="6ème")
+        reponse = self._enregistrer([self._case(niveau_b, self.inscription, "1000")])
+        self.assertEqual(reponse.status_code, 400)
+        self.assertFalse(models.TarifNiveau.objects.exists())
+
+    def test_un_montant_negatif_est_refuse(self):
+        reponse = self._enregistrer([self._case(self.niveau, self.inscription, "-5")])
+        self.assertEqual(reponse.status_code, 400)
+
+    def test_reservee_aux_administrateurs(self):
+        prof = self._client(self.enseignant_user.email)
+        self.assertEqual(prof.get("/api/tarifs/grille/").status_code, 403)

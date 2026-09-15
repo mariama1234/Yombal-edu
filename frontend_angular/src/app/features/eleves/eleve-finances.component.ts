@@ -1,4 +1,4 @@
-import { Component, Input, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, HostListener, Input, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
@@ -45,9 +45,12 @@ export class EleveFinancesComponent implements OnInit {
   occupe = signal(false);
   telechargement = signal<number | null>(null);
 
-  /** Formulaire d'encaissement ouvert, et frais en cours de remise. */
+  /** Fenêtre d'encaissement ouverte, et frais en cours de remise. */
   saisieOuverte = signal(false);
   remiseOuverte = signal<number | null>(null);
+
+  /** Frais cochés dans la fenêtre d'encaissement : le paiement ne va que sur eux. */
+  fraisCoches = signal<number[]>([]);
 
   methodes: { value: MethodePaiement; label: string }[] = [
     { value: 'especes', label: 'Espèces' },
@@ -60,7 +63,6 @@ export class EleveFinancesComponent implements OnInit {
   formPaiement = this.fb.group({
     montant: [null as number | null, [Validators.required, Validators.min(1)]],
     methode: ['especes' as MethodePaiement, Validators.required],
-    mois: [''],
     date_paiement: [''],
     reference_transaction: [''],
     commentaire: [''],
@@ -77,11 +79,9 @@ export class EleveFinancesComponent implements OnInit {
   /**
    * Aucun frais n'a encore été émis pour cette année.
    *
-   * C'est l'état d'un pré-inscrit qu'on vient de créer, et il piégeait
-   * l'écran : sans frais, le reste à payer vaut zéro, le bouton d'
-   * encaissement se désactivait, et l'élève ne pouvait donc jamais payer —
-   * donc jamais voir son inscription confirmée. Il faut distinguer
-   * « tout est soldé » de « il n'y a rien à solder ».
+   * Sans frais, le reste à payer vaut zéro : il faut distinguer « tout est
+   * soldé » de « il n'y a rien à solder », sans quoi l'élève ne pourrait
+   * jamais payer, donc jamais voir son inscription confirmée.
    */
   sansFrais = computed(() => (this.situation()?.resume.nombre_frais ?? 0) === 0);
 
@@ -95,17 +95,25 @@ export class EleveFinancesComponent implements OnInit {
     return this.sansFrais() || this.reste() > 0;
   });
 
-  /**
-   * Mois encore ouverts, proposés à la saisie. Un règlement vise presque
-   * toujours une échéance précise — « la mensualité d'octobre » — et laisser
-   * choisir évite d'imputer au mauvais mois.
-   */
-  moisOuverts = computed(
-    () => this.situation()?.echeancier.filter((m) => m.mois && m.reste > 0) ?? [],
-  );
+  /** Frais encore ouverts, proposés en cases à cocher. */
+  fraisOuverts = computed(() => (this.situation()?.frais ?? []).filter((f) => Number(f.reste) > 0));
+
+  totalCoche = computed(() =>
+    this.fraisOuverts()
+      .filter((f) => this.fraisCoches().includes(f.id))
+      .reduce((somme, f) => somme + Number(f.reste), 0));
+
+  /** Ce qu'on peut encaisser : les frais cochés, ou à défaut tout le reste de l'année. */
+  plafond = computed(() => (this.fraisCoches().length ? this.totalCoche() : this.reste()));
 
   ngOnInit(): void {
     this.charger();
+  }
+
+  /** Échap ferme la fenêtre de paiement, comme le bouton ✕. */
+  @HostListener('document:keydown.escape')
+  surEchap(): void {
+    if (this.saisieOuverte()) this.fermer();
   }
 
   charger(idAnnee?: number | null): void {
@@ -129,14 +137,19 @@ export class EleveFinancesComponent implements OnInit {
   }
 
   ouvrirSaisie(): void {
-    // Sans frais émis, il n'y a rien sur quoi imputer : ouvrir le formulaire
-    // ne mènerait qu'à un refus du serveur. On montre la marche à suivre.
     this.remiseOuverte.set(null);
-    this.saisieOuverte.update((v) => !v);
+    this.saisieOuverte.set(true);
     this.message.set(null);
     this.erreur.set(null);
-    this.formPaiement.reset({ methode: 'especes', mois: '', date_paiement: '',
+    this.fraisCoches.set([]);
+    this.formPaiement.reset({ methode: 'especes', date_paiement: '',
                               reference_transaction: '', commentaire: '' });
+  }
+
+  /** Cocher un frais propose d'en régler le reste : le montant suit les cases. */
+  basculerFrais(id: number): void {
+    this.fraisCoches.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
+    this.formPaiement.patchValue({ montant: this.fraisCoches().length ? this.totalCoche() : null });
   }
 
   ouvrirRemise(frais: LigneFrais): void {
@@ -153,6 +166,12 @@ export class EleveFinancesComponent implements OnInit {
   encaisser(): void {
     if (this.formPaiement.invalid) return this.formPaiement.markAllAsTouched();
     const v = this.formPaiement.getRawValue();
+    if (Number(v.montant) > this.plafond()) {
+      this.erreur.set(this.fraisCoches().length
+        ? 'Le montant dépasse le reste des frais cochés.'
+        : 'Le montant dépasse le reste à payer.');
+      return;
+    }
     this.occupe.set(true);
     this.erreur.set(null);
 
@@ -162,7 +181,7 @@ export class EleveFinancesComponent implements OnInit {
         id_annee_scolaire: this.situation()?.annee?.id ?? null,
         montant: v.montant,
         methode: v.methode,
-        mois: v.mois || null,
+        frais: this.fraisCoches().length ? this.fraisCoches() : null,
         // Le champ HTML rend « 2026-10-05 » ; l'API attend un instant.
         date_paiement: v.date_paiement ? `${v.date_paiement}T12:00:00` : null,
         reference_transaction: v.reference_transaction || null,
@@ -174,9 +193,10 @@ export class EleveFinancesComponent implements OnInit {
           // appel, et surtout aucun risque d'afficher un état intermédiaire.
           this.situation.set(resultat.situation);
           this.message.set(
-            `Paiement enregistré (${resultat.paiements.length} échéance(s) mouvementée(s)).`,
+            `Paiement enregistré (${resultat.paiements.length} frais réglé(s) ou entamé(s)).`,
           );
           this.saisieOuverte.set(false);
+          this.fraisCoches.set([]);
           this.occupe.set(false);
         },
         error: (e) => {

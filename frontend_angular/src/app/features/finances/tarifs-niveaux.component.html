@@ -1,0 +1,95 @@
+<p class="module-eyebrow">Gestion financière</p>
+<div class="page-head">
+  <div>
+    <h1>Tarifs par niveau</h1>
+    <p>
+      Le montant de chaque frais selon le niveau : l'inscription en 3ème peut différer de celle de 4ème.
+      Une case vide applique le montant par défaut du frais, affiché en gris.
+    </p>
+  </div>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <a class="btn-ghost" routerLink="/types-frais">Types de frais</a>
+    <a class="btn-ghost" routerLink="/niveaux">Niveaux</a>
+  </div>
+</div>
+
+@if (message()) { <div class="form-success">{{ message() }}</div> }
+@if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+@if (chargement()) {
+  <div class="panel"><p style="font-size:13px; color:var(--ink-400); margin:0;">Chargement de la grille…</p></div>
+} @else {
+  @if (grille(); as g) {
+    @if (!g.niveaux.length || !g.types.length) {
+      <div class="panel">
+        <p style="font-size:13px; color:var(--ink-600); margin:0;">
+          @if (!g.niveaux.length) {
+            Aucun niveau n'est encore créé : ajoute-les dans <a class="panel-link" routerLink="/niveaux">Niveaux</a>.
+          }
+          @if (!g.types.length) {
+            Aucun frais n'est encore créé : ajoute-les dans <a class="panel-link" routerLink="/types-frais">Types de frais</a>.
+          }
+        </p>
+      </div>
+    } @else {
+      <div class="panel" style="padding:0; overflow:hidden;">
+        <!-- Défilement horizontal : une école peut avoir beaucoup de frais. -->
+        <div style="overflow-x:auto;">
+          <table class="simple" style="margin:0; min-width:100%;">
+            <thead>
+              <tr>
+                <th style="position:sticky; left:0; background:var(--surface); z-index:2; min-width:120px;">Niveau</th>
+                @for (t of g.types; track t.id) {
+                  <th style="min-width:150px; vertical-align:bottom;">
+                    <div style="font-weight:600; color:var(--ink-900);">{{ t.libelle }}</div>
+                    <div style="font-size:11px; font-weight:500; color:var(--ink-400); text-transform:none; letter-spacing:0;">
+                      {{ t.nature === 'autre' ? 'Au choix' : t.nature_libelle }}
+                      · défaut {{ t.montant_defaut | number: '1.0-0' }} F{{ t.mensuel ? ' / mois' : '' }}
+                    </div>
+                  </th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (n of g.niveaux; track n.id) {
+                <tr>
+                  <td style="position:sticky; left:0; background:var(--surface); z-index:1;">
+                    <strong>{{ n.libelle }}</strong>
+                  </td>
+                  @for (t of g.types; track t.id) {
+                    <td>
+                      <input class="input mono" type="number" min="0" step="500"
+                             [value]="valeur(n.id, t.id)" (input)="changer(n.id, t.id, $event)"
+                             [placeholder]="(t.montant_defaut | number: '1.0-0') ?? ''"
+                             [attr.aria-label]="t.libelle + ' en ' + n.libelle"
+                             [style.border-color]="estModifiee(n.id, t.id) ? 'var(--orange-500)' : null"
+                             style="width:120px; text-align:right; padding:8px 10px;">
+                    </td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:14px;">
+        <span style="font-size:12.5px; color:var(--ink-400);">
+          @if (modifiees().length) {
+            {{ modifiees().length }} case(s) modifiée(s), encadrée(s) en orange.
+          } @else {
+            Aucune modification en cours.
+          }
+        </span>
+        <div style="display:flex; gap:10px;">
+          <button type="button" class="btn-ghost" (click)="annuler()" [disabled]="!modifiees().length || occupe()">
+            Annuler
+          </button>
+          <button type="button" class="btn-primary" (click)="enregistrer()" [disabled]="!modifiees().length || occupe()">
+            {{ occupe() ? 'Enregistrement…' : 'Enregistrer les tarifs' }}
+          </button>
+        </div>
+      </div>
+    }
+  }
+}

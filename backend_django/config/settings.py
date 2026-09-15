@@ -211,6 +211,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# Fichiers déposés par les utilisateurs (photos d'élèves). Jamais servis tels
+# quels : l'API les lit derrière l'authentification et le cloisonnement par école.
+MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', BASE_DIR / 'media'))
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
@@ -237,7 +241,7 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'gestion_scolaire.pagination.Pagination',
     'PAGE_SIZE': 20,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }

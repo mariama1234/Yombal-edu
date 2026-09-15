@@ -19,9 +19,9 @@
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Et maintenant ?</div></div>
       <p style="font-size:13px; color:var(--ink-600); margin:0 0 14px;">
-        L'inscription est <strong>pré-inscrite</strong> : la place est retenue, mais
-        {{ c.eleve.prenom }} n'entrera dans la liste des inscrits qu'au premier
-        règlement. Génère ses frais, puis encaisse depuis son dossier.
+        L'inscription est <strong>incomplète</strong> : la place est retenue, et
+        {{ c.eleve.prenom }} entrera dans la liste des inscrits une fois les droits
+        d'inscription et le premier mois réglés. Ses frais de l'année sont émis : encaisse depuis son dossier.
       </p>
       <div class="form-actions" style="justify-content:flex-start;">
         <button type="button" class="btn-primary" (click)="retourFile()">
@@ -30,7 +30,6 @@
         <a class="btn-ghost" [routerLink]="['/eleves', c.eleve.id, 'dossier']">
           Ouvrir son dossier
         </a>
-        <a class="btn-ghost" routerLink="/finances/generer">Générer les frais</a>
       </div>
     </div>
   } @else {
@@ -60,7 +59,7 @@
         <div class="field">
           <label>Classe de départ</label>
           <input class="input"
-                 [value]="c.precedente ? c.precedente.classe + ' (' + c.precedente.niveau + ')' : '—'"
+                 [value]="c.precedente ? c.precedente.classe + (c.precedente.niveau ? ' (' + c.precedente.niveau + ')' : '') : '—'"
                  disabled>
         </div>
         <div class="field">
@@ -84,7 +83,7 @@
               <option [ngValue]="null">— choisir —</option>
               @for (cl of classes(); track cl.id) {
                 <option [ngValue]="cl.id">
-                  {{ cl.nom }} — {{ cl.niveau }} ({{ cl.effectif }}/{{ cl.capacite_max }})
+                  {{ cl.nom }}{{ cl.niveau ? ' — ' + cl.niveau : '' }} ({{ cl.effectif }}/{{ cl.capacite_max }})
                 </option>
               }
             </select>
@@ -107,6 +106,32 @@
                    formControlName="date_inscription">
             <span class="hint">Par défaut, le premier jour de l'année scolaire.</span>
           </div>
+        </div>
+
+        <div class="field">
+          <label>Frais {{ c.annee_cible.libelle }}</label>
+          @if (c.types_frais.length === 0) {
+            <span class="hint hint-error">
+              Aucun type de frais n'est défini : aucun frais ne sera émis.
+            </span>
+          } @else {
+            <div style="display:flex; flex-direction:column; gap:8px; margin-top:4px;">
+              @for (t of fraisDOffice(); track t.id) {
+                <label style="display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:400;">
+                  <input type="checkbox" checked disabled>
+                  <span>{{ t.libelle_affiche }} — {{ montantPour(t) | number: '1.0-0' }} F{{ t.mensuel ? ' / mois' : '' }}</span>
+                  <span class="hint">automatique</span>
+                </label>
+              }
+              @for (t of fraisOptionnels(); track t.id) {
+                <label style="display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:400; cursor:pointer;">
+                  <input type="checkbox" [checked]="fraisCoches().includes(t.id)" (change)="basculerFrais(t.id)">
+                  <span>{{ t.libelle_affiche }} — {{ montantPour(t) | number: '1.0-0' }} F{{ t.mensuel ? ' / mois' : '' }}</span>
+                  @if (t.reconduit) { <span class="hint">comme l'an passé</span> }
+                </label>
+              }
+            </div>
+          }
         </div>
 
         <div class="form-actions">

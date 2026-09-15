@@ -83,12 +83,13 @@ class Command(BaseCommand):
             models.Matiere.objects.get_or_create(id_ecole=ecole, nom=nom_matiere)
 
         type_mensualite, _ = models.TypeFrais.objects.get_or_create(
-            id_ecole=ecole, libelle=models.TypeFrais.Libelle.MENSUALITE,
-            defaults={"montant_defaut": 25000, "frequence": "Mensuelle"},
+            id_ecole=ecole, nature=models.TypeFrais.Nature.MENSUALITE,
+            defaults={"libelle": "Mensualité", "montant_defaut": 25000, "frequence": "Mensuelle"},
         )
         models.TypeFrais.objects.get_or_create(
-            id_ecole=ecole, libelle=models.TypeFrais.Libelle.INSCRIPTION,
-            defaults={"montant_defaut": 50000, "frequence": "Annuelle"},
+            id_ecole=ecole, nature=models.TypeFrais.Nature.INSCRIPTION,
+            defaults={"libelle": "Frais d'inscription", "montant_defaut": 50000,
+                      "frequence": "Annuelle"},
         )
 
         eleves = [

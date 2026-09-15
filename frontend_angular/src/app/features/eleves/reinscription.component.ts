@@ -13,11 +13,15 @@ import {
 import { ScolariteService } from './scolarite.service';
 
 /**
- * Réinscription d'une promotion d'une année sur l'autre.
+ * Réinscription d'une classe en bloc — le cas d'exception.
  *
- * Même contrat que la génération des frais : on prévisualise (« 42 élèves
- * passeraient de 6ème A en 5ème A ») avant d'écrire. Réinscrire une classe
- * entière ne se défait pas à la main.
+ * Une classe ne revient pas entière d'une année sur l'autre : des élèves
+ * partent, redoublent, changent de classe, d'autres arrivent. L'aperçu liste
+ * donc les élèves, tous cochés, et l'on décoche ceux qui ne suivent pas. Les
+ * décochés restent dans la file « À réinscrire » ; les nouveaux passent par
+ * « Inscrire un élève ».
+ *
+ * Même contrat que la génération des frais : on prévisualise avant d'écrire.
  */
 @Component({
   selector: 'app-reinscription',
@@ -38,6 +42,9 @@ export class ReinscriptionComponent implements OnInit {
   erreur = signal<string | null>(null);
   occupe = signal(false);
 
+  /** Élèves cochés à l'aperçu : ceux qui suivent la classe. */
+  coches = signal<number[]>([]);
+
   form = this.fb.group({
     id_annee_source: [null as number | null, Validators.required],
     id_annee_cible: [null as number | null, Validators.required],
@@ -51,12 +58,30 @@ export class ReinscriptionComponent implements OnInit {
 
   private anneeSource = signal<number | null>(null);
   private anneeCible = signal<number | null>(null);
+  private classeCible = signal<number | null>(null);
 
   /** Les listes déroulantes ne proposent que les classes de l'année choisie. */
   classesSource = computed(() =>
     this.classes().filter((c) => c.id_annee_scolaire === this.anneeSource()));
   classesCible = computed(() =>
     this.classes().filter((c) => c.id_annee_scolaire === this.anneeCible()));
+
+  /** L'aperçu comptait toute la classe ; l'effectif suit les cases cochées. */
+  effectifVise = computed(() => {
+    const a = this.apercu();
+    return a ? a.effectif_cible - a.reinscrits + this.coches().length : 0;
+  });
+
+  nonRetenus = computed(() => {
+    const a = this.apercu();
+    return a ? a.eleves.length - a.ignores - this.coches().length : 0;
+  });
+
+  avertissement = computed(() => {
+    const classe = this.classes().find((c) => c.id === this.classeCible());
+    if (!classe?.capacite_max || this.effectifVise() <= classe.capacite_max) return null;
+    return `${classe.nom} atteindrait ${this.effectifVise()} élèves pour une capacité de ${classe.capacite_max}.`;
+  });
 
   ngOnInit(): void {
     this.http
@@ -75,8 +100,9 @@ export class ReinscriptionComponent implements OnInit {
           });
         }
       });
+    // Toutes les classes : au-delà de vingt, la première page en oubliait.
     this.http
-      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/`)
+      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/?page_size=200`)
       .subscribe((r) => this.classes.set(r.results ?? []));
 
     // Changer d'année vide les classes choisies : elles n'existent plus dans
@@ -87,8 +113,10 @@ export class ReinscriptionComponent implements OnInit {
     });
     this.form.controls.id_annee_cible.valueChanges.subscribe((v) => {
       this.anneeCible.set(v);
+      this.classeCible.set(null);
       this.form.patchValue({ id_classe_cible: null }, { emitEvent: false });
     });
+    this.form.controls.id_classe_cible.valueChanges.subscribe((v) => this.classeCible.set(v));
 
     this.form.valueChanges.subscribe(() => this.apercu.set(null));
   }
@@ -101,6 +129,8 @@ export class ReinscriptionComponent implements OnInit {
       id_classe_source: v.id_classe_source || null,
       id_classe_cible: v.id_classe_cible,
       date_inscription: v.date_inscription || null,
+      // L'aperçu porte sur toute la classe ; la validation, sur les cochés.
+      eleves: valider ? this.coches() : null,
       valider,
     };
   }
@@ -125,7 +155,10 @@ export class ReinscriptionComponent implements OnInit {
   }
 
   previsualiser(): void {
-    this.appeler(false, (r) => this.apercu.set(r));
+    this.appeler(false, (r) => {
+      this.apercu.set(r);
+      this.coches.set(r.eleves.filter((e) => e.retenu).map((e) => e.id));
+    });
   }
 
   valider(): void {
@@ -135,9 +168,22 @@ export class ReinscriptionComponent implements OnInit {
     });
   }
 
+  basculer(id: number): void {
+    this.coches.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
+  }
+
+  toutCocher(): void {
+    this.coches.set((this.apercu()?.eleves ?? []).filter((e) => !e.deja_inscrit).map((e) => e.id));
+  }
+
+  toutDecocher(): void {
+    this.coches.set([]);
+  }
+
   recommencer(): void {
     this.resultat.set(null);
     this.apercu.set(null);
+    this.coches.set([]);
   }
 
   private message(erreur: unknown): string {

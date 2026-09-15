@@ -36,7 +36,7 @@ from datetime import date
 from django.db import transaction
 from django.db.models import Count, Q
 
-from . import finances, models
+from . import finances, models, photos
 
 
 class ErreurScolarite(Exception):
@@ -245,7 +245,7 @@ def eleves_a_reinscrire(ecole, annee_source, classe_source=None):
 
 @transaction.atomic
 def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=None,
-               date_inscription=None, appliquer=True):
+               date_inscription=None, appliquer=True, eleves=None):
     """
     Réinscrit en bloc les élèves d'une classe dans une classe de l'année
     suivante.
@@ -259,6 +259,12 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
     compté « ignoré », jamais dupliqué — la contrainte d'unicité
     (élève, année) l'interdirait de toute façon, mais mieux vaut un décompte
     lisible qu'une erreur d'intégrité.
+
+    C'est un cas d'exception : une classe ne revient pas entière d'une année
+    sur l'autre — des élèves partent, redoublent, changent de classe. `eleves`
+    restreint donc la réinscription aux identifiants cochés à l'aperçu. Les
+    autres restent dans la file « à réinscrire », d'où l'on peut les
+    réinscrire ailleurs ou enregistrer leur départ.
     """
     date_inscription = date_inscription or annee_cible.date_debut or date.today()
     _verifier_ecole(ecole, annee_source=annee_source, annee_cible=annee_cible,
@@ -290,8 +296,23 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
         .values_list("id_eleve_id", flat=True)
     )
 
-    a_creer = [i.id_eleve for i in inscriptions if i.id_eleve_id not in deja]
-    ignores = len(inscriptions) - len(a_creer)
+    candidats = {i.id_eleve_id for i in inscriptions}
+    selection = None if eleves is None else {int(e) for e in eleves}
+    if selection is not None and selection - candidats:
+        raise ErreurScolarite(
+            f"{len(selection - candidats)} élève(s) coché(s) ne font pas partie des élèves "
+            "à réinscrire" + (f" de {classe_source.nom}." if classe_source is not None else ".")
+        )
+
+    def retenu(inscription):
+        return (inscription.id_eleve_id not in deja
+                and (selection is None or inscription.id_eleve_id in selection))
+
+    a_creer = [i.id_eleve for i in inscriptions if retenu(i)]
+    ignores = sum(1 for i in inscriptions if i.id_eleve_id in deja)
+    non_retenus = len(inscriptions) - ignores - len(a_creer)
+    if appliquer and selection is not None and not a_creer:
+        raise ErreurScolarite("Aucun élève coché : rien à réinscrire.")
 
     # L'effectif visé dépasse-t-il la capacité ? On avertit sans bloquer :
     # une classe surchargée en début d'année est une réalité, pas une erreur
@@ -304,6 +325,7 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
             f"capacité de {classe_cible.capacite_max}."
         )
 
+    frais_emis = 0
     if appliquer and a_creer:
         for eleve in a_creer:
             # Passe par save() plutôt que bulk_create : c'est Inscription.save()
@@ -314,6 +336,11 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
                 id_annee_scolaire=annee_cible,
                 date_inscription=date_inscription,
             )
+            # Même règle qu'à l'inscription : droits et mensualités d'office,
+            # et les frais au choix de l'an passé reconduits.
+            frais_emis += len(finances.emettre_frais_inscription(
+                eleve, annee_cible, date_inscription,
+                finances.types_optionnels_de(eleve, annee_source), classe=classe_cible))
         recaler_effectif(classe_cible)
         classe_cible.refresh_from_db(fields=["effectif"])
 
@@ -325,7 +352,17 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
         "date_inscription": date_inscription.isoformat(),
         "concernes": len(inscriptions),
         "reinscrits": len(a_creer),
+        "frais_emis": frais_emis,
         "ignores": ignores,
+        "non_retenus": non_retenus,
+        # La liste à cocher de l'écran : qui suit la classe, qui ne revient pas.
+        "eleves": [{
+            "id": i.id_eleve_id,
+            "matricule": i.id_eleve.matricule,
+            "nom_complet": f"{i.id_eleve.prenom} {i.id_eleve.nom}".strip(),
+            "deja_inscrit": i.id_eleve_id in deja,
+            "retenu": retenu(i),
+        } for i in inscriptions],
         "effectif_cible": classe_cible.effectif if appliquer else effectif_vise,
         "avertissement": avertissement,
         "applique": bool(appliquer),
@@ -398,20 +435,22 @@ def eleves_sans_inscription(ecole, annee, classe_source=None, niveau_source=None
             "id_derniere_classe": inscription.id_classe_id,
             "derniere_classe": inscription.id_classe.nom,
             "id_dernier_niveau": inscription.id_classe.id_niveau_id,
-            "dernier_niveau": inscription.id_classe.id_niveau.libelle,
+            "dernier_niveau": inscription.id_classe.libelle_niveau,
         })
     lignes.sort(key=lambda l: (l["derniere_classe"], l["nom"], l["prenom"]))
     return lignes
 
 
 @transaction.atomic
-def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None):
+@transaction.atomic
+def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None, frais_optionnels=None):
     """
     Réinscrit **un** élève dans une classe de l'année suivante.
 
-    L'inscription naît « pré-inscrite » : la place est retenue et les frais
-    pourront être émis, mais l'élève n'entre dans la liste des inscrits qu'au
-    premier règlement (voir `finances.confirmer_inscription`).
+    L'inscription naît « incomplète » : la place est retenue et les frais sont
+    émis, mais l'élève n'entre dans la liste des inscrits qu'une fois les
+    droits d'inscription et le premier mois réglés
+    (voir `finances.confirmer_inscription`).
 
     Le dépassement de capacité avertit sans bloquer, comme pour la
     réinscription en masse : une classe surchargée à la rentrée est une
@@ -448,6 +487,12 @@ def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None):
             "passez par « Inscrire un élève »."
         )
 
+    # Sans choix explicite, les frais au choix de l'an passé sont reconduits.
+    if frais_optionnels is None:
+        frais_optionnels = finances.types_optionnels_de(eleve, precedente.id_annee_scolaire)
+    elif any(t.id_ecole_id != ecole.pk for t in frais_optionnels):
+        raise ErreurScolarite("Ce type de frais appartient à une autre école.")
+
     inscription = models.Inscription.objects.create(
         id_eleve=eleve,
         id_classe=classe_cible,
@@ -456,6 +501,8 @@ def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None):
     )
     recaler_effectif(classe_cible)
     classe_cible.refresh_from_db(fields=["effectif"])
+    frais = finances.emettre_frais_inscription(
+        eleve, annee_cible, date_inscription, frais_optionnels, classe=classe_cible)
 
     avertissement = None
     if classe_cible.capacite_max and classe_cible.effectif > classe_cible.capacite_max:
@@ -477,6 +524,7 @@ def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None):
         "date_inscription": date_inscription.isoformat(),
         "statut": inscription.statut,
         "statut_libelle": inscription.get_statut_display(),
+        "frais_emis": len(frais),
         "effectif_classe": classe_cible.effectif,
         "avertissement": avertissement,
     }
@@ -552,6 +600,8 @@ def dossier(ecole, eleve):
             "date_naissance": eleve.date_naissance,
             "adresse": eleve.adresse,
             "photo_url": eleve.photo_url,
+            # La photo se lit par GET /api/eleves/{id}/photo/, jamais par une URL publique.
+            "a_photo": photos.chemin(eleve) is not None,
             "date_premiere_inscription": eleve.date_premiere_inscription,
             "statut": eleve.statut,
             "statut_libelle": eleve.get_statut_display(),

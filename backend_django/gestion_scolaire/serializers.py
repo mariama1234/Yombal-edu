@@ -272,14 +272,21 @@ class PeriodeScolaireSerializer(serializers.ModelSerializer):
 
 
 class NiveauSerializer(serializers.ModelSerializer):
+    # Montant de chaque frais pour ce niveau, par identifiant de type de frais.
+    # Un frais absent applique son montant par défaut.
+    tarifs = serializers.SerializerMethodField()
+
     class Meta:
         model = models.Niveau
         fields = "__all__"
         read_only_fields = ["id_ecole"]
 
+    def get_tarifs(self, obj) -> dict:
+        return {str(t.id_type_frais_id): finances.montant_json(t.montant) for t in obj.tarifs.all()}
+
 
 class ClasseSerializer(serializers.ModelSerializer):
-    niveau_libelle = serializers.CharField(source="id_niveau.libelle", read_only=True)
+    niveau_libelle = serializers.CharField(source="id_niveau.libelle", read_only=True, allow_null=True)
     enseignant_nom = serializers.SerializerMethodField()
 
     class Meta:
@@ -435,6 +442,11 @@ class EleveInscriptionSerializer(serializers.Serializer):
     parent_email = serializers.EmailField(required=False, allow_blank=True)
     parent_lien = serializers.ChoiceField(choices=models.EleveParent.LienParente.choices, required=False)
 
+    # Section "Frais" : inscription et mensualités sont émises d'office ; ces
+    # types-là s'y ajoutent (transport, demi-pension, fournitures…).
+    frais_optionnels = serializers.PrimaryKeyRelatedField(
+        queryset=models.TypeFrais.objects.all(), many=True, required=False)
+
     def validate(self, attrs):
         """La classe et l'année visées doivent relever de l'école de l'élève."""
         ecole = attrs["id_ecole"]
@@ -452,6 +464,10 @@ class EleveInscriptionSerializer(serializers.Serializer):
         if classe.id_annee_scolaire_id != annee.pk:
             raise serializers.ValidationError(
                 {"id_classe": "Cette classe relève d'une autre année scolaire."}
+            )
+        if any(t.id_ecole_id != ecole.pk for t in attrs.get("frais_optionnels", [])):
+            raise serializers.ValidationError(
+                {"frais_optionnels": "Ce type de frais n'appartient pas à votre école."}
             )
         return attrs
 
@@ -478,6 +494,12 @@ class EleveInscriptionSerializer(serializers.Serializer):
             id_classe=validated_data["id_classe"],
             id_annee_scolaire=validated_data["id_annee_scolaire"],
             date_inscription=validated_data["date_inscription"],
+        )
+
+        # C'est cette liste que la famille règle ensuite à la caisse.
+        finances.emettre_frais_inscription(
+            eleve, validated_data["id_annee_scolaire"], validated_data["date_inscription"],
+            validated_data.get("frais_optionnels", []), classe=validated_data["id_classe"],
         )
 
         if validated_data.get("parent_nom_complet"):
@@ -551,6 +573,10 @@ class ReinscriptionEleveSerializer(serializers.Serializer):
     """
     id_classe = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all())
     date_inscription = serializers.DateField(required=False, allow_null=True)
+    # Frais au choix pour la nouvelle année. Absent : ceux de l'an passé sont
+    # reconduits ; liste vide : aucun.
+    frais_optionnels = serializers.PrimaryKeyRelatedField(
+        queryset=models.TypeFrais.objects.all(), many=True, required=False)
 
 
 class ReinscriptionSerializer(serializers.Serializer):
@@ -566,6 +592,9 @@ class ReinscriptionSerializer(serializers.Serializer):
     id_classe_source = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all(),
                                                           required=False, allow_null=True)
     date_inscription = serializers.DateField(required=False, allow_null=True)
+    # Élèves cochés à l'aperçu. Absent : toute la classe de départ.
+    eleves = serializers.ListField(child=serializers.IntegerField(), required=False,
+                                   allow_null=True)
     valider = serializers.BooleanField(default=False)
 
 
@@ -687,11 +716,38 @@ class EmploiDuTempsSerializer(serializers.ModelSerializer):
 
 # ---------- Module financier ----------
 
-class TypeFraisSerializer(serializers.ModelSerializer):
+class TypeFraisSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
+    """
+    Un frais du catalogue, sous le nom que l'école lui donne.
+
+    Deux garde-fous : deux frais ne portent pas le même nom dans une école, et
+    il n'y a qu'un seul type de nature « inscription » et un seul de nature
+    « mensualité » — ce sont eux que l'inscription facture d'office.
+    """
+    champ_unique = "libelle"
+    message_unicite = "Votre établissement a déjà un frais portant ce nom."
+
+    nature_libelle = serializers.CharField(source="get_nature_display", read_only=True)
+
     class Meta:
         model = models.TypeFrais
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        nature = attrs.get("nature", getattr(self.instance, "nature", models.TypeFrais.Nature.AUTRE))
+        requete = self.context.get("request")
+        if requete is not None and nature in finances.TYPES_D_OFFICE:
+            doublon = (models.TypeFrais.objects
+                       .filter(id_ecole_id=requete.user.id_ecole_id, nature=nature)
+                       .exclude(pk=getattr(self.instance, "pk", None)).first())
+            if doublon is not None:
+                raise serializers.ValidationError({
+                    "nature": f"« {doublon.libelle} » a déjà cette nature : modifiez-le "
+                              "plutôt que d'en créer un second.",
+                })
+        return attrs
 
 
 class FraisEleveSerializer(serializers.ModelSerializer):
@@ -700,7 +756,7 @@ class FraisEleveSerializer(serializers.ModelSerializer):
     solde_restant = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     eleve_nom = serializers.CharField(source="id_eleve.nom", read_only=True)
     eleve_prenom = serializers.CharField(source="id_eleve.prenom", read_only=True)
-    type_frais = serializers.CharField(source="id_type_frais.get_libelle_display",
+    type_frais = serializers.CharField(source="id_type_frais.libelle",
                                        read_only=True)
     en_retard = serializers.SerializerMethodField()
 
@@ -928,7 +984,7 @@ class RecuSerializer(serializers.ModelSerializer):
 
 class RelanceSerializer(serializers.ModelSerializer):
     eleve_nom = serializers.SerializerMethodField()
-    type_frais = serializers.CharField(source="id_frais_eleve.id_type_frais.get_libelle_display",
+    type_frais = serializers.CharField(source="id_frais_eleve.id_type_frais.libelle",
                                        read_only=True)
 
     class Meta:
@@ -1000,6 +1056,10 @@ class EncaissementSerializer(serializers.Serializer):
                                                   allow_null=True, max_length=100)
     commentaire = serializers.CharField(required=False, allow_blank=True,
                                         allow_null=True)
+    # Frais cochés à l'écran : le paiement ne s'impute que sur eux. Absent, il
+    # solde les frais ouverts du plus ancien au plus récent.
+    frais = serializers.ListField(child=serializers.IntegerField(), required=False,
+                                  allow_null=True, allow_empty=True)
 
 
 class GenerationRelancesSerializer(serializers.Serializer):
@@ -1201,3 +1261,54 @@ class JournalActiviteSerializer(serializers.ModelSerializer):
         if not obj.id_utilisateur:
             return None
         return f"{obj.id_utilisateur.prenom} {obj.id_utilisateur.nom}"
+
+
+# ---------- Corbeille ----------
+
+class CorbeilleSerializer(serializers.ModelSerializer):
+    """
+    Une ligne de la corbeille, sans son instantané : `donnees` contient des
+    lignes brutes — mots de passe hachés compris quand c'est un compte — qui
+    n'ont rien à faire dans une réponse d'API.
+    """
+    type_libelle = serializers.SerializerMethodField()
+    emporte = serializers.SerializerMethodField()
+    supprime_par = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.Corbeille
+        fields = ["id", "modele", "entite", "id_entite", "libelle", "type_libelle",
+                  "resume", "emporte", "nb_elements", "supprime_par", "id_utilisateur",
+                  "date_suppression"]
+        read_only_fields = fields
+
+    def get_type_libelle(self, obj) -> str:
+        from django.apps import apps
+        try:
+            return str(apps.get_model(obj.modele)._meta.verbose_name).capitalize()
+        except LookupError:
+            return obj.entite
+
+    def get_emporte(self, obj) -> str:
+        """« 30 inscriptions, 4 évaluations » : ce que restaurer remettra aussi."""
+        return ", ".join(f"{nombre} {libelle}" for libelle, nombre in (obj.resume or {}).items())
+
+    def get_supprime_par(self, obj) -> str | None:
+        if not obj.id_utilisateur:
+            return None
+        return f"{obj.id_utilisateur.prenom} {obj.id_utilisateur.nom}"
+
+
+# ---------- Grille des tarifs ----------
+
+class LigneTarifSerializer(serializers.Serializer):
+    """Une case de la grille ; vide (`null`), le montant par défaut du frais s'applique."""
+    id_niveau = serializers.IntegerField()
+    id_type_frais = serializers.IntegerField()
+    montant = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0,
+                                       required=False, allow_null=True)
+
+
+class GrilleTarifsSerializer(serializers.Serializer):
+    """Entrée de POST /api/tarifs/grille/ : seules les cases modifiées sont envoyées."""
+    tarifs = LigneTarifSerializer(many=True, allow_empty=False)

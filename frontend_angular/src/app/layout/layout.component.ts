@@ -22,6 +22,12 @@ export class LayoutComponent implements OnInit {
 
   ngOnInit(): void {
     this.annees.charger();
+    // Le profil n'était chargé qu'à la connexion : après un rafraîchissement de
+    // la page il manquait, et tout ce qui dépend du rôle — l'envoi de la photo
+    // d'un élève, la suppression définitive dans la corbeille — disparaissait.
+    if (this.auth.isAuthenticated && !this.auth.currentUser()) {
+      this.auth.chargerProfil().subscribe({ error: () => {} });
+    }
   }
 
   initiales = computed(() => {

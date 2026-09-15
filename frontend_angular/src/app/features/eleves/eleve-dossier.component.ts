@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -6,6 +6,7 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { Classe, DossierEleve, Paginated, PeriodeScolaire } from '../../core/models/models';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
+import { AuthService } from '../../core/services/auth.service';
 import { EleveFinancesComponent } from './eleve-finances.component';
 import { ScolariteService } from './scolarite.service';
 
@@ -31,7 +32,7 @@ type Onglet = 'scolarite' | 'finances';
   imports: [CommonModule, ReactiveFormsModule, RouterLink, EleveFinancesComponent],
   templateUrl: './eleve-dossier.component.html',
 })
-export class EleveDossierComponent implements OnInit {
+export class EleveDossierComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private http = inject(HttpClient);
   private fb = inject(FormBuilder);
@@ -55,6 +56,15 @@ export class EleveDossierComponent implements OnInit {
   message = signal<string | null>(null);
   occupe = signal(false);
   chargement = signal(true);
+
+  private auth = inject(AuthService);
+  /** Seul un administrateur ajoute, change ou retire la photo. */
+  estAdmin = computed(() => this.auth.currentUser()?.role === 'admin');
+  /** Photo lue en binaire, affichée par une adresse locale au navigateur. */
+  photo = signal<string | null>(null);
+  photoEnCours = signal(false);
+  /** Un fichier est glissé au-dessus de la zone photo. */
+  survol = signal(false);
 
   /**
    * L'élève a-t-il besoin d'être réinscrit pour l'année affichée ?
@@ -131,12 +141,91 @@ export class EleveDossierComponent implements OnInit {
       next: (d) => {
         this.dossier.set(d);
         this.chargement.set(false);
+        this.chargerPhoto(d.eleve.a_photo);
       },
       error: () => {
         this.erreur.set("Ce dossier est introuvable.");
         this.chargement.set(false);
       },
     });
+  }
+
+  private chargerPhoto(aPhoto: boolean): void {
+    this.libererPhoto();
+    if (!aPhoto) return;
+    this.scolarite.photo(this.idEleve).subscribe({
+      next: (image) => this.photo.set(URL.createObjectURL(image)),
+      error: () => this.photo.set(null),
+    });
+  }
+
+  private libererPhoto(): void {
+    const adresse = this.photo();
+    if (adresse) URL.revokeObjectURL(adresse);
+    this.photo.set(null);
+  }
+
+  choisirPhoto(evenement: Event): void {
+    const champ = evenement.target as HTMLInputElement;
+    const fichier = champ.files?.[0];
+    // Vidé tout de suite : renvoyer le même fichier après une erreur doit rester possible.
+    champ.value = '';
+    if (fichier) this.envoyerPhoto(fichier);
+  }
+
+  /** Glisser-déposer d'une image sur la zone photo. */
+  deposerPhoto(evenement: DragEvent): void {
+    evenement.preventDefault();
+    this.survol.set(false);
+    const fichier = evenement.dataTransfer?.files?.[0];
+    if (!fichier) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(fichier.type)) {
+      this.erreur.set('Format non reconnu : déposez une photo JPEG, PNG ou WebP.');
+      return;
+    }
+    this.envoyerPhoto(fichier);
+  }
+
+  private envoyerPhoto(fichier: File): void {
+    if (fichier.size > 3 * 1024 * 1024) {
+      this.erreur.set('Photo trop volumineuse (maximum 3 Mo).');
+      return;
+    }
+    this.photoEnCours.set(true);
+    this.erreur.set(null);
+    this.message.set(null);
+    this.scolarite.envoyerPhoto(this.idEleve, fichier).subscribe({
+      next: () => {
+        this.photoEnCours.set(false);
+        this.message.set('Photo enregistrée.');
+        this.chargerPhoto(true);
+      },
+      error: (e) => {
+        this.photoEnCours.set(false);
+        this.erreur.set(this.messageErreur(e));
+      },
+    });
+  }
+
+  retirerPhoto(): void {
+    if (!confirm('Retirer la photo de ce dossier ?')) return;
+    this.photoEnCours.set(true);
+    this.erreur.set(null);
+    this.scolarite.supprimerPhoto(this.idEleve).subscribe({
+      next: () => {
+        this.photoEnCours.set(false);
+        this.libererPhoto();
+        this.message.set('Photo retirée.');
+      },
+      error: (e) => {
+        this.photoEnCours.set(false);
+        this.erreur.set(this.messageErreur(e));
+      },
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.libererPhoto();
   }
 
   ouvrir(mouvement: Mouvement): void {

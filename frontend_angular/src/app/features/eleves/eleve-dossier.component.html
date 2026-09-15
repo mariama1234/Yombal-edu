@@ -63,7 +63,53 @@
       </div>
       <span class="mono">{{ d.eleve.matricule }}</span>
     </div>
-    <div class="form-grid">
+    <div style="display:flex; gap:22px; align-items:flex-start; flex-wrap:wrap;">
+      <div style="display:flex; flex-direction:column; align-items:center; gap:8px; width:150px;">
+        @if (estAdmin()) {
+          <!-- La photo elle-même est la zone d'envoi : un clic ou un glisser-déposer suffit. -->
+          <label style="cursor:pointer; display:block;"
+                 [title]="photo() ? 'Cliquer pour changer la photo' : 'Cliquer pour ajouter une photo'"
+                 (dragover)="$event.preventDefault(); survol.set(true)"
+                 (dragleave)="survol.set(false)"
+                 (drop)="deposerPhoto($event)">
+            @if (photo()) {
+              <img [src]="photo()" [alt]="'Photo de ' + d.eleve.prenom + ' ' + d.eleve.nom"
+                   [style.outline]="survol() ? '2px dashed var(--orange-500)' : 'none'"
+                   style="width:132px; height:160px; object-fit:cover; border-radius:10px; border:1px solid var(--line);">
+            } @else {
+              <div [style.border-color]="survol() ? 'var(--orange-500)' : 'var(--line)'"
+                   style="width:132px; height:160px; border:2px dashed var(--line); border-radius:10px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:var(--ink-400); font-size:12px; text-align:center; padding:8px;">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+                {{ photoEnCours() ? 'Envoi…' : 'Cliquer ou déposer une photo ici' }}
+              </div>
+            }
+            <input type="file" accept="image/jpeg,image/png,image/webp" style="display:none;"
+                   [disabled]="photoEnCours()" (change)="choisirPhoto($event)">
+          </label>
+
+          <label class="btn-ghost" style="cursor:pointer; padding:7px 12px; font-size:12.5px; justify-content:center;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+            {{ photoEnCours() ? 'Envoi…' : (photo() ? 'Changer la photo' : 'Téléverser une photo') }}
+            <input type="file" accept="image/jpeg,image/png,image/webp" style="display:none;"
+                   [disabled]="photoEnCours()" (change)="choisirPhoto($event)">
+          </label>
+          <span style="font-size:11px; color:var(--ink-400); text-align:center;">JPEG, PNG ou WebP · 3 Mo max</span>
+          @if (photo()) {
+            <button type="button" class="panel-link" style="color:var(--red); font-size:12.5px;"
+                    [disabled]="photoEnCours()" (click)="retirerPhoto()">Retirer la photo</button>
+          }
+        } @else {
+          @if (photo()) {
+            <img [src]="photo()" [alt]="'Photo de ' + d.eleve.prenom + ' ' + d.eleve.nom"
+                 style="width:132px; height:160px; object-fit:cover; border-radius:10px; border:1px solid var(--line);">
+          } @else {
+            <div class="avatar" style="width:132px; height:160px; border-radius:10px; font-size:34px;">
+              {{ d.eleve.prenom.charAt(0) + d.eleve.nom.charAt(0) }}
+            </div>
+          }
+        }
+      </div>
+    <div class="form-grid" style="flex:1; min-width:260px;">
       <div class="field"><label>Sexe</label><div class="mono">{{ d.eleve.sexe ?? '—' }}</div></div>
       <div class="field">
         <label>Date de naissance</label>
@@ -82,6 +128,7 @@
         <label>Année scolaire</label>
         <div class="mono">{{ d.scolarite_courante?.annee ?? '—' }}</div>
       </div>
+    </div>
     </div>
   </div>
 

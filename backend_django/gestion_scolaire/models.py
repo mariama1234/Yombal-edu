@@ -237,6 +237,8 @@ class DossierAdministratif(models.Model):
 class Niveau(models.Model):
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="niveaux", db_column="id_ecole")
     libelle = models.CharField(max_length=50)
+    # Les montants des frais pour ce niveau vivent dans la grille des tarifs
+    # (`TarifNiveau`), un par type de frais.
 
     class Meta:
         db_table = "niveau"
@@ -273,7 +275,10 @@ class Enseignant(models.Model):
 class Classe(models.Model):
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="classes", db_column="id_ecole")
     id_annee_scolaire = models.ForeignKey(AnneeScolaire, on_delete=models.CASCADE, related_name="classes", db_column="id_annee_scolaire")
-    id_niveau = models.ForeignKey(Niveau, on_delete=models.CASCADE, related_name="classes", db_column="id_niveau")
+    # Facultatif : une école peut nommer ses classes sans les ranger par niveau.
+    # Supprimer un niveau détache donc ses classes au lieu de les supprimer.
+    id_niveau = models.ForeignKey(Niveau, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="classes", db_column="id_niveau")
     nom = models.CharField(max_length=50)
     effectif = models.PositiveIntegerField(default=0)
     capacite_max = models.PositiveIntegerField()
@@ -287,19 +292,24 @@ class Classe(models.Model):
     def __str__(self):
         return self.nom
 
+    @property
+    def libelle_niveau(self):
+        """Libellé du niveau, ou `None` : le niveau d'une classe est facultatif."""
+        return self.id_niveau.libelle if self.id_niveau_id else None
+
 
 class Inscription(models.Model):
     class Statut(models.TextChoices):
         # Une inscription naît « en attente » : la place est réservée, la
-        # classe est choisie, les frais peuvent être émis — mais l'élève ne
-        # compte pas encore parmi les inscrits de l'année. Le premier
-        # encaissement la fait passer « en cours » (voir
-        # `finances.confirmer_inscription`). Sans cet état intermédiaire, un
-        # élève pré-inscrit et jamais payé était indiscernable d'un élève à
-        # jour dans toutes les listes.
-        EN_ATTENTE = "en_attente", "Pré-inscrit"
+        # classe est choisie, les frais sont émis — mais l'élève ne compte pas
+        # encore parmi les inscrits de l'année. C'est la règle de l'école : il
+        # est inscrit quand les droits d'inscription ET le premier mois sont
+        # réglés (voir `finances.confirmer_inscription`) ; avant, il est
+        # « inscrit incomplet ». Sans cet état intermédiaire, un élève jamais
+        # payé était indiscernable d'un élève à jour dans toutes les listes.
+        EN_ATTENTE = "en_attente", "Inscrit incomplet"
         # « Inscrit » et non « En cours » : c'est le mot que l'école emploie,
-        # et le seul qui s'oppose lisiblement à « Pré-inscrit » dans une liste.
+        # et le seul qui s'oppose lisiblement à « Inscrit incomplet ».
         # « En cours » se lisait comme une démarche inachevée.
         EN_COURS = "en_cours", "Inscrit"
         TERMINEE = "terminee", "Terminée"
@@ -571,17 +581,23 @@ class EmploiDuTemps(models.Model):
 # =====================================================================
 
 class TypeFrais(models.Model):
-    class Libelle(models.TextChoices):
-        INSCRIPTION = "inscription", "Inscription"
+    """
+    Un frais du catalogue de l'école, sous le nom qu'elle lui donne.
+
+    Le nom est libre : une école coranique, un collège ou une crèche n'appellent
+    pas leurs frais de la même façon, et le logiciel n'a pas à le leur imposer.
+    Seule la `nature` pèse sur les règles : les frais d'inscription et la
+    mensualité sont facturés d'office et font un inscrit, tout le reste se coche.
+    """
+
+    class Nature(models.TextChoices):
+        INSCRIPTION = "inscription", "Frais d'inscription"
         MENSUALITE = "mensualite", "Mensualité"
-        DEMI_PENSION = "demi_pension", "Demi-pension"
-        TRANSPORT = "transport", "Transport"
-        UNIFORME = "uniforme", "Uniforme"
-        FOURNITURES = "fournitures", "Fournitures"
-        AUTRE = "autre", "Autre"
+        AUTRE = "autre", "Autre frais (à cocher)"
 
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="types_frais", db_column="id_ecole")
-    libelle = models.CharField(max_length=20, choices=Libelle.choices)
+    libelle = models.CharField(max_length=100)
+    nature = models.CharField(max_length=15, choices=Nature.choices, default=Nature.AUTRE)
     montant_defaut = models.DecimalField(max_digits=12, decimal_places=2)
     frequence = models.CharField(max_length=100, blank=True, null=True)
 
@@ -590,7 +606,31 @@ class TypeFrais(models.Model):
         ordering = ["libelle"]
 
     def __str__(self):
-        return self.get_libelle_display()
+        return self.libelle
+
+
+class TarifNiveau(models.Model):
+    """
+    Montant d'un frais pour un niveau.
+
+    L'inscription en 3ème n'est pas celle de 4ème, et le transport ou la cantine
+    peuvent varier eux aussi. Sans ligne pour un niveau, c'est le montant par
+    défaut du type de frais qui s'applique : la grille ne stocke que les cases
+    renseignées.
+    """
+    id_niveau = models.ForeignKey(Niveau, on_delete=models.CASCADE, related_name="tarifs",
+                                  db_column="id_niveau")
+    id_type_frais = models.ForeignKey(TypeFrais, on_delete=models.CASCADE, related_name="tarifs",
+                                      db_column="id_type_frais")
+    montant = models.DecimalField(max_digits=12, decimal_places=2,
+                                  validators=[MinValueValidator(Decimal("0"))])
+
+    class Meta:
+        db_table = "tarif_niveau"
+        ordering = ["id_niveau", "id_type_frais"]
+        constraints = [
+            models.UniqueConstraint(fields=["id_niveau", "id_type_frais"], name="uq_tarif_niveau_type"),
+        ]
 
 
 class FraisEleve(models.Model):
@@ -1006,6 +1046,7 @@ class JournalActivite(models.Model):
         CREATION = "creation", "Création"
         MODIFICATION = "modification", "Modification"
         SUPPRESSION = "suppression", "Suppression"
+        RESTAURATION = "restauration", "Restauration"
         EXPORT = "export", "Export"
 
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="journal_activite", db_column="id_ecole")
@@ -1030,3 +1071,43 @@ class JournalActivite(models.Model):
 
     def __str__(self):
         return f"{self.date_action:%d/%m/%Y %H:%M} — {self.get_action_display()} {self.entite or ''}"
+
+
+# =====================================================================
+# 10. CORBEILLE
+# =====================================================================
+
+class Corbeille(models.Model):
+    """
+    Un élément supprimé, gardé de quoi le remettre en place.
+
+    La suppression reste une vraie suppression : les lignes quittent leurs
+    tables, et aucune requête métier n'a à se demander si elle doit ignorer des
+    lignes « marquées supprimées ». Ce qui est conservé ici, c'est l'instantané
+    pris juste avant — l'élément, tout ce que la suppression a emporté en
+    cascade, et les références mises à NULL — que `corbeille.restaurer()`
+    réinsère à l'identique, clés primaires comprises.
+    """
+    id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="corbeille", db_column="id_ecole")
+    id_utilisateur = models.ForeignKey(Utilisateur, on_delete=models.SET_NULL, null=True, blank=True,
+                                        related_name="suppressions", db_column="id_utilisateur")
+    # Label du modèle (« gestion_scolaire.Classe ») et table, pour filtrer par module.
+    modele = models.CharField(max_length=100)
+    entite = models.CharField(max_length=100)
+    id_entite = models.PositiveBigIntegerField()
+    libelle = models.CharField(max_length=255)
+    donnees = models.JSONField()
+    # Ce que la suppression a emporté avec l'élément : {« inscriptions » : 30, …}
+    resume = models.JSONField(default=dict, blank=True)
+    nb_elements = models.PositiveIntegerField(default=1)
+    date_suppression = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "corbeille"
+        ordering = ["-date_suppression", "-id"]
+        indexes = [
+            models.Index(fields=["id_ecole", "-date_suppression"], name="idx_corbeille_ecole_date"),
+        ]
+
+    def __str__(self):
+        return self.libelle

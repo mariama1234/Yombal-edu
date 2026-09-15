@@ -1,27 +1,38 @@
 <p class="module-eyebrow">Gestion des élèves</p>
 <div class="page-head">
   <div>
-    <h1>Réinscrire une promotion</h1>
-    <p>Fait passer les élèves d'une classe à la classe de l'année suivante, en une opération.</p>
+    <h1>Réinscrire une classe en bloc</h1>
+    <p>
+      Cas d'exception : d'une année à l'autre, une classe ne garde pas forcément les mêmes élèves.
+      Le cas courant reste la file « À réinscrire », élève par élève.
+    </p>
   </div>
-  <a class="btn-ghost" routerLink="/eleves">← Retour aux élèves</a>
+  <a class="btn-ghost" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }">← File « À réinscrire »</a>
 </div>
 
 @if (resultat(); as r) {
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">Réinscription terminée ✅</div>
-      <a class="panel-link" routerLink="/eleves">Voir les élèves →</a>
+      <a class="panel-link" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }">Voir la file « À réinscrire » →</a>
     </div>
     <table class="simple">
       <tbody>
         <tr><td>Promotion</td><td class="mono">{{ r.classe_source }} → {{ r.classe_cible }}</td></tr>
         <tr><td>Années</td><td class="mono">{{ r.annee_source }} → {{ r.annee_cible }}</td></tr>
         <tr><td>Élèves réinscrits</td><td class="mono">{{ r.reinscrits }}</td></tr>
+        <tr><td>Non retenus (restent à réinscrire)</td><td class="mono">{{ r.non_retenus }}</td></tr>
+        <tr><td>Lignes de frais émises</td><td class="mono">{{ r.frais_emis }}</td></tr>
         <tr><td>Déjà inscrits (ignorés)</td><td class="mono">{{ r.ignores }}</td></tr>
         <tr><td>Effectif de la classe d'arrivée</td><td class="mono">{{ r.effectif_cible }}</td></tr>
       </tbody>
     </table>
+    @if (r.non_retenus) {
+      <p class="hint" style="margin:12px 0 0;">
+        Les {{ r.non_retenus }} élève(s) non retenu(s) sont toujours dans la file « À réinscrire » :
+        réinscris-les dans une autre classe, ou enregistre leur départ (radiation, transfert) depuis leur dossier.
+      </p>
+    }
     <div class="form-actions">
       <button type="button" class="btn-ghost" (click)="recommencer()">Réinscrire une autre classe</button>
     </div>
@@ -30,8 +41,8 @@
   <form class="form-section" [formGroup]="form" style="max-width:720px;">
     <div class="form-section-title">Périmètre</div>
     <div class="form-section-sub">
-      Seuls les élèves actifs dont l'inscription n'a pas été annulée sont repris :
-      un élève radié ou transféré ne remonte pas.
+      Seuls les élèves actifs de la classe de départ sont proposés : un élève radié ou transféré
+      n'apparaît pas. Les nouveaux élèves passent par « Inscrire un élève ».
     </div>
 
     @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
@@ -53,7 +64,7 @@
             <option [ngValue]="c.id">{{ c.nom }} ({{ c.effectif }} élèves)</option>
           }
         </select>
-        <span class="hint">Une classe à la fois : elle part entière vers la classe d'arrivée.</span>
+        <span class="hint">Une classe à la fois ; tu choisiras à l'aperçu qui la suit.</span>
       </div>
 
       <div class="field">
@@ -88,7 +99,7 @@
     </div>
 
     <div class="form-actions">
-      <a class="btn-ghost" routerLink="/eleves">Annuler</a>
+      <a class="btn-ghost" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }">Annuler</a>
       <button type="button" class="btn-primary" (click)="previsualiser()" [disabled]="occupe()">
         {{ occupe() ? 'Calcul…' : 'Prévisualiser' }}
       </button>
@@ -102,28 +113,69 @@
       <div class="tile-grid-generic" style="margin-bottom:16px;">
         <div class="tile-generic">
           <div class="tile-generic-label">À réinscrire</div>
-          <div class="tile-generic-value">{{ a.reinscrits }}</div>
+          <div class="tile-generic-value">{{ coches().length }}</div>
           <div class="tile-generic-meta">{{ a.classe_source }} → {{ a.classe_cible }}</div>
         </div>
         <div class="tile-generic">
-          <div class="tile-generic-label">Déjà inscrits</div>
-          <div class="tile-generic-value">{{ a.ignores }}</div>
-          <div class="tile-generic-meta">ne seront pas dupliqués</div>
+          <div class="tile-generic-label">Ne suivent pas</div>
+          <div class="tile-generic-value">{{ nonRetenus() }}</div>
+          <div class="tile-generic-meta">restent dans « À réinscrire »</div>
         </div>
         <div class="tile-generic">
           <div class="tile-generic-label">Effectif visé</div>
-          <div class="tile-generic-value">{{ a.effectif_cible }}</div>
+          <div class="tile-generic-value">{{ effectifVise() }}</div>
           <div class="tile-generic-meta">dans {{ a.classe_cible }}</div>
         </div>
       </div>
 
-      @if (a.avertissement) {
-        <div class="form-error">⚠ {{ a.avertissement }}</div>
+      <p style="font-size:13px; color:var(--ink-600); margin:0 0 10px;">
+        Décoche les élèves qui ne suivent pas la classe (départ, redoublement, changement de classe).
+        Ils restent dans la file « À réinscrire » : tu pourras les réinscrire ailleurs ou
+        enregistrer leur départ depuis leur dossier.
+      </p>
+      <div style="display:flex; gap:14px; margin-bottom:8px;">
+        <button type="button" class="panel-link" (click)="toutCocher()">Tout cocher</button>
+        <button type="button" class="panel-link" (click)="toutDecocher()">Tout décocher</button>
+      </div>
+
+      <table class="simple">
+        <thead>
+          <tr><th style="width:36px;"></th><th>Élève</th><th>Matricule</th><th></th></tr>
+        </thead>
+        <tbody>
+          @for (e of a.eleves; track e.id) {
+            <tr>
+              <td>
+                <input type="checkbox" [checked]="coches().includes(e.id)" [disabled]="e.deja_inscrit"
+                       (change)="basculer(e.id)" [attr.aria-label]="'Réinscrire ' + e.nom_complet">
+              </td>
+              <td [style.color]="coches().includes(e.id) || e.deja_inscrit ? null : 'var(--ink-400)'">
+                {{ e.nom_complet }}
+              </td>
+              <td class="mono">{{ e.matricule }}</td>
+              <td style="text-align:right; white-space:nowrap;">
+                @if (e.deja_inscrit) {
+                  <span style="font-size:12px; color:var(--ink-400);">déjà inscrit pour {{ a.annee_cible }}</span>
+                } @else if (!coches().includes(e.id)) {
+                  <a class="panel-link" [routerLink]="['/eleves', e.id, 'dossier']">Dossier →</a>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+
+      <p style="font-size:12.5px; color:var(--ink-400); margin:12px 0;">
+        Pour chaque élève réinscrit : droits d'inscription et mensualités émis d'office,
+        et reconduction des frais au choix de l'an passé (transport, demi-pension…).
+      </p>
+      @if (avertissement()) {
+        <div class="form-error">⚠ {{ avertissement() }}</div>
       }
 
       <div class="form-actions">
-        <button class="btn-primary" (click)="valider()" [disabled]="occupe() || a.reinscrits === 0">
-          {{ occupe() ? 'Réinscription…' : 'Réinscrire ' + a.reinscrits + ' élève(s)' }}
+        <button class="btn-primary" (click)="valider()" [disabled]="occupe() || coches().length === 0">
+          {{ occupe() ? 'Réinscription…' : 'Réinscrire ' + coches().length + ' élève(s)' }}
         </button>
       </div>
     </div>

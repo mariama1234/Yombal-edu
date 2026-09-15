@@ -1,4 +1,4 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
@@ -17,7 +17,7 @@ import {
  * Les trois populations d'une rentrée, qu'un seul tableau confondait :
  *
  * * `inscrits` — inscription confirmée par au moins un règlement ;
- * * `attente` — place réservée, rien d'encaissé : pré-inscrits ;
+ * * `attente` — droits d'inscription ou premier mois non réglés : inscrits incomplets ;
  * * `a_reinscrire` — inscrits une année précédente, pas encore repassés.
  *
  * La troisième est la plus importante : ces élèves-là n'apparaissaient dans
@@ -42,11 +42,16 @@ export class ElevesListComponent {
 
   eleves = signal<Eleve[]>([]);
   aReinscrire = signal<EleveAReinscrire[]>([]);
+  /** Classes de toutes les années : la liste déroulante les propose toutes. */
   classes = signal<Classe[]>([]);
   niveaux = signal<Niveau[]>([]);
   total = signal(0);
   loading = signal(true);
   filtreStatut = signal<string>('');
+  /** Classe choisie pour les vues Inscrits et Inscrits incomplets. */
+  filtreClasse = signal<string>('');
+  /** Tant que les classes ne sont pas chargées, on ne sait pas laquelle afficher. */
+  classesChargees = signal(false);
   vue = signal<Vue>('inscrits');
   erreur = signal<string | null>(null);
 
@@ -69,7 +74,26 @@ export class ElevesListComponent {
    */
   recherche = signal<string>('');
 
-  libelleAnnee = computed(() => this.annees.anneeCourante()?.libelle ?? '');
+  classeChoisie = computed(
+    () => this.classes().find((c) => String(c.id) === this.filtreClasse()) ?? null,
+  );
+
+  /** L'année de la classe choisie prime sur celle du bandeau haut. */
+  libelleAnnee = computed(() => {
+    const id = this.classeChoisie()?.id_annee_scolaire ?? this.annees.idAnnee();
+    return this.annees.annees().find((a) => a.id === id)?.libelle ?? '';
+  });
+
+  /** Les classes rangées par année, la plus récente d'abord. */
+  classesParAnnee = computed(() =>
+    this.annees
+      .annees()
+      .map((annee) => ({
+        annee,
+        classes: this.classes().filter((c) => c.id_annee_scolaire === annee.id),
+      }))
+      .filter((groupe) => groupe.classes.length > 0),
+  );
 
   /** Classes de l'année précédente, pour filtrer la file par classe de départ. */
   classesSource = computed(() => {
@@ -90,9 +114,23 @@ export class ElevesListComponent {
       this.charger();
     });
 
+    // Toutes années confondues : ne dépend pas du bandeau haut.
+    this.http
+      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/?page_size=200`)
+      .subscribe({
+        next: (r) => {
+          this.classes.set(r.results ?? []);
+          this.classesChargees.set(true);
+        },
+        error: () => {
+          this.classesChargees.set(true);
+        },
+      });
+
     // La liste suit l'année choisie dans le bandeau haut.
     effect(() => {
       this.annees.idAnnee();
+      untracked(() => this.retirerClasseDuneAutreAnnee());
       this.charger();
       this.chargerReferentiels();
     });
@@ -102,11 +140,6 @@ export class ElevesListComponent {
     this.http
       .get<Paginated<Niveau>>(`${environment.apiUrl}/niveaux/`)
       .subscribe({ next: (r) => this.niveaux.set(r.results ?? []), error: () => {} });
-    const annee = this.annees.idAnnee();
-    if (annee === null) return;
-    this.http
-      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/?id_annee_scolaire=${annee}`)
-      .subscribe({ next: (r) => this.classes.set(r.results ?? []), error: () => {} });
   }
 
   charger(): void {
@@ -143,13 +176,22 @@ export class ElevesListComponent {
     }
 
     const params: Record<string, string> = {};
+    const recherche = this.recherche().trim();
     if (this.filtreStatut()) params['statut'] = this.filtreStatut();
-    if (this.recherche().trim()) params['search'] = this.recherche().trim();
+    if (recherche) params['search'] = recherche;
+
+    // Sans classe choisie, tous les inscrits de l'année, toutes classes
+    // confondues ; la liste déroulante restreint ensuite à une classe.
+    const classe = untracked(() => this.classeChoisie());
+    // Une classe appartient à une année : choisir une classe de 2025-2026
+    // doit montrer ses élèves de 2025-2026, quelle que soit l'année du bandeau.
+    const anneeListe = recherche ? annee : classe?.id_annee_scolaire ?? annee;
+    if (classe && !recherche) params['classe'] = String(classe.id);
 
     // Une recherche porte sur toute l'école : on cherche un élève parce qu'on
     // ne sait pas où il est, l'année affichée ne doit pas le cacher.
-    if (annee !== null && !this.recherche().trim()) {
-      params['id_annee_scolaire'] = String(annee);
+    if (anneeListe !== null && !this.recherche().trim()) {
+      params['id_annee_scolaire'] = String(anneeListe);
       params['inscription'] = this.vue() === 'attente' ? 'en_attente' : 'confirmee';
     }
 
@@ -194,6 +236,21 @@ export class ElevesListComponent {
 
   filtrer(statut: string): void {
     this.filtreStatut.set(statut);
+    // « Tous » montre tous les élèves inscrits, dans toutes les classes.
+    if (!statut) this.filtreClasse.set('');
+    this.charger();
+  }
+
+  /** Changer d'année dans le bandeau retire une classe qui n'en fait pas partie. */
+  private retirerClasseDuneAutreAnnee(): void {
+    const actuelle = this.classeChoisie();
+    if (actuelle && actuelle.id_annee_scolaire !== this.annees.idAnnee()) {
+      this.filtreClasse.set('');
+    }
+  }
+
+  filtrerClasse(classe: string): void {
+    this.filtreClasse.set(classe);
     this.charger();
   }
 

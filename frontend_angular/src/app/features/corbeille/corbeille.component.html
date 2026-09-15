@@ -1,0 +1,87 @@
+<div class="page-head">
+  <div>
+    <p class="module-eyebrow">{{ module()?.titre ?? 'Administration' }}</p>
+    <h1>Corbeille</h1>
+    <p>
+      Les éléments supprimés restent ici jusqu'à ce qu'on les restaure ou qu'on les supprime
+      définitivement. Restaurer un élément remet aussi en place ce qui a été supprimé avec lui.
+      @if (!estAdmin()) { Vous n'y voyez que vos propres suppressions. }
+    </p>
+  </div>
+  @if (module(); as m) {
+    <div style="display:flex; gap:10px;">
+      <a class="btn-ghost" routerLink="/corbeille">Toute la corbeille</a>
+      <a class="btn-ghost" [routerLink]="['/', m.key]">← {{ m.titre }}</a>
+    </div>
+  }
+</div>
+
+@if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+@if (succes()) {
+  <div class="panel" style="font-size:13px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <span>{{ succes() }}</span>
+    @if (module(); as m) {
+      <a class="panel-link" [routerLink]="['/', m.key]">Voir {{ m.titre }} →</a>
+    }
+  </div>
+}
+
+<div class="panel">
+  @if (loading()) {
+    <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
+  } @else if (elements().length === 0) {
+    <p style="color:var(--ink-400); font-size:13px;">
+      @if (module(); as m) {
+        Rien dans la corbeille pour « {{ m.titre }} ».
+      } @else {
+        La corbeille est vide.
+      }
+    </p>
+  } @else {
+    <table class="simple">
+      <thead>
+        <tr>
+          <th>Élément</th>
+          @if (!module()) { <th>Type</th> }
+          <th>Supprimé avec</th>
+          <th>Supprimé le</th>
+          <th>Par</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (e of elements(); track e.id) {
+          <tr>
+            <td><strong>{{ e.libelle }}</strong></td>
+            @if (!module()) { <td>{{ e.type_libelle }}</td> }
+            <td>
+              @if (e.emporte) { {{ e.emporte }} } @else { <span style="color:var(--ink-400);">—</span> }
+            </td>
+            <td class="mono">{{ e.date_suppression | date: 'dd/MM/yyyy HH:mm' }}</td>
+            <td>{{ e.supprime_par ?? '—' }}</td>
+            <td style="text-align:right; white-space:nowrap;">
+              <button class="panel-link" [disabled]="enCours() !== null" (click)="restaurer(e)">
+                {{ enCours() === e.id ? 'Restauration…' : 'Restaurer' }}
+              </button>
+              @if (estAdmin()) {
+                &nbsp;·&nbsp;
+                <button class="panel-link" style="color:var(--red)" [disabled]="enCours() !== null"
+                        (click)="supprimerDefinitivement(e)">Supprimer définitivement</button>
+              }
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+    <div class="pagination">
+      <span>{{ total() }} élément(s) dans la corbeille</span>
+      @if (precedent() || suivant()) {
+        <span style="display:flex; gap:8px;">
+          <button type="button" class="btn-ghost" [disabled]="!precedent()" (click)="allerPage(-1)">← Précédent</button>
+          <button type="button" class="btn-ghost" [disabled]="!suivant()" (click)="allerPage(1)">Suivant →</button>
+        </span>
+      }
+    </div>
+  }
+</div>

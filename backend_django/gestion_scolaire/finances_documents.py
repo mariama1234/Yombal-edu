@@ -103,7 +103,7 @@ def _lignes_impayes(frais):
             "matricule": f.id_eleve.matricule,
             "eleve": f"{f.id_eleve.prenom} {f.id_eleve.nom}",
             "classe": inscription.id_classe.nom if inscription else "",
-            "type": f.id_type_frais.get_libelle_display(),
+            "type": f.id_type_frais.libelle,
             "echeance": f.echeance,
             "statut": ("En retard" if retard else f.get_statut_display()),
             # Le dû net de remise, pour que l'export réclame exactement ce que
@@ -382,7 +382,7 @@ def recu(objet):
         [("Frais réglé", 190, "g"), ("Échéance", 90, "g"), ("Moyen", 110, "g"),
          ("Référence", 110, "g"), ("Montant", 100, "d")],
         [[
-            frais.id_type_frais.get_libelle_display(),
+            frais.id_type_frais.libelle,
             _jour(frais.echeance) or "—",
             paiement.get_methode_display(),
             paiement.reference_transaction or "—",
@@ -415,7 +415,7 @@ def recu(objet):
             total_du += net
             total_paye += regle
             corps.append([
-                ligne.id_type_frais.get_libelle_display(),
+                ligne.id_type_frais.libelle,
                 _jour(ligne.echeance) or "—",
                 formater_montant(net),
                 formater_montant(regle),
@@ -461,7 +461,7 @@ def paiements(ecole, liste, format="xlsx"):
             getattr(getattr(p, "recu", None), "numero_recu", ""),
             frais.id_eleve.matricule,
             f"{frais.id_eleve.prenom} {frais.id_eleve.nom}",
-            frais.id_type_frais.get_libelle_display(),
+            frais.id_type_frais.libelle,
             p.get_methode_display(),
             p.reference_transaction or "",
             p.montant,
@@ -487,3 +487,103 @@ def paiements(ecole, liste, format="xlsx"):
         [[*l[:-1], float(l[-1])] for l in lignes],
     )])
     return contenu, _nom_fichier("recettes", "xlsx"), XLSX
+
+
+# ---------------------------------------------------------------------------
+# Facture d'inscription et reçu du guichet
+# ---------------------------------------------------------------------------
+
+def facture(ecole, donnees):
+    """
+    Facture remise à l'inscription : matricule de l'élève et montant total dû.
+
+    C'est ce papier que la famille présente à la caisse ; la caissière y lit le
+    matricule qui ouvre le dossier au guichet.
+    """
+    doc = exports.DocumentPDF(
+        f"Facture — {donnees['annee']}", _sous_titre(ecole, ecole.adresse or None), pied=ecole.nom)
+    doc.encadre("Montant total dû", formater_montant(donnees["total_du"], devise=True))
+
+    doc.section("Élève")
+    doc.champs([
+        ("Matricule", donnees["matricule"]),
+        ("Nom", donnees["nom"]),
+        ("Prénom", donnees["prenom"]),
+        ("Classe", donnees["classe"] or "—"),
+        ("Année scolaire", donnees["annee"]),
+        ("Date", _jour(date.today())),
+    ])
+
+    doc.section("Frais")
+    doc.tableau(
+        [("Frais", 330, "g"), ("Montant", 170, "d")],
+        [[ligne["libelle"], formater_montant(ligne["montant"])] for ligne in donnees["lignes"]],
+        total=["Montant total dû", formater_montant(donnees["total_du"])],
+    )
+    if float(donnees["total_paye"] or 0) > 0:
+        doc.champs([
+            ("Déjà réglé", formater_montant(donnees["total_paye"], devise=True)),
+            ("Reste à payer", formater_montant(donnees["reste"], devise=True)),
+        ])
+
+    doc.espace(14)
+    doc.paragraphe(
+        "Présentez cette facture à la caisse : le matricule ci-dessus permet d'y "
+        "retrouver le dossier et d'enregistrer le règlement.", taille=8.5, gris=0.45)
+
+    nom = nom_document("facture", donnees["matricule"], donnees["prenom"], donnees["nom"],
+                       donnees["classe"], donnees["annee"])
+    return doc.rendu(), nom, PDF
+
+
+def recu_encaissement(ecole, paiements):
+    """
+    Reçu du guichet : matricule, nom, prénom, date, montant payé et montant
+    restant. Un versement réparti sur plusieurs frais reste un seul reçu.
+    """
+    from django.core.exceptions import ObjectDoesNotExist
+
+    from . import finances
+
+    premier = paiements[0]
+    eleve = premier.id_frais_eleve.id_eleve
+    annee = premier.id_frais_eleve.id_annee_scolaire
+    situation = finances.facture(eleve, annee)
+    total = sum(p.montant for p in paiements)
+    try:
+        numero = premier.recu.numero_recu
+    except ObjectDoesNotExist:
+        numero = f"PAI-{premier.pk:06d}"
+
+    doc = exports.DocumentPDF(
+        f"Reçu de paiement n° {numero}", _sous_titre(ecole, ecole.adresse or None), pied=ecole.nom)
+    doc.encadre("Montant payé", formater_montant(total, devise=True))
+
+    doc.section("Élève")
+    doc.champs([
+        ("Matricule", eleve.matricule),
+        ("Nom", eleve.nom),
+        ("Prénom", eleve.prenom),
+        ("Classe", situation["classe"] or "—"),
+        ("Année scolaire", annee.libelle),
+        ("Date", _jour(premier.date_paiement)),
+        ("Moyen de paiement", premier.get_methode_display()),
+    ])
+
+    doc.section("Frais réglés")
+    doc.tableau(
+        [("Frais", 330, "g"), ("Montant", 170, "d")],
+        [[p.id_frais_eleve.id_type_frais.libelle, formater_montant(p.montant)]
+         for p in paiements],
+        total=["Montant payé", formater_montant(total)],
+    )
+    doc.encadre("Montant restant", formater_montant(situation["reste"], devise=True))
+    doc.champs([("Inscription", situation["statut_inscription_libelle"] or "—")])
+
+    doc.espace(14)
+    doc.paragraphe(
+        "Ce reçu atteste du paiement ci-dessus et doit être conservé par la famille.",
+        taille=8.5, gris=0.45)
+
+    nom = nom_document("recu", numero, eleve.prenom, eleve.nom, situation["classe"], annee.libelle)
+    return doc.rendu(), nom, PDF

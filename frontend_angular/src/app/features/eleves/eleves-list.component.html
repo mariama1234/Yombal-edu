@@ -4,7 +4,7 @@
     <p>
       @switch (vue()) {
         @case ('inscrits') { {{ total() }} élève(s) inscrit(s) en {{ libelleAnnee() }}. }
-        @case ('attente') { {{ total() }} pré-inscrit(s) : place réservée, aucun règlement encaissé. }
+        @case ('attente') { {{ total() }} inscrit(s) incomplet(s) : droits d'inscription ou premier mois pas encore réglés. }
         @case ('a_reinscrire') { {{ total() }} élève(s) de l'année précédente pas encore réinscrit(s). }
       }
     </p>
@@ -23,7 +23,7 @@
 
 <div class="tabs">
   <button class="tab" [class.active]="vue() === 'inscrits'" (click)="changerVue('inscrits')">Inscrits</button>
-  <button class="tab" [class.active]="vue() === 'attente'" (click)="changerVue('attente')">Pré-inscrits</button>
+  <button class="tab" [class.active]="vue() === 'attente'" (click)="changerVue('attente')">Inscrits incomplets</button>
   <button class="tab" [class.active]="vue() === 'a_reinscrire'" (click)="changerVue('a_reinscrire')">À réinscrire</button>
 </div>
 
@@ -44,7 +44,7 @@
     </select>
 
     <span style="margin-left:auto; display:flex; align-items:center; gap:14px;">
-      <a class="panel-link" routerLink="/eleves/reinscrire">Réinscrire toute la classe →</a>
+      <a class="panel-link" routerLink="/eleves/reinscrire">Réinscrire une classe en bloc →</a>
       <span style="font-size:12.5px; color:var(--ink-400);">
         Page {{ page() }} / {{ pages() }} — {{ total() }} élève(s) au total
       </span>
@@ -56,6 +56,18 @@
     <div class="chip" [class.active]="filtreStatut() === 'actif'" (click)="filtrer('actif')">Actifs</div>
     <div class="chip" [class.active]="filtreStatut() === 'transfere'" (click)="filtrer('transfere')">Transférés</div>
     <div class="chip" [class.active]="filtreStatut() === 'radie'" (click)="filtrer('radie')">Radiés</div>
+
+    <select class="input" style="width:auto;" aria-label="Filtrer par classe"
+            (change)="filtrerClasse($any($event.target).value)">
+      <option value="" [selected]="!filtreClasse()">Toutes les classes</option>
+      @for (groupe of classesParAnnee(); track groupe.annee.id) {
+        <optgroup [label]="groupe.annee.libelle">
+          @for (c of groupe.classes; track c.id) {
+            <option [value]="c.id" [selected]="filtreClasse() === '' + c.id">{{ c.nom }}</option>
+          }
+        </optgroup>
+      }
+    </select>
   </div>
 }
 
@@ -95,9 +107,11 @@
                 </div>
               </td>
               <td class="mono">{{ e.matricule }}</td>
-              <td>{{ e.derniere_classe }} <span class="hint">({{ e.dernier_niveau }})</span></td>
+              <td>{{ e.derniere_classe }} @if (e.dernier_niveau) { <span class="hint">({{ e.dernier_niveau }})</span> }</td>
               <td class="mono">{{ e.derniere_annee }}</td>
               <td style="text-align:right;">
+                <a class="panel-link" style="margin-right:14px;" [routerLink]="['/eleves', e.id, 'dossier']"
+                   (click)="$event.stopPropagation()">Dossier</a>
                 <span class="panel-link">Réinscrire →</span>
               </td>
             </tr>
@@ -123,8 +137,10 @@
     <p style="color:var(--ink-400); font-size:13px;">
       @if (recherche().trim()) {
         Aucun élève ne correspond à « {{ recherche() }} ».
+      } @else if (classesChargees() && !classesParAnnee().length) {
+        Aucune classe n'existe encore : crée-les dans « Classes ».
       } @else if (vue() === 'attente') {
-        Aucun pré-inscrit : tous ceux qui ont réservé une place ont réglé au moins une échéance.
+        Aucun inscrit incomplet : tous ont réglé leurs droits d'inscription et leur premier mois.
       } @else {
         Aucun élève inscrit en {{ libelleAnnee() }} pour ce filtre.
         Regarde l'onglet « À réinscrire ».
