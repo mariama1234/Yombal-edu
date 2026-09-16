@@ -74,9 +74,11 @@ export const routes: Routes = [
         path: 'finances/caisse',
         loadComponent: () => import('./features/finances/caisse.component').then((m) => m.CaisseComponent),
       },
+      // L'historique du jour a rejoint la caisse : l'ancienne adresse y mène.
       {
         path: 'finances/historique-caisse',
-        loadComponent: () => import('./features/finances/historique-caisse.component').then((m) => m.HistoriqueCaisseComponent),
+        redirectTo: 'finances/caisse',
+        pathMatch: 'full',
       },
       {
         path: 'finances/tarifs',

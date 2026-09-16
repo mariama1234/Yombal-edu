@@ -570,6 +570,12 @@ class RetraitAutorisationSerializer(serializers.Serializer):
     """Entrée (vide) de POST /api/eleves/{id}/retirer-autorisation/."""
 
 
+class ClotureCaisseSerializer(serializers.Serializer):
+    """Entrée de POST /api/caisse/cloturer/ : la journée arrêtée, et pourquoi."""
+    date = serializers.DateField(required=False, allow_null=True)
+    commentaire = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+
+
 class AjoutFraisSerializer(serializers.Serializer):
     """Entrée de POST /api/eleves/{id}/ajouter-frais/."""
     frais = serializers.ListField(child=serializers.IntegerField(), allow_empty=False)

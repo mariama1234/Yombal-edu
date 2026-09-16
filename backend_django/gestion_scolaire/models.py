@@ -818,6 +818,40 @@ class JournalCaisse(models.Model):
 #    (id_ecole en tête, db_table explicite, enums en TextChoices).
 # =====================================================================
 
+class ClotureCaisse(models.Model):
+    """
+    Arrêté de caisse d'une journée : ce que le logiciel dit au moment où la
+    caissière compte son tiroir.
+
+    C'est une photographie, pas un verrou. Les totaux sont figés à l'instant de
+    la clôture ; une opération enregistrée après coup n'est pas refusée, elle
+    apparaît en écart — c'est précisément l'information qu'on cherche le
+    lendemain quand la caisse ne tombe pas juste.
+    """
+    id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE,
+                                 related_name="clotures_caisse", db_column="id_ecole")
+    date_journee = models.DateField()
+    total_encaisse = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_depense = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # Ce que le tiroir devrait contenir : les espèces reçues, moins les dépenses.
+    especes_attendues = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    commentaire = models.TextField(blank=True, null=True)
+    id_utilisateur = models.ForeignKey(Utilisateur, on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name="clotures_caisse", db_column="id_utilisateur")
+    date_cloture = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "cloture_caisse"
+        ordering = ["-date_journee"]
+        constraints = [
+            models.UniqueConstraint(fields=["id_ecole", "date_journee"],
+                                    name="uq_cloture_ecole_journee"),
+        ]
+
+    def __str__(self):
+        return f"Caisse du {self.date_journee}"
+
+
 class Communication(models.Model):
     class Type(models.TextChoices):
         ANNONCE = "annonce", "Annonce"

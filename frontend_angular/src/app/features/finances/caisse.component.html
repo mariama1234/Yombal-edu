@@ -1,150 +1,423 @@
 <p class="module-eyebrow">Finances</p>
 <div class="page-head">
   <div>
-    <h1>Caisse</h1>
-    <p>Saisis le matricule figurant sur la facture de l'élève, puis le montant payé.</p>
+    <h1>Caisse &amp; trésorerie</h1>
+    <p>Encaissements, dépenses et solde de trésorerie.</p>
   </div>
-  <div style="display:flex; gap:10px; flex-wrap:wrap;">
-    <a class="btn-ghost" routerLink="/finances/historique-caisse">Historique du jour</a>
-    <a class="btn-ghost" routerLink="/finances">Frais &amp; encaissements</a>
-  </div>
+  <button type="button" class="btn-accent" (click)="ouvrirGuichet()">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+    Nouvel encaissement
+  </button>
 </div>
 
-@if (erreur()) { <div class="form-error" style="max-width:720px;">{{ erreur() }}</div> }
+<!-- Le jour consulté : aujourd'hui par défaut, les jours passés à un clic. -->
+<div class="filters">
+  <button type="button" class="btn-ghost" (click)="decaler(-1)" aria-label="Jour précédent">←</button>
+  <input class="input" type="date" style="width:auto;" aria-label="Jour affiché"
+         [value]="jour()" [max]="aujourdhui" (change)="choisirJour($any($event.target).value)">
+  <button type="button" class="btn-ghost" (click)="decaler(1)" [disabled]="estAujourdhui()"
+          aria-label="Jour suivant">→</button>
+  @if (!estAujourdhui()) {
+    <button type="button" class="chip" (click)="choisirJour(aujourdhui)">Aujourd'hui</button>
+  }
 
-@if (recu(); as r) {
-  <div class="panel" style="max-width:720px;">
-    <div class="panel-head">
-      <div class="panel-title">Reçu de paiement n° {{ r.numero }}</div>
-      @if (r.statut) {
-        <span class="pill" [class.a_jour]="r.statut === 'Inscrit'" [class.non_paye]="r.statut !== 'Inscrit'">{{ r.statut }}</span>
+  @if (estAdmin()) {
+    <select class="input" style="width:auto;" aria-label="Filtrer par caissier"
+            [value]="caissier()" (change)="choisirCaissier($any($event.target).value)">
+      <option value="">Tous les caissiers</option>
+      @for (c of journee()?.caissiers ?? []; track c.id) {
+        <option [value]="c.id" [selected]="caissier() === '' + c.id">{{ c.nom }}</option>
       }
+    </select>
+  } @else {
+    <span class="hint">Vos opérations uniquement.</span>
+  }
+
+  <span style="margin-left:auto; display:flex; gap:14px; flex-wrap:wrap;">
+    <a class="panel-link" routerLink="/finances">Frais &amp; encaissements →</a>
+    <a class="panel-link" routerLink="/finances/journal">Journal caisse &amp; banque →</a>
+  </span>
+</div>
+
+@if (erreur() && !guichetOuvert()) { <div class="form-error">{{ erreur() }}</div> }
+
+@if (chargement() && !journee()) {
+  <div class="panel"><p class="hint">Chargement de la journée…</p></div>
+} @else {
+@if (journee(); as j) {
+
+  <!-- Les trois chiffres de la journée -->
+  <div class="tile-grid-generic">
+    <div class="tile-generic">
+      <div class="tile-generic-label">Total encaissé</div>
+      <div class="tile-generic-value vert">{{ j.totaux.encaisse | number:'1.0-0' }} F</div>
+      <div class="tile-generic-meta">{{ j.totaux.nombre_paiements }} encaissement(s)</div>
     </div>
-    <table class="simple">
-      <tbody>
-        <tr><td>Matricule</td><td class="mono">{{ r.matricule }}</td></tr>
-        <tr><td>Nom</td><td>{{ r.nom }}</td></tr>
-        <tr><td>Prénom</td><td>{{ r.prenom }}</td></tr>
-        <tr><td>Classe</td><td>{{ r.classe ?? '—' }}</td></tr>
-        <tr><td>Date</td><td class="mono">{{ r.date | date: 'dd/MM/yyyy HH:mm' }}</td></tr>
-        <tr><td>Montant payé</td><td class="mono"><strong>{{ r.montant | number: '1.0-0' }} F</strong></td></tr>
-        <tr><td>Montant restant</td><td class="mono"><strong>{{ r.reste | number: '1.0-0' }} F</strong></td></tr>
-      </tbody>
-    </table>
-    <div class="form-actions">
-      <a class="btn-ghost" [routerLink]="['/eleves', r.idEleve, 'dossier']">Dossier de l'élève</a>
-      <button type="button" class="btn-ghost" (click)="nouvelEncaissement()">Nouvel encaissement</button>
-      <button type="button" class="btn-primary" (click)="imprimerRecu()">Imprimer le reçu (PDF)</button>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Total dépensé</div>
+      <div class="tile-generic-value rouge">{{ j.totaux.depense | number:'1.0-0' }} F</div>
+      <div class="tile-generic-meta">{{ j.totaux.nombre_depenses }} dépense(s)</div>
+    </div>
+    <div class="tile-generic">
+      <div class="tile-generic-label">Solde de trésorerie</div>
+      <div class="tile-generic-value">{{ (soldes()?.total ?? j.totaux.solde) | number:'1.0-0' }} F</div>
+      <div class="tile-generic-meta">
+        @if (soldes(); as s) {
+          caisse {{ s.caisse | number:'1.0-0' }} F · banque {{ s.banque | number:'1.0-0' }} F
+        } @else {
+          solde de la journée
+        }
+      </div>
     </div>
   </div>
-} @else {
-  <form class="form-section" style="max-width:720px;" (ngSubmit)="rechercher()">
-    <div class="form-section-title">Matricule</div>
-    <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
-      <div class="field" style="flex:1; min-width:220px; margin:0;">
-        <label for="matricule">Matricule de l'élève</label>
-        <input class="input mono" id="matricule" name="matricule" [(ngModel)]="matricule"
-               placeholder="ELV-2026-0001" autocomplete="off">
-      </div>
-      <button type="submit" class="btn-primary" [disabled]="occupe()">
-        {{ occupe() && !facture() ? 'Recherche…' : 'Rechercher' }}
-      </button>
-    </div>
-  </form>
 
-  @if (facture(); as f) {
-    <div class="panel" style="max-width:720px;">
+  <!-- Ce qui entre, ce qui sort -->
+  <div class="deux-colonnes">
+    <div class="panel">
       <div class="panel-head">
-        <div class="panel-title">{{ f.prenom }} {{ f.nom }}</div>
-        @if (f.statut_inscription_libelle) {
-          <span class="pill" [class.a_jour]="f.statut_inscription === 'en_cours'"
-                [class.non_paye]="f.statut_inscription !== 'en_cours'">{{ f.statut_inscription_libelle }}</span>
+        <div class="panel-title">Encaissements</div>
+        <button type="button" class="btn-accent petit" (click)="ouvrirGuichet()">
+          + Nouvel encaissement
+        </button>
+      </div>
+
+      @if (j.paiements.length === 0) {
+        <p class="hint">Aucun encaissement ce jour-là.</p>
+      } @else {
+        <table class="simple">
+          <thead>
+            <tr><th>Libellé</th><th style="text-align:right;">Montant</th><th>Moyen</th><th>Date</th></tr>
+          </thead>
+          <tbody>
+            @for (p of j.paiements; track p.id) {
+              <tr>
+                <td>
+                  <a class="panel-link" [routerLink]="['/eleves', p.id_eleve, 'dossier']">
+                    {{ p.eleve }}
+                  </a>
+                  <div class="hint">{{ p.frais }} · <span class="mono">{{ p.matricule }}</span></div>
+                </td>
+                <td class="mono montant-credit" style="text-align:right; white-space:nowrap;">
+                  + {{ p.montant | number:'1.0-0' }} F
+                </td>
+                <td>
+                  {{ p.methode_libelle }}
+                  @if (p.reference) { <div class="hint mono">{{ p.reference }}</div> }
+                </td>
+                <td class="mono" style="white-space:nowrap;">
+                  {{ j.date | date:'dd/MM' }}
+                  <div class="hint mono">
+                    {{ p.heure }}
+                    @if (p.id_recu) {
+                      · <button type="button" class="panel-link mono" style="font-size:11px;"
+                                (click)="telechargerRecuDuJour(p.id_recu)">reçu</button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Dépenses</div>
+        @if (estAdmin()) {
+          <a class="btn-ghost petit" routerLink="/depenses/nouveau">− Nouvelle dépense</a>
         }
       </div>
 
+      @if (j.depenses.length === 0) {
+        <p class="hint">Aucune dépense ce jour-là.</p>
+      } @else {
+        <table class="simple">
+          <thead>
+            <tr><th>Libellé</th><th style="text-align:right;">Montant</th><th>Saisie par</th><th>Date</th></tr>
+          </thead>
+          <tbody>
+            @for (d of j.depenses; track d.id) {
+              <tr>
+                <td>
+                  <strong>{{ d.motif }}</strong>
+                  <div class="hint">{{ d.categorie }}</div>
+                </td>
+                <td class="mono montant-debit" style="text-align:right; white-space:nowrap;">
+                  − {{ d.montant | number:'1.0-0' }} F
+                </td>
+                <td>{{ d.caissier }}</td>
+                <td class="mono" style="white-space:nowrap;">{{ j.date | date:'dd/MM' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+  </div>
+
+  <!-- L'arrêté du soir -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        Clôture de caisse du jour ({{ j.date | date:'dd/MM' }})
+        @if (cloture()) { <span class="pill a_jour" style="margin-left:8px;">Clôturée</span> }
+      </div>
+      @if (!cloture() && !clotureOuverte()) {
+        <button type="button" class="btn-accent" (click)="clotureOuverte.set(true)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+          Clôturer la journée
+        </button>
+      }
+    </div>
+
+    @if (cloture(); as c) {
+      <p class="hint" style="margin:0 0 14px;">
+        Arrêtée par <strong>{{ c.par }}</strong> le {{ c.date_cloture }}.
+        @if (c.commentaire) { « {{ c.commentaire }} » }
+      </p>
       <table class="simple">
         <tbody>
-          <tr><td>Matricule</td><td class="mono">{{ f.matricule }}</td></tr>
-          <tr><td>Nom</td><td>{{ f.nom }}</td></tr>
-          <tr><td>Prénom</td><td>{{ f.prenom }}</td></tr>
-          <tr><td>Classe</td><td>{{ f.classe ?? '—' }} ({{ f.annee }})</td></tr>
+          <tr>
+            <td>Encaissé au moment de la clôture</td>
+            <td class="mono" style="text-align:right;">{{ c.total_encaisse | number:'1.0-0' }} F</td>
+          </tr>
+          <tr>
+            <td>Dépensé au moment de la clôture</td>
+            <td class="mono" style="text-align:right;">{{ c.total_depense | number:'1.0-0' }} F</td>
+          </tr>
+          <tr>
+            <td><strong>Espèces attendues en caisse</strong></td>
+            <td class="mono" style="text-align:right;"><strong>{{ c.especes_attendues | number:'1.0-0' }} F</strong></td>
+          </tr>
         </tbody>
       </table>
-
-      <table class="simple" style="margin-top:14px;">
-        <thead>
-          <tr>
-            <th style="width:32px;"></th>
-            <th>Frais</th>
-            <th style="text-align:right;">Montant</th>
-            <th style="text-align:right;">Réglé</th>
-            <th style="text-align:right;">Reste</th>
-          </tr>
-        </thead>
+      @if (ecart()) {
+        <p style="margin:12px 0 0; font-size:13px; color:var(--orange-500);">
+          Des opérations ont été enregistrées après la clôture :
+          {{ c.ecart_encaisse | number:'1.0-0' }} F encaissés et
+          {{ c.ecart_depense | number:'1.0-0' }} F dépensés en plus. L'arrêté, lui, reste celui du comptage.
+        </p>
+      }
+    } @else {
+      <p class="hint" style="margin:0 0 14px;">
+        Ventilation des encaissements du jour par moyen de paiement.
+      </p>
+      <table class="simple">
         <tbody>
-          @for (l of f.lignes; track l.id) {
+          @for (m of j.totaux.par_methode; track m.methode) {
             <tr>
-              <td>
-                @if (l.reste > 0) {
-                  <input type="checkbox" [checked]="fraisCoches().includes(l.id)"
-                         (change)="basculerFrais(l.id)" [attr.aria-label]="'Régler ' + l.libelle">
-                }
-              </td>
-              <td>{{ l.libelle }}</td>
-              <td class="mono" style="text-align:right;">{{ l.montant | number: '1.0-0' }}</td>
-              <td class="mono" style="text-align:right;">{{ l.paye | number: '1.0-0' }}</td>
-              <td class="mono" style="text-align:right;">{{ l.reste | number: '1.0-0' }}</td>
+              <td>{{ m.libelle }} <span class="hint">· {{ m.nombre }} opération(s)</span></td>
+              <td class="mono" style="text-align:right;">{{ m.montant | number:'1.0-0' }} F</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td class="hint">Aucun encaissement à ventiler.</td>
+              <td class="mono" style="text-align:right;">0 F</td>
             </tr>
           }
           <tr>
-            <td></td>
-            <td><strong>Total</strong></td>
-            <td class="mono" style="text-align:right;"><strong>{{ f.total_du | number: '1.0-0' }}</strong></td>
-            <td class="mono" style="text-align:right;">{{ f.total_paye | number: '1.0-0' }}</td>
-            <td class="mono" style="text-align:right;"><strong>{{ f.reste | number: '1.0-0' }} F</strong></td>
+            <td><strong>Total du jour</strong></td>
+            <td class="mono" style="text-align:right;"><strong>{{ j.totaux.encaisse | number:'1.0-0' }} F</strong></td>
+          </tr>
+          <tr>
+            <td>Espèces attendues en caisse <span class="hint">· espèces reçues moins les dépenses</span></td>
+            <td class="mono" style="text-align:right;">{{ j.totaux.especes_en_caisse | number:'1.0-0' }} F</td>
           </tr>
         </tbody>
       </table>
 
-      @if (f.reste <= 0) {
-        <p style="font-size:13px; color:var(--ink-600); margin:14px 0 0;">Rien à encaisser : tout est réglé.</p>
-      } @else {
-        <form (ngSubmit)="encaisser()" style="margin-top:16px;">
-          <div class="form-grid">
-            <div class="field">
-              <label for="montant">Montant payé (F CFA)</label>
-              <input class="input" id="montant" name="montant" type="number" min="1"
-                     [max]="f.reste" [(ngModel)]="montant" required>
-              <span class="hint">
-                @if (fraisCoches().length) {
-                  Paiement sur les frais cochés uniquement.
-                } @else {
-                  Reste à payer : {{ f.reste | number: '1.0-0' }} F — coche des frais pour cibler le paiement.
-                }
-              </span>
-            </div>
-            <div class="field">
-              <label for="methode">Moyen de paiement</label>
-              <select class="input" id="methode" name="methode" [(ngModel)]="methode">
-                @for (m of methodes; track m.value) {
-                  <option [ngValue]="m.value">{{ m.label }}</option>
-                }
-              </select>
-            </div>
+      @if (clotureOuverte()) {
+        <div class="form-section" style="margin:16px 0 0;">
+          <div class="field">
+            <label for="commentaire-cloture">Commentaire <span class="hint">(optionnel)</span></label>
+            <input class="input" id="commentaire-cloture" name="commentaire-cloture"
+                   [(ngModel)]="commentaireCloture"
+                   placeholder="Tiroir compté, écart de 500 F, remis à la direction…">
+            <span class="hint">
+              Les totaux ci-dessus seront figés et signés à ton nom. Les encaissements resteront
+              possibles ensuite : ils apparaîtront en écart.
+            </span>
           </div>
-          @if (methode !== 'especes') {
-            <div class="field">
-              <label for="reference">Référence de la transaction</label>
-              <input class="input" id="reference" name="reference" [(ngModel)]="reference">
-            </div>
-          }
           <div class="form-actions">
-            <button type="submit" class="btn-primary" [disabled]="occupe()">
-              {{ occupe() ? 'Encaissement…' : 'Encaisser' }}
+            <button type="button" class="btn-ghost" (click)="clotureOuverte.set(false)">Annuler</button>
+            <button type="button" class="btn-accent" [disabled]="occupe()" (click)="cloturer()">
+              {{ occupe() ? 'Clôture…' : 'Confirmer la clôture' }}
+            </button>
+          </div>
+        </div>
+      }
+    }
+
+    @if (j.par_caissier.length > 1) {
+      <div style="margin-top:18px;">
+        <div class="panel-title" style="font-size:13px; margin-bottom:10px;">Détail par caissier</div>
+        <table class="simple">
+          <thead>
+            <tr><th>Caissier</th><th style="text-align:right;">Encaissé</th><th style="text-align:right;">Dépensé</th></tr>
+          </thead>
+          <tbody>
+            @for (c of j.par_caissier; track c.nom) {
+              <tr>
+                <td>{{ c.nom }} <span class="hint">· {{ c.nombre_paiements }} encaissement(s)</span></td>
+                <td class="mono montant-credit" style="text-align:right;">{{ c.encaisse | number:'1.0-0' }} F</td>
+                <td class="mono montant-debit" style="text-align:right;">{{ c.depense | number:'1.0-0' }} F</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+}
+}
+
+<!-- Le guichet : du matricule de la facture au reçu, sans quitter la journée -->
+@if (guichetOuvert()) {
+  <div (click)="fermerGuichet()"
+       style="position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:1000; display:flex; align-items:flex-start; justify-content:center; padding:48px 16px; overflow-y:auto;">
+    <div role="dialog" aria-modal="true" aria-labelledby="titre-guichet" (click)="$event.stopPropagation()"
+         style="background:var(--surface); border-radius:14px; width:100%; max-width:720px; padding:22px 24px; box-shadow:0 20px 50px rgba(0,0,0,0.25);">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
+        <div>
+          <div id="titre-guichet" class="form-section-title" style="margin:0;">Nouvel encaissement</div>
+          <div class="form-section-sub" style="margin:4px 0 0;">
+            Saisis le matricule figurant sur la facture de l'élève, puis le montant payé.
+          </div>
+        </div>
+        <button type="button" class="icon-btn" aria-label="Fermer" (click)="fermerGuichet()">✕</button>
+      </div>
+
+      @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+      @if (recu(); as r) {
+        <!-- Le reçu, à remettre à la famille -->
+        <div class="panel" style="margin:0;">
+          <div class="panel-head">
+            <div class="panel-title">Reçu de paiement n° {{ r.numero }}</div>
+            @if (r.statut) {
+              <span class="pill" [class.a_jour]="r.statut === 'Inscrit'"
+                    [class.non_paye]="r.statut !== 'Inscrit'">{{ r.statut }}</span>
+            }
+          </div>
+          <table class="simple">
+            <tbody>
+              <tr><td>Matricule</td><td class="mono">{{ r.matricule }}</td></tr>
+              <tr><td>Élève</td><td>{{ r.prenom }} {{ r.nom }}</td></tr>
+              <tr><td>Classe</td><td>{{ r.classe ?? '—' }}</td></tr>
+              <tr><td>Date</td><td class="mono">{{ r.date | date:'dd/MM/yyyy HH:mm' }}</td></tr>
+              <tr><td>Montant payé</td><td class="mono"><strong>{{ r.montant | number:'1.0-0' }} F</strong></td></tr>
+              <tr><td>Montant restant</td><td class="mono"><strong>{{ r.reste | number:'1.0-0' }} F</strong></td></tr>
+            </tbody>
+          </table>
+          <div class="form-actions">
+            <a class="btn-ghost" [routerLink]="['/eleves', r.idEleve, 'dossier']">Dossier de l'élève</a>
+            <button type="button" class="btn-ghost" (click)="nouvelEncaissement()">Encaisser un autre</button>
+            <button type="button" class="btn-accent" (click)="imprimerRecu()">Imprimer le reçu (PDF)</button>
+          </div>
+        </div>
+      } @else {
+        <form (ngSubmit)="rechercher()">
+          <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+            <div class="field" style="flex:1; min-width:220px; margin:0;">
+              <label for="matricule">Matricule de l'élève</label>
+              <input class="input mono" id="matricule" name="matricule" [(ngModel)]="matricule"
+                     placeholder="ELV-2026-0001" autocomplete="off">
+            </div>
+            <button type="submit" class="btn-ghost" [disabled]="occupe()">
+              {{ occupe() && !facture() ? 'Recherche…' : 'Rechercher' }}
             </button>
           </div>
         </form>
+
+        @if (facture(); as f) {
+          <div style="margin-top:16px;">
+            <div class="panel-head">
+              <div class="panel-title">{{ f.prenom }} {{ f.nom }}</div>
+              <span class="matricule">{{ f.matricule }}</span>
+            </div>
+            <p class="hint" style="margin:-6px 0 12px;">
+              {{ f.classe ?? '—' }} · {{ f.annee }}
+              @if (f.statut_inscription_libelle) { · {{ f.statut_inscription_libelle }} }
+            </p>
+
+            <table class="simple">
+              <thead>
+                <tr>
+                  <th style="width:32px;"></th><th>Frais</th>
+                  <th style="text-align:right;">Montant</th><th style="text-align:right;">Réglé</th>
+                  <th style="text-align:right;">Reste</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (l of f.lignes; track l.id) {
+                  <tr>
+                    <td>
+                      @if (l.reste > 0) {
+                        <input type="checkbox" [checked]="fraisCoches().includes(l.id)"
+                               (change)="basculerFrais(l.id)" [attr.aria-label]="'Régler ' + l.libelle">
+                      }
+                    </td>
+                    <td>{{ l.libelle }}</td>
+                    <td class="mono" style="text-align:right;">{{ l.montant | number:'1.0-0' }}</td>
+                    <td class="mono" style="text-align:right;">{{ l.paye | number:'1.0-0' }}</td>
+                    <td class="mono" style="text-align:right;">{{ l.reste | number:'1.0-0' }}</td>
+                  </tr>
+                }
+                <tr>
+                  <td></td><td><strong>Total</strong></td>
+                  <td class="mono" style="text-align:right;"><strong>{{ f.total_du | number:'1.0-0' }}</strong></td>
+                  <td class="mono" style="text-align:right;">{{ f.total_paye | number:'1.0-0' }}</td>
+                  <td class="mono" style="text-align:right;"><strong>{{ f.reste | number:'1.0-0' }} F</strong></td>
+                </tr>
+              </tbody>
+            </table>
+
+            @if (f.reste <= 0) {
+              <p style="font-size:13px; color:var(--ink-600); margin:14px 0 0;">
+                Rien à encaisser : tout est réglé.
+              </p>
+            } @else {
+              <form (ngSubmit)="encaisser()" style="margin-top:16px;">
+                <div class="form-grid">
+                  <div class="field">
+                    <label for="montant">Montant payé (F CFA)</label>
+                    <input class="input" id="montant" name="montant" type="number" min="1"
+                           [max]="f.reste" [(ngModel)]="montant" required>
+                    <span class="hint">
+                      @if (fraisCoches().length) {
+                        Paiement sur les frais cochés uniquement.
+                      } @else {
+                        Reste à payer : {{ f.reste | number:'1.0-0' }} F — coche des frais pour cibler le paiement.
+                      }
+                    </span>
+                  </div>
+                  <div class="field">
+                    <label for="methode">Moyen de paiement</label>
+                    <select class="input" id="methode" name="methode" [(ngModel)]="methode">
+                      @for (m of methodes; track m.value) {
+                        <option [ngValue]="m.value">{{ m.label }}</option>
+                      }
+                    </select>
+                  </div>
+                </div>
+                @if (methode !== 'especes') {
+                  <div class="field">
+                    <label for="reference">Référence de la transaction</label>
+                    <input class="input" id="reference" name="reference" [(ngModel)]="reference">
+                  </div>
+                }
+                <div class="form-actions">
+                  <button type="button" class="btn-ghost" (click)="fermerGuichet()">Annuler</button>
+                  <button type="submit" class="btn-accent" [disabled]="occupe()">
+                    {{ occupe() ? 'Encaissement…' : 'Encaisser' }}
+                  </button>
+                </div>
+              </form>
+            }
+          </div>
+        }
       }
     </div>
-  }
+  </div>
 }

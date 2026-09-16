@@ -12,6 +12,8 @@ from django.db.models import Model as DjangoModel
 from django.db.models.deletion import ProtectedError, RestrictedError
 from django.http import FileResponse, HttpResponse
 from django.utils import timezone
+from datetime import date as date_type
+
 from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
 
@@ -2508,6 +2510,54 @@ class CorbeilleViewSet(EcoleFiltreeMixin, mixins.ListModelMixin, mixins.DestroyM
 
 # ---------- Grille des tarifs ----------
 
+def _jour_demande(request, champ="date", source=None):
+    """Le jour visé par la requête, aujourd'hui à défaut."""
+    donnees = request.query_params if source is None else source
+    brut = donnees.get(champ)
+    if not brut:
+        return timezone.localdate()
+    if isinstance(brut, date_type):
+        return brut
+    try:
+        jour = parse_date(brut)
+    except ValueError:
+        jour = None
+    if jour is None:
+        raise ValidationError({champ: "Date attendue au format AAAA-MM-JJ."})
+    return jour
+
+
+class ClotureCaisseView(APIView):
+    """
+    Arrêté de caisse : POST /api/caisse/cloturer/
+
+    Fige les totaux de la journée et les signe. Réservé à la caisse ; la
+    journée reste consultable et les encaissements restent possibles ensuite,
+    l'écart apparaissant dans l'historique.
+    """
+    permission_classes = [permissions.IsAuthenticated, EstAdminOuCaissier]
+
+    def post(self, request):
+        ecole = request.user.id_ecole
+        entree = serializers.ClotureCaisseSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        donnees = entree.validated_data
+        jour = _jour_demande(request, source=donnees)
+        try:
+            cloture = finances.cloturer_journee(
+                ecole, jour, utilisateur=request.user,
+                commentaire=donnees.get("commentaire"))
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        journaliser(request, models.JournalActivite.Action.CREATION, entite="cloture_caisse",
+                    id_entite=cloture.pk,
+                    description=f"Clôture de la caisse du {jour:%d/%m/%Y} — "
+                                f"{cloture.total_encaisse} F encaissés, "
+                                f"{cloture.total_depense} F dépensés")
+        return Response(finances.historique_caisse(ecole, jour), status=status.HTTP_201_CREATED)
+
+
 class HistoriqueCaisseView(APIView):
     """
     Historique de caisse d'une journée : GET /api/caisse/historique/?date=AAAA-MM-JJ
@@ -2520,13 +2570,7 @@ class HistoriqueCaisseView(APIView):
 
     def get(self, request):
         ecole = request.user.id_ecole
-        brut = request.query_params.get("date")
-        try:
-            jour = parse_date(brut) if brut else timezone.localdate()
-        except ValueError:
-            jour = None
-        if jour is None:
-            raise ValidationError({"date": "Date attendue au format AAAA-MM-JJ."})
+        jour = _jour_demande(request)
 
         caissier = None
         if request.user.role == "caissier":

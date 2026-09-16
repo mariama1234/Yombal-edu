@@ -1751,6 +1751,29 @@ def historique_caisse(ecole, jour, caissier=None):
     caissiers = (get_user_model().objects
                  .filter(id_ecole=ecole, role__in=("admin", "caissier"))
                  .order_by("nom", "prenom"))
+
+    # L'arrêté du jour, s'il existe. Les écarts n'ont de sens que sur la caisse
+    # entière : filtrée sur un caissier, la comparaison opposerait sa part au
+    # total de tout le monde.
+    arrete = (models.ClotureCaisse.objects
+              .filter(id_ecole=ecole, date_journee=jour)
+              .select_related("id_utilisateur").first())
+    cloture = None
+    if arrete is not None:
+        cloture = {
+            "id": arrete.pk,
+            "date_cloture": timezone.localtime(arrete.date_cloture).strftime("%d/%m/%Y à %H:%M"),
+            "par": nom(arrete.id_utilisateur),
+            "total_encaisse": montant_json(arrete.total_encaisse),
+            "total_depense": montant_json(arrete.total_depense),
+            "especes_attendues": montant_json(arrete.especes_attendues),
+            "commentaire": arrete.commentaire,
+            "ecart_encaisse": (None if caissier is not None
+                               else montant_json(encaisse - arrete.total_encaisse)),
+            "ecart_depense": (None if caissier is not None
+                              else montant_json(depense_totale - arrete.total_depense)),
+        }
+
     return {
         "date": jour.isoformat(),
         "caissier": None if caissier is None else {"id": caissier.pk, "nom": nom(caissier)},
@@ -1770,4 +1793,31 @@ def historique_caisse(ecole, jour, caissier=None):
                          for c in sorted(par_caissier.values(), key=lambda c: c["nom"])],
         "paiements": lignes_paiements,
         "depenses": lignes_depenses,
+        "cloture": cloture,
     }
+
+
+@transaction.atomic
+def cloturer_journee(ecole, jour, utilisateur=None, commentaire=None):
+    """
+    Arrête la caisse d'une journée : les totaux du logiciel sont figés, datés
+    et signés par la personne qui compte.
+
+    Une seconde clôture est refusée : réécrire un arrêté effacerait ce qui
+    avait été constaté, et c'est justement la trace qu'on garde pour expliquer
+    un écart. Les encaissements restent possibles après la clôture — la
+    journée affiche alors l'écart, plutôt que de bloquer une famille au guichet.
+    """
+    if models.ClotureCaisse.objects.filter(id_ecole=ecole, date_journee=jour).exists():
+        raise ErreurFinance(f"La caisse du {jour:%d/%m/%Y} est déjà clôturée.")
+    totaux = historique_caisse(ecole, jour)["totaux"]
+    return models.ClotureCaisse.objects.create(
+        id_ecole=ecole,
+        date_journee=jour,
+        total_encaisse=Decimal(str(totaux["encaisse"])),
+        total_depense=Decimal(str(totaux["depense"])),
+        especes_attendues=Decimal(str(totaux["especes_en_caisse"])),
+        commentaire=(commentaire or "").strip() or None,
+        id_utilisateur=(utilisateur if utilisateur is not None and utilisateur.is_authenticated
+                        else None),
+    )

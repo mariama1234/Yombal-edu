@@ -1,12 +1,13 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, HostListener, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
-import { FactureEleve, MethodePaiement } from '../../core/models/models';
-import { FinanceService } from './finance.service';
+import { FactureEleve, HistoriqueCaisse, MethodePaiement, Soldes } from '../../core/models/models';
+import { AuthService } from '../../core/services/auth.service';
 import { ToastService } from '../../core/services/toast.service';
+import { FinanceService } from './finance.service';
 
 const METHODES: { value: MethodePaiement; label: string }[] = [
   { value: 'especes', label: 'Espèces' },
@@ -32,13 +33,28 @@ interface RecuGuichet {
   ids: string;
 }
 
+/** « 2026-10-05 », au jour du navigateur et non en UTC. */
+function isoLocal(jour: Date): string {
+  const mois = String(jour.getMonth() + 1).padStart(2, '0');
+  const quantieme = String(jour.getDate()).padStart(2, '0');
+  return `${jour.getFullYear()}-${mois}-${quantieme}`;
+}
+
 /**
- * La caisse : du matricule de la facture au reçu.
+ * Caisse & trésorerie : la journée de la caissière sur un seul écran.
  *
- * La caissière saisit le matricule, l'écran affiche l'élève, sa classe et ce
- * qu'il doit ; elle saisit le montant payé, et le serveur l'impute — frais
- * d'inscription, puis mensualité, puis frais cochés. Le reçu reprend le
- * montant payé et le montant restant.
+ * Trois questions, dans cet ordre : qu'est-ce qui est entré, qu'est-ce qui est
+ * sorti, que doit contenir le tiroir. D'où les trois compteurs en tête, les
+ * encaissements et les dépenses côte à côte, et la clôture en bas — la
+ * ventilation par moyen de paiement est exactement ce qu'on recopie sur le
+ * cahier avant de compter.
+ *
+ * L'encaissement lui-même reste un guichet : on saisit le matricule de la
+ * facture, on coche ce qui est réglé, on imprime le reçu. Il s'ouvre en
+ * fenêtre plutôt que sur une autre page, pour ne pas perdre la journée de vue.
+ *
+ * Un caissier ne voit que ses propres opérations : c'est le serveur qui le
+ * décide, l'écran n'a pas à le savoir.
  */
 @Component({
   selector: 'app-caisse',
@@ -50,15 +66,26 @@ export class CaisseComponent implements OnInit {
   private http = inject(HttpClient);
   private finance = inject(FinanceService);
   private toast = inject(ToastService);
+  private auth = inject(AuthService);
   private route = inject(ActivatedRoute);
+  private router = inject(Router);
 
   readonly methodes = METHODES;
+  readonly aujourdhui = isoLocal(new Date());
 
+  // -- La journée ---------------------------------------------------------
+  journee = signal<HistoriqueCaisse | null>(null);
+  soldes = signal<Soldes | null>(null);
+  jour = signal(this.aujourdhui);
+  caissier = signal('');
+  chargement = signal(true);
+
+  // -- Le guichet ---------------------------------------------------------
+  guichetOuvert = signal(false);
   matricule = '';
   montant: number | null = null;
   methode: MethodePaiement = 'especes';
   reference = '';
-
   facture = signal<FactureEleve | null>(null);
   /** Lignes de la facture cochées : le paiement ne va que sur elles. */
   fraisCoches = signal<number[]>([]);
@@ -66,13 +93,96 @@ export class CaisseComponent implements OnInit {
   erreur = signal<string | null>(null);
   occupe = signal(false);
 
+  // -- La clôture ---------------------------------------------------------
+  clotureOuverte = signal(false);
+  commentaireCloture = '';
+
+  estAdmin = computed(() => this.auth.currentUser()?.role === 'admin');
+  estAujourdhui = computed(() => this.jour() >= this.aujourdhui);
+  cloture = computed(() => this.journee()?.cloture ?? null);
+  /** Des opérations ont été saisies après l'arrêté : la caisse ne tombe plus juste. */
+  ecart = computed(() => {
+    const c = this.cloture();
+    if (!c) return 0;
+    return Number(c.ecart_encaisse ?? 0) + Number(c.ecart_depense ?? 0);
+  });
+
   ngOnInit(): void {
-    // Depuis l'écran d'inscription : la caisse s'ouvre sur l'élève.
-    const matricule = this.route.snapshot.queryParamMap.get('matricule');
+    const params = this.route.snapshot.queryParamMap;
+    if (params.get('date')) this.jour.set(params.get('date')!);
+    if (params.get('caissier')) this.caissier.set(params.get('caissier')!);
+    this.charger();
+    this.finance.soldes().subscribe({ next: (s) => this.soldes.set(s), error: () => {} });
+
+    // Depuis l'inscription : la caisse s'ouvre sur l'élève à encaisser.
+    const matricule = params.get('matricule');
     if (matricule) {
       this.matricule = matricule;
+      this.guichetOuvert.set(true);
       this.rechercher();
     }
+  }
+
+  /** Échap ferme le guichet, comme le bouton ✕. */
+  @HostListener('document:keydown.escape')
+  surEchap(): void {
+    if (this.guichetOuvert()) this.fermerGuichet();
+    else if (this.clotureOuverte()) this.clotureOuverte.set(false);
+  }
+
+  // -- Journée ------------------------------------------------------------
+  charger(): void {
+    this.chargement.set(true);
+    // L'adresse garde le jour consulté : un lien partagé rouvre le même.
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { date: this.jour(), caissier: this.caissier() || null, matricule: null },
+      replaceUrl: true,
+    });
+    this.finance.historiqueCaisse({ date: this.jour(), caissier: this.caissier() }).subscribe({
+      next: (h) => {
+        this.journee.set(h);
+        this.chargement.set(false);
+      },
+      error: (e) => {
+        this.erreur.set(this.message(e, "La journée n'a pas pu être chargée."));
+        this.chargement.set(false);
+      },
+    });
+  }
+
+  choisirJour(valeur: string): void {
+    if (!valeur) return;
+    this.jour.set(valeur);
+    this.charger();
+  }
+
+  decaler(jours: number): void {
+    const [annee, mois, quantieme] = this.jour().split('-').map(Number);
+    this.choisirJour(isoLocal(new Date(annee, mois - 1, quantieme + jours)));
+  }
+
+  choisirCaissier(valeur: string): void {
+    this.caissier.set(valeur);
+    this.charger();
+  }
+
+  // -- Guichet ------------------------------------------------------------
+  ouvrirGuichet(): void {
+    this.guichetOuvert.set(true);
+    this.clotureOuverte.set(false);
+    this.erreur.set(null);
+    this.recu.set(null);
+    this.facture.set(null);
+    this.matricule = '';
+    this.montant = null;
+    this.reference = '';
+    this.fraisCoches.set([]);
+  }
+
+  fermerGuichet(): void {
+    this.guichetOuvert.set(false);
+    this.erreur.set(null);
   }
 
   rechercher(): void {
@@ -97,7 +207,7 @@ export class CaisseComponent implements OnInit {
           this.occupe.set(false);
         },
         error: (e) => {
-          this.erreur.set(e?.error?.detail ?? e?.error?.matricule?.[0] ?? 'Recherche impossible.');
+          this.erreur.set(this.message(e, 'Recherche impossible.'));
           this.occupe.set(false);
         },
       });
@@ -149,9 +259,12 @@ export class CaisseComponent implements OnInit {
           this.reference = '';
           this.fraisCoches.set([]);
           this.occupe.set(false);
+          // La journée se met à jour derrière la fenêtre : le paiement doit
+          // apparaître dans la liste et dans les compteurs sans rechargement.
+          if (this.estAujourdhui()) this.charger();
         },
         error: (e) => {
-          this.erreur.set(e?.error?.detail ?? e?.error?.montant?.[0] ?? "L'encaissement a échoué.");
+          this.erreur.set(this.message(e, "L'encaissement a échoué."));
           this.occupe.set(false);
         },
       });
@@ -180,5 +293,41 @@ export class CaisseComponent implements OnInit {
     this.facture.set(null);
     this.matricule = '';
     this.erreur.set(null);
+  }
+
+  telechargerRecuDuJour(idRecu: number): void {
+    this.finance.telecharger(`/recus/${idRecu}/pdf/`).subscribe({
+      error: () => this.toast.erreur("Le reçu n'a pas pu être téléchargé."),
+    });
+  }
+
+  // -- Clôture ------------------------------------------------------------
+  cloturer(): void {
+    this.occupe.set(true);
+    this.erreur.set(null);
+    this.finance
+      .cloturerCaisse({ date: this.jour(), commentaire: this.commentaireCloture || null })
+      .subscribe({
+        next: (h) => {
+          this.journee.set(h);
+          this.clotureOuverte.set(false);
+          this.commentaireCloture = '';
+          this.occupe.set(false);
+          this.toast.succes('Journée clôturée',
+                            `${Number(h.cloture?.especes_attendues ?? 0).toLocaleString('fr-FR')} F attendus en espèces.`);
+        },
+        error: (e) => {
+          this.occupe.set(false);
+          this.toast.erreur('Clôture impossible', this.message(e, 'La clôture a échoué.'));
+        },
+      });
+  }
+
+  private message(erreur: unknown, defaut: string): string {
+    const corps = (erreur as { error?: Record<string, unknown> })?.error;
+    if (!corps) return defaut;
+    const premiere = Object.values(corps)[0];
+    const texte = Array.isArray(premiere) ? String(premiere[0]) : String(premiere);
+    return texte || defaut;
   }
 }

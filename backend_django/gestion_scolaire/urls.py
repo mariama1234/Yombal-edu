@@ -53,5 +53,6 @@ urlpatterns = [
     path("finances/bilan/", views.BilanFinancierView.as_view(), name="finances-bilan"),
     path("tarifs/grille/", views.GrilleTarifsView.as_view(), name="tarifs-grille"),
     path("caisse/historique/", views.HistoriqueCaisseView.as_view(), name="caisse-historique"),
+    path("caisse/cloturer/", views.ClotureCaisseView.as_view(), name="caisse-cloturer"),
     path("", include(router.urls)),
 ]

@@ -976,6 +976,19 @@ export interface HistoriqueCaisse {
     id_caissier: number | null;
     caissier: string;
   }[];
+  /** L'arrêté du jour, s'il a été fait : totaux figés au moment du comptage. */
+  cloture: {
+    id: number;
+    date_cloture: string;
+    par: string;
+    total_encaisse: number;
+    total_depense: number;
+    especes_attendues: number;
+    commentaire: string | null;
+    /** Opérations enregistrées après la clôture ; `null` si la vue est filtrée sur un caissier. */
+    ecart_encaisse: number | null;
+    ecart_depense: number | null;
+  } | null;
 }
 
 /** Réponse de GET /frais-eleves/situation/ — un élève par ligne. */

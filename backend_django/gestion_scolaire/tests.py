@@ -4358,6 +4358,74 @@ class TestHistoriqueCaisse(BaseDossierFinancier):
         self.assertEqual(self._historique(date="10/10/2026").status_code, 400)
 
 
+class TestClotureDeCaisse(BaseDossierFinancier):
+    """L'arrêté du soir : des totaux figés, datés et signés."""
+
+    def setUp(self):
+        super().setUp()
+        self.jour = "2026-10-10"
+        midi = datetime(2026, 10, 10, 12, 0, tzinfo=dt_timezone.utc)
+        self._payer(self._frais(25000, date(2026, 10, 5)), 25000, date_paiement=midi)
+        self.client.post("/api/depenses/", {
+            "id_type_depense": self.type_depense.pk, "motif": "Craies",
+            "montant": "3000", "date_depense": self.jour,
+        }, format="json")
+
+    def _cloturer(self, client=None, **corps):
+        corps.setdefault("date", self.jour)
+        return (client or self.client).post("/api/caisse/cloturer/", corps, format="json")
+
+    def _historique(self, client=None):
+        return (client or self.client).get("/api/caisse/historique/", {"date": self.jour})
+
+    def test_la_cloture_fige_les_totaux_et_son_auteur(self):
+        reponse = self._cloturer(commentaire="Tiroir compté, rien à signaler")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        cloture = reponse.data["cloture"]
+        self.assertEqual(cloture["total_encaisse"], 25000)
+        self.assertEqual(cloture["total_depense"], 3000)
+        self.assertEqual(cloture["especes_attendues"], 22000)
+        self.assertEqual(cloture["par"], "Admin Test")
+        self.assertEqual(cloture["commentaire"], "Tiroir compté, rien à signaler")
+        self.assertEqual(cloture["ecart_encaisse"], 0)
+        # L'historique la renvoie ensuite à chaque consultation.
+        self.assertIsNotNone(self._historique().data["cloture"])
+
+    def test_une_seconde_cloture_est_refusee(self):
+        self._cloturer()
+        self.assertEqual(self._cloturer().status_code, 400)
+        self.assertEqual(models.ClotureCaisse.objects.count(), 1)
+
+    def test_un_encaissement_posterieur_apparait_en_ecart(self):
+        self._cloturer()
+        self._payer(self._frais(10000, date(2026, 10, 5)), 10000,
+                    date_paiement=datetime(2026, 10, 10, 18, 0, tzinfo=dt_timezone.utc))
+        cloture = self._historique().data["cloture"]
+        self.assertEqual(cloture["ecart_encaisse"], 10000)
+        self.assertEqual(cloture["total_encaisse"], 25000)
+
+    def test_une_journee_sans_cloture_le_dit(self):
+        self.assertIsNone(self._historique().data["cloture"])
+
+    def test_chaque_ecole_cloture_la_sienne(self):
+        self._cloturer()
+        reponse = self.client_autre.post("/api/caisse/cloturer/", {"date": self.jour},
+                                         format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(reponse.data["totaux"]["encaisse"], 0)
+        self.assertEqual(models.ClotureCaisse.objects.count(), 2)
+
+    def test_reservee_a_la_caisse(self):
+        enseignant = self._client(self.enseignant_user.email)
+        self.assertEqual(self._cloturer(enseignant).status_code, 403)
+
+    def test_le_caissier_peut_cloturer(self):
+        caissier = self._compte("caisse@a.sn", self.ecole, "caissier")
+        reponse = self._cloturer(self._client(caissier.email))
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(reponse.data["cloture"]["par"], "Caissier Test")
+
+
 class TestRecuDePaiement(BaseDossierFinancier):
     """Le justificatif remis à la famille : contenu et nom du fichier."""
 

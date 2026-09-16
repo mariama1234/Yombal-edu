@@ -130,6 +130,11 @@ export class FinanceService {
     });
   }
 
+  /** Arrête la caisse du jour : les totaux sont figés et signés. */
+  cloturerCaisse(corps: Record<string, unknown>): Observable<HistoriqueCaisse> {
+    return this.http.post<HistoriqueCaisse>(`${this.base}/caisse/cloturer/`, corps);
+  }
+
   paiements(filtres: Filtres = {}): Observable<Paginated<Paiement>> {
     return this.http.get<Paginated<Paiement>>(`${this.base}/paiements/`, {
       params: this.params(filtres),
