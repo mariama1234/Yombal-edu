@@ -1,0 +1,91 @@
+@if (!niveau()) {
+  <div class="vide">{{ messageSansNiveau() }}</div>
+} @else {
+
+  <!-- Dus d'office -->
+  @if (afficherDOffice()) {
+  <div class="titre titre-bloc">Dus d'office</div>
+  @if (dOffice().length) {
+    <div class="grille">
+      @for (f of dOffice(); track f.id) {
+        <div class="carte fixe">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ink-400)" stroke-width="2" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+          <div class="texte">
+            <div class="nom" [title]="f.libelle">{{ f.libelle }}</div>
+            <div class="meta">{{ origine(f) }}</div>
+          </div>
+          <div class="montant mono">{{ f.montant | number: '1.0-0' }} F{{ f.mensuel ? '/mois' : '' }}</div>
+        </div>
+      }
+    </div>
+  } @else {
+    <p class="alerte">Aucun frais d'inscription ni mensualité n'est défini : crée-les dans « Types de frais ».</p>
+  }
+  }
+
+  <!-- Frais au choix -->
+  @if (auChoix().length) {
+    <div class="titre-ligne" [style.margin-top.px]="afficherDOffice() ? 18 : 0">
+      <div class="titre">
+        Frais au choix
+        <span class="compte">{{ nombreCoches() }} / {{ auChoix().length }} coché(s)</span>
+      </div>
+      <div class="outils">
+        @if (rechercheUtile()) {
+          <input class="input recherche" type="search" placeholder="Rechercher un frais…"
+                 [value]="recherche()" (input)="recherche.set($any($event.target).value)"
+                 aria-label="Rechercher un frais au choix">
+        }
+        @if (nombreCoches()) {
+          <button type="button" class="panel-link" (click)="toutDecocher.emit()">Tout décocher</button>
+        }
+      </div>
+    </div>
+
+    <!-- Les frais cochés restent visibles, même masqués par la recherche. -->
+    @if (nombreCoches()) {
+      <div class="etiquettes">
+        @for (f of cochesListe(); track f.id) {
+          <button type="button" class="etiquette" (click)="basculer.emit(f.id)"
+                  [attr.aria-label]="'Retirer ' + f.libelle">
+            {{ f.libelle }} <span aria-hidden="true">×</span>
+          </button>
+        }
+      </div>
+    }
+
+    <div class="grille" [class.defilante]="rechercheUtile()">
+      @for (f of auChoixFiltres(); track f.id) {
+        <label class="carte" [class.cochee]="estCoche(f.id)">
+          <input type="checkbox" [checked]="estCoche(f.id)" (change)="basculer.emit(f.id)">
+          <div class="texte">
+            <div class="nom" [title]="f.libelle">{{ f.libelle }}</div>
+            <div class="meta">
+              {{ origine(f) }}
+              @if (f.reconduit) { <span class="reconduit">· comme l'an passé</span> }
+            </div>
+          </div>
+          <div class="montant mono">{{ f.montant | number: '1.0-0' }} F{{ f.mensuel ? '/mois' : '' }}</div>
+        </label>
+      } @empty {
+        <p class="vide-recherche">Aucun frais ne correspond à « {{ recherche() }} ».</p>
+      }
+    </div>
+  }
+
+  <!-- Total -->
+  <div class="total">
+    <div>
+      <div class="total-titre">{{ titreTotal() }}</div>
+      <div class="total-detail">
+        @if (afficherDOffice()) {
+          {{ totalDOffice() | number: '1.0-0' }} F dus d'office
+          @if (totalOptions()) { + {{ totalOptions() | number: '1.0-0' }} F de frais au choix }
+        } @else {
+          {{ nombreCoches() }} frais coché(s)
+        }
+      </div>
+    </div>
+    <span class="total-montant mono">{{ total() | number: '1.0-0' }} F</span>
+  </div>
+}

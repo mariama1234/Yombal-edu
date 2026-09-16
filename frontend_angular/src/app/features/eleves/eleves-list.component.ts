@@ -111,6 +111,9 @@ export class ElevesListComponent {
       // Revenir de l'écran de réinscription doit rouvrir la bonne vue.
       const vue = params.get('vue');
       if (vue && VUES.includes(vue as Vue)) this.vue.set(vue as Vue);
+      // Depuis la liste des classes : « Élèves » ouvre la liste sur cette classe.
+      const classe = params.get('classe');
+      if (classe) this.filtreClasse.set(classe);
       this.charger();
     });
 

@@ -64,6 +64,22 @@ export interface FiltreConfig {
   obligatoire?: boolean;
 }
 
+/** Page à ouvrir ensuite : rappelée sous le titre et proposée après un enregistrement. */
+export interface EtapeSuivante {
+  label: string;
+  chemin: string;
+}
+
+/** Raccourci sur chaque ligne, ex: la liste des élèves d'une classe. */
+export interface LienLigne {
+  label: string;
+  chemin: string;
+  /** Paramètre d'URL qui reçoit la valeur de la ligne. */
+  parametre: string;
+  /** Champ de la ligne à transmettre ; `id` par défaut. */
+  champ?: string;
+}
+
 export interface EntityConfig {
   key: string;
   endpoint: string;
@@ -79,6 +95,10 @@ export interface EntityConfig {
   actions?: RowAction[];
   /** Listes déroulantes de filtrage au-dessus du tableau. */
   filtres?: FiltreConfig[];
+  /** Pages qui suivent logiquement celle-ci. */
+  suite?: EtapeSuivante[];
+  /** Raccourcis proposés sur chaque ligne. */
+  liens?: LienLigne[];
   /**
    * La liste suit l'année scolaire choisie dans le bandeau haut.
    *

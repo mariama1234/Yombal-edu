@@ -4,7 +4,10 @@
     <h1>Caisse</h1>
     <p>Saisis le matricule figurant sur la facture de l'élève, puis le montant payé.</p>
   </div>
-  <a class="btn-ghost" routerLink="/finances">Frais &amp; encaissements</a>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <a class="btn-ghost" routerLink="/finances/historique-caisse">Historique du jour</a>
+    <a class="btn-ghost" routerLink="/finances">Frais &amp; encaissements</a>
+  </div>
 </div>
 
 @if (erreur()) { <div class="form-error" style="max-width:720px;">{{ erreur() }}</div> }
@@ -29,6 +32,7 @@
       </tbody>
     </table>
     <div class="form-actions">
+      <a class="btn-ghost" [routerLink]="['/eleves', r.idEleve, 'dossier']">Dossier de l'élève</a>
       <button type="button" class="btn-ghost" (click)="nouvelEncaissement()">Nouvel encaissement</button>
       <button type="button" class="btn-primary" (click)="imprimerRecu()">Imprimer le reçu (PDF)</button>
     </div>

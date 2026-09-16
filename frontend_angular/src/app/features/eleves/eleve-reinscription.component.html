@@ -2,7 +2,7 @@
 <div class="page-head">
   <div>
     <h1>Réinscrire un élève</h1>
-    <p>Il ne reste qu'à choisir la classe dans laquelle il passe.</p>
+    <p>Choisis la classe dans laquelle il passe, puis vérifie ses frais de l'année.</p>
   </div>
   <a class="btn-ghost" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }">
     ← Retour à la file
@@ -30,52 +30,56 @@
         <a class="btn-ghost" [routerLink]="['/eleves', c.eleve.id, 'dossier']">
           Ouvrir son dossier
         </a>
+        <a class="btn-ghost" routerLink="/finances/caisse" [queryParams]="{ matricule: c.eleve.matricule }">
+          Aller à la caisse
+        </a>
       </div>
     </div>
   } @else {
 
-    @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+    @if (erreur()) { <div class="form-error" style="max-width:860px;">{{ erreur() }}</div> }
 
     @if (c.deja_inscrit) {
-      <div class="panel" style="border-color:var(--orange-500); color:var(--orange-500); font-size:13px;">
+      <div class="panel" style="max-width:860px; border-color:var(--orange-500); color:var(--orange-500); font-size:13px;">
         {{ c.eleve.nom_complet }} est déjà inscrit en <strong>{{ c.deja_inscrit.classe }}</strong>
         pour {{ c.annee_cible.libelle }} ({{ c.deja_inscrit.statut_libelle }}).
         Il n'y a rien à réinscrire.
       </div>
     }
 
-    <div class="form-section" style="max-width:760px;">
-      <div class="form-section-title">{{ c.eleve.nom_complet }}</div>
-      <div class="form-section-sub">
-        Matricule {{ c.eleve.matricule }} — {{ c.eleve.statut_libelle }}
-      </div>
+    <form [formGroup]="form" (ngSubmit)="valider()" style="max-width:860px;">
 
-      <!-- Pré-rempli et non modifiable : la provenance est un fait, pas un choix. -->
-      <div class="form-grid cols-3">
-        <div class="field">
-          <label>Année de départ</label>
-          <input class="input" [value]="c.precedente?.annee ?? '—'" disabled>
+      <div class="form-section">
+        <div class="form-section-title">{{ c.eleve.nom_complet }}</div>
+        <div class="form-section-sub">
+          Matricule {{ c.eleve.matricule }} — {{ c.eleve.statut_libelle }}
         </div>
-        <div class="field">
-          <label>Classe de départ</label>
-          <input class="input"
-                 [value]="c.precedente ? c.precedente.classe + (c.precedente.niveau ? ' (' + c.precedente.niveau + ')' : '') : '—'"
-                 disabled>
-        </div>
-        <div class="field">
-          <label>Année d'arrivée</label>
-          <input class="input" [value]="c.annee_cible.libelle" disabled>
-        </div>
-      </div>
 
-      @if (!c.precedente) {
-        <div class="form-error">
-          {{ c.eleve.prenom }} n'a aucune scolarité antérieure : passe par
-          « Inscrire un élève » plutôt que par la réinscription.
+        <!-- Pré-rempli et non modifiable : la provenance est un fait, pas un choix. -->
+        <div class="form-grid cols-3">
+          <div class="field">
+            <label>Année de départ</label>
+            <input class="input" [value]="c.precedente?.annee ?? '—'" disabled>
+          </div>
+          <div class="field">
+            <label>Classe de départ</label>
+            <input class="input"
+                   [value]="c.precedente ? c.precedente.classe + (c.precedente.niveau ? ' (' + c.precedente.niveau + ')' : '') : '—'"
+                   disabled>
+          </div>
+          <div class="field">
+            <label>Année d'arrivée</label>
+            <input class="input" [value]="c.annee_cible.libelle" disabled>
+          </div>
         </div>
-      }
 
-      <form [formGroup]="form" (ngSubmit)="valider()">
+        @if (!c.precedente) {
+          <div class="form-error">
+            {{ c.eleve.prenom }} n'a aucune scolarité antérieure : passe par
+            « Inscrire un élève » plutôt que par la réinscription.
+          </div>
+        }
+
         <div class="form-grid">
           <div class="field">
             <label for="classe-cible">Classe d'arrivée</label>
@@ -107,44 +111,41 @@
             <span class="hint">Par défaut, le premier jour de l'année scolaire.</span>
           </div>
         </div>
+      </div>
 
-        <div class="field">
-          <label>Frais {{ c.annee_cible.libelle }}</label>
-          @if (c.types_frais.length === 0) {
-            <span class="hint hint-error">
-              Aucun type de frais n'est défini : aucun frais ne sera émis.
-            </span>
-          } @else {
-            <div style="display:flex; flex-direction:column; gap:8px; margin-top:4px;">
-              @for (t of fraisDOffice(); track t.id) {
-                <label style="display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:400;">
-                  <input type="checkbox" checked disabled>
-                  <span>{{ t.libelle_affiche }} — {{ montantPour(t) | number: '1.0-0' }} F{{ t.mensuel ? ' / mois' : '' }}</span>
-                  <span class="hint">automatique</span>
-                </label>
-              }
-              @for (t of fraisOptionnels(); track t.id) {
-                <label style="display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:400; cursor:pointer;">
-                  <input type="checkbox" [checked]="fraisCoches().includes(t.id)" (change)="basculerFrais(t.id)">
-                  <span>{{ t.libelle_affiche }} — {{ montantPour(t) | number: '1.0-0' }} F{{ t.mensuel ? ' / mois' : '' }}</span>
-                  @if (t.reconduit) { <span class="hint">comme l'an passé</span> }
-                </label>
-              }
-            </div>
-          }
+      <div class="form-section">
+        <div class="form-section-title">Frais {{ c.annee_cible.libelle }}</div>
+        <div class="form-section-sub">
+          Les montants dépendent du niveau de la classe d'arrivée. Les frais au choix de l'an passé
+          sont déjà cochés : décoche ce qui change.
         </div>
 
-        <div class="form-actions">
-          <a class="btn-ghost" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }">
-            Annuler
-          </a>
-          <button type="submit" class="btn-primary"
-                  [disabled]="occupe() || !!c.deja_inscrit || !c.precedente">
-            {{ occupe() ? 'Réinscription…' : 'Réinscrire' }}
-          </button>
-        </div>
-      </form>
-    </div>
+        @if (c.types_frais.length === 0) {
+          <p style="margin:0; font-size:12.5px; color:var(--red);">
+            Aucun type de frais n'est défini : aucun frais ne sera émis.
+          </p>
+        } @else {
+          <app-choix-frais
+            [frais]="fraisAffiches()"
+            [coches]="fraisCoches()"
+            [niveau]="libelleCible()"
+            messageSansNiveau="Choisis d'abord la classe d'arrivée : le montant de chaque frais dépend de son niveau."
+            titreTotal="Total à payer à la réinscription"
+            (basculer)="basculerFrais($event)"
+            (toutDecocher)="fraisCoches.set([])"></app-choix-frais>
+        }
+      </div>
+
+      <div class="form-actions">
+        <a class="btn-ghost" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }">
+          Annuler
+        </a>
+        <button type="submit" class="btn-primary"
+                [disabled]="occupe() || !!c.deja_inscrit || !c.precedente">
+          {{ occupe() ? 'Réinscription…' : 'Réinscrire' }}
+        </button>
+      </div>
+    </form>
   }
 
 } @else {

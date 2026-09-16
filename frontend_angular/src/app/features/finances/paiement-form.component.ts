@@ -4,6 +4,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FraisEleve, Paiement } from '../../core/models/models';
 import { FinanceService } from './finance.service';
+import { ToastService } from '../../core/services/toast.service';
 
 @Component({
   selector: 'app-paiement-form',
@@ -15,6 +16,7 @@ export class PaiementFormComponent implements OnInit {
   private fb = inject(FormBuilder);
   private route = inject(ActivatedRoute);
   private finance = inject(FinanceService);
+  private toast = inject(ToastService);
 
   frais = signal<FraisEleve | null>(null);
   paiement = signal<Paiement | null>(null);
@@ -69,6 +71,8 @@ export class PaiementFormComponent implements OnInit {
       .subscribe({
         next: (paiement) => {
           this.paiement.set(paiement);
+          this.toast.succes('Paiement enregistré',
+                            paiement.numero_recu ? `Reçu n° ${paiement.numero_recu}` : undefined);
           this.enregistrement.set(false);
         },
         error: (e) => {

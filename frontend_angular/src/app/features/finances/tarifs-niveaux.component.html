@@ -4,7 +4,7 @@
     <h1>Tarifs par niveau</h1>
     <p>
       Le montant de chaque frais selon le niveau : l'inscription en 3ème peut différer de celle de 4ème.
-      Une case vide applique le montant par défaut du frais, affiché en gris.
+      Une case vide applique le montant par défaut du frais.
     </p>
   </div>
   <div style="display:flex; gap:10px; flex-wrap:wrap;">
@@ -13,83 +13,212 @@
   </div>
 </div>
 
-@if (message()) { <div class="form-success">{{ message() }}</div> }
+@if (message()) {
+  <div class="form-success" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <span>{{ message() }}</span>
+    <a class="panel-link" routerLink="/eleves/nouveau">Inscrire un élève →</a>
+  </div>
+}
 @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
 
 @if (chargement()) {
-  <div class="panel"><p style="font-size:13px; color:var(--ink-400); margin:0;">Chargement de la grille…</p></div>
+  <div class="panel"><p style="font-size:13px; color:var(--ink-400); margin:0;">Chargement des tarifs…</p></div>
 } @else {
-  @if (grille(); as g) {
-    @if (!g.niveaux.length || !g.types.length) {
-      <div class="panel">
-        <p style="font-size:13px; color:var(--ink-600); margin:0;">
-          @if (!g.niveaux.length) {
-            Aucun niveau n'est encore créé : ajoute-les dans <a class="panel-link" routerLink="/niveaux">Niveaux</a>.
-          }
-          @if (!g.types.length) {
-            Aucun frais n'est encore créé : ajoute-les dans <a class="panel-link" routerLink="/types-frais">Types de frais</a>.
-          }
-        </p>
-      </div>
-    } @else {
-      <div class="panel" style="padding:0; overflow:hidden;">
-        <!-- Défilement horizontal : une école peut avoir beaucoup de frais. -->
-        <div style="overflow-x:auto;">
-          <table class="simple" style="margin:0; min-width:100%;">
-            <thead>
-              <tr>
-                <th style="position:sticky; left:0; background:var(--surface); z-index:2; min-width:120px;">Niveau</th>
-                @for (t of g.types; track t.id) {
-                  <th style="min-width:150px; vertical-align:bottom;">
-                    <div style="font-weight:600; color:var(--ink-900);">{{ t.libelle }}</div>
-                    <div style="font-size:11px; font-weight:500; color:var(--ink-400); text-transform:none; letter-spacing:0;">
-                      {{ t.nature === 'autre' ? 'Au choix' : t.nature_libelle }}
-                      · défaut {{ t.montant_defaut | number: '1.0-0' }} F{{ t.mensuel ? ' / mois' : '' }}
-                    </div>
-                  </th>
-                }
-              </tr>
-            </thead>
-            <tbody>
-              @for (n of g.niveaux; track n.id) {
-                <tr>
-                  <td style="position:sticky; left:0; background:var(--surface); z-index:1;">
-                    <strong>{{ n.libelle }}</strong>
-                  </td>
-                  @for (t of g.types; track t.id) {
-                    <td>
-                      <input class="input mono" type="number" min="0" step="500"
-                             [value]="valeur(n.id, t.id)" (input)="changer(n.id, t.id, $event)"
-                             [placeholder]="(t.montant_defaut | number: '1.0-0') ?? ''"
-                             [attr.aria-label]="t.libelle + ' en ' + n.libelle"
-                             [style.border-color]="estModifiee(n.id, t.id) ? 'var(--orange-500)' : null"
-                             style="width:120px; text-align:right; padding:8px 10px;">
-                    </td>
+@if (grille(); as g) {
+  @if (!g.niveaux.length || !g.types.length) {
+    <div class="panel">
+      <p style="font-size:13px; color:var(--ink-600); margin:0;">
+        @if (!g.niveaux.length) {
+          Aucun niveau n'est encore créé : ajoute-les dans <a class="panel-link" routerLink="/niveaux">Niveaux</a>.
+        }
+        @if (!g.types.length) {
+          Aucun frais n'est encore créé : ajoute-les dans <a class="panel-link" routerLink="/types-frais">Types de frais</a>.
+        }
+      </p>
+    </div>
+  } @else {
+
+    <div class="tabs">
+      <button type="button" class="tab" [class.active]="mode() === 'niveau'" (click)="choisirMode('niveau')">
+        Par niveau <span style="color:var(--ink-400); font-weight:500;">({{ g.niveaux.length }})</span>
+      </button>
+      <button type="button" class="tab" [class.active]="mode() === 'frais'" (click)="choisirMode('frais')">
+        Par frais <span style="color:var(--ink-400); font-weight:500;">({{ g.types.length }})</span>
+      </button>
+    </div>
+
+    <div class="disposition">
+
+      <!-- Liste de gauche : les niveaux, ou les frais -->
+      <div class="panel liste">
+        <input class="input" type="search" style="padding:8px 11px; font-size:13px;"
+               [placeholder]="mode() === 'niveau' ? 'Rechercher un niveau…' : 'Rechercher un frais…'"
+               [value]="recherche()" (input)="recherche.set($any($event.target).value)">
+        <div class="liste-elements">
+          @if (mode() === 'niveau') {
+            @for (n of niveauxFiltres(); track n.id) {
+              <button type="button" class="element" [class.actif]="selection() === n.id" (click)="choisir(n.id)">
+                <span class="element-nom">{{ n.libelle }}</span>
+                <span class="element-meta">
+                  @if (nombreTarifsPropres(n.id)) {
+                    {{ nombreTarifsPropres(n.id) }} tarif(s) propre(s)
+                  } @else {
+                    Montants par défaut
                   }
-                </tr>
-              }
-            </tbody>
-          </table>
+                </span>
+                @if (niveauModifie(n.id)) { <span class="point" title="Modifications non enregistrées"></span> }
+              </button>
+            } @empty {
+              <span class="element-meta" style="padding:8px 12px;">Aucun niveau ne correspond.</span>
+            }
+          } @else {
+            @for (t of typesFiltres(); track t.id) {
+              <button type="button" class="element" [class.actif]="selection() === t.id" (click)="choisir(t.id)">
+                <span class="element-nom">{{ t.libelle }}</span>
+                <span class="element-meta">
+                  {{ t.nature === 'autre' ? 'Au choix' : t.nature_libelle }}
+                  · {{ nombreNiveauxTarifes(t.id) }}/{{ g.niveaux.length }} niveau(x) tarifé(s)
+                </span>
+                @if (fraisModifie(t.id)) { <span class="point" title="Modifications non enregistrées"></span> }
+              </button>
+            } @empty {
+              <span class="element-meta" style="padding:8px 12px;">Aucun frais ne correspond.</span>
+            }
+          }
         </div>
       </div>
 
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:14px;">
-        <span style="font-size:12.5px; color:var(--ink-400);">
-          @if (modifiees().length) {
-            {{ modifiees().length }} case(s) modifiée(s), encadrée(s) en orange.
-          } @else {
-            Aucune modification en cours.
+      <!-- Détail de droite -->
+      <div class="panel" style="min-width:0;">
+
+        @if (niveauChoisi(); as n) {
+          <div class="panel-head" style="align-items:flex-start; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div class="panel-title">{{ n.libelle }}</div>
+              <div class="ligne-meta" style="margin-top:3px;">
+                {{ nombreTarifsPropres(n.id) }} tarif(s) propre(s) sur {{ g.types.length }} frais ·
+                inscription + 1er mois : <strong style="color:var(--ink-900);">{{ totalDOffice(n.id) | number: '1.0-0' }} F</strong>
+              </div>
+            </div>
+          </div>
+
+          @for (groupe of groupes(); track groupe.titre) {
+            <div class="groupe-titre">{{ groupe.titre }}</div>
+            @for (t of groupe.types; track t.id) {
+              <div class="ligne">
+                <div style="min-width:0;">
+                  <div class="ligne-nom">{{ t.libelle }}</div>
+                  <div class="ligne-meta">
+                    @if (aTarifPropre(n.id, t.id)) {
+                      <span class="propre">Tarif {{ n.libelle }}</span>
+                    } @else {
+                      Montant par défaut
+                    }
+                    @if (t.mensuel) { · par mois }
+                  </div>
+                </div>
+                <div class="ligne-defaut">Défaut : {{ t.montant_defaut | number: '1.0-0' }} F</div>
+                <input class="input mono saisie" type="number" min="0" step="500"
+                       [value]="valeur(n.id, t.id)" (input)="changer(n.id, t.id, $event)"
+                       [placeholder]="(t.montant_defaut | number: '1.0-0') ?? ''"
+                       [attr.aria-label]="t.libelle + ' en ' + n.libelle"
+                       [style.border-color]="estModifiee(n.id, t.id) ? 'var(--orange-500)' : null">
+                @if (aTarifPropre(n.id, t.id)) {
+                  <button type="button" class="retour" title="Revenir au montant par défaut"
+                          [attr.aria-label]="'Revenir au montant par défaut pour ' + t.libelle"
+                          (click)="revenirAuDefaut(n.id, t.id)">↺</button>
+                } @else {
+                  <span></span>
+                }
+              </div>
+            }
           }
-        </span>
-        <div style="display:flex; gap:10px;">
-          <button type="button" class="btn-ghost" (click)="annuler()" [disabled]="!modifiees().length || occupe()">
-            Annuler
-          </button>
-          <button type="button" class="btn-primary" (click)="enregistrer()" [disabled]="!modifiees().length || occupe()">
-            {{ occupe() ? 'Enregistrement…' : 'Enregistrer les tarifs' }}
-          </button>
-        </div>
+        }
+
+        @if (fraisChoisi(); as t) {
+          <div class="panel-head" style="align-items:flex-start; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div class="panel-title">{{ t.libelle }}</div>
+              <div class="ligne-meta" style="margin-top:3px;">
+                {{ t.nature === 'autre' ? 'Frais au choix' : t.nature_libelle }}
+                · défaut {{ t.montant_defaut | number: '1.0-0' }} F{{ t.mensuel ? ' par mois' : '' }}
+                · {{ nombreNiveauxTarifes(t.id) }}/{{ g.niveaux.length }} niveau(x) tarifé(s)
+              </div>
+            </div>
+            <div class="outils">
+              <input class="input mono" type="number" min="0" step="500"
+                     style="width:130px; padding:7px 10px; font-size:12.5px; text-align:right;"
+                     placeholder="Montant" [value]="montantPourTous()"
+                     (input)="montantPourTous.set($any($event.target).value)"
+                     aria-label="Montant à appliquer à tous les niveaux">
+              <button type="button" class="btn-ghost" style="padding:7px 12px; font-size:12.5px;"
+                      [disabled]="!montantPourTous()" (click)="appliquerATousLesNiveaux()">
+                Appliquer à tous les niveaux
+              </button>
+              @if (nombreNiveauxTarifes(t.id)) {
+                <button type="button" class="panel-link" style="font-size:12.5px;" (click)="toutRemettreParDefaut()">
+                  Tout remettre par défaut
+                </button>
+              }
+            </div>
+          </div>
+
+          @for (n of g.niveaux; track n.id) {
+            <div class="ligne">
+              <div style="min-width:0;">
+                <div class="ligne-nom">{{ n.libelle }}</div>
+                <div class="ligne-meta">
+                  @if (aTarifPropre(n.id, t.id)) {
+                    <span class="propre">Tarif propre</span>
+                  } @else {
+                    Montant par défaut
+                  }
+                </div>
+              </div>
+              <div class="ligne-defaut">Appliqué : {{ montantApplique(n.id, t) | number: '1.0-0' }} F</div>
+              <input class="input mono saisie" type="number" min="0" step="500"
+                     [value]="valeur(n.id, t.id)" (input)="changer(n.id, t.id, $event)"
+                     [placeholder]="(t.montant_defaut | number: '1.0-0') ?? ''"
+                     [attr.aria-label]="t.libelle + ' en ' + n.libelle"
+                     [style.border-color]="estModifiee(n.id, t.id) ? 'var(--orange-500)' : null">
+              @if (aTarifPropre(n.id, t.id)) {
+                <button type="button" class="retour" title="Revenir au montant par défaut"
+                        [attr.aria-label]="'Revenir au montant par défaut en ' + n.libelle"
+                        (click)="revenirAuDefaut(n.id, t.id)">↺</button>
+              } @else {
+                <span></span>
+              }
+            </div>
+          }
+        }
+
+        @if (!niveauChoisi() && !fraisChoisi()) {
+          <p style="font-size:13px; color:var(--ink-400); margin:0;">
+            Choisis {{ mode() === 'niveau' ? 'un niveau' : 'un frais' }} dans la liste.
+          </p>
+        }
       </div>
-    }
+    </div>
+
+    <!-- Toujours visible : on parcourt plusieurs niveaux avant d'enregistrer. -->
+    <div class="barre">
+      <span style="font-size:12.5px; color:var(--ink-600);">
+        @if (modifiees().length) {
+          <strong style="color:var(--orange-500);">{{ modifiees().length }} modification(s)</strong>
+          non enregistrée(s) — les niveaux et frais concernés sont marqués d'un point orange.
+        } @else {
+          Aucune modification en cours.
+        }
+      </span>
+      <div style="display:flex; gap:10px;">
+        <button type="button" class="btn-ghost" (click)="annuler()" [disabled]="!modifiees().length || occupe()">
+          Annuler
+        </button>
+        <button type="button" class="btn-primary" (click)="enregistrer()" [disabled]="!modifiees().length || occupe()">
+          {{ occupe() ? 'Enregistrement…' : 'Enregistrer les tarifs' }}
+        </button>
+      </div>
+    </div>
   }
+}
 }

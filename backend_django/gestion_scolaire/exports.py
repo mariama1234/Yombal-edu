@@ -17,11 +17,48 @@ en-têtes répétés, totaux et pied de page numéroté.
 from __future__ import annotations
 
 import io
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 
+from django.utils.text import slugify
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+
+
+# --------------------------------------------------------------------------
+# Nom des fichiers téléchargés
+# --------------------------------------------------------------------------
+
+def slugifier(valeur):
+    """
+    Un fragment de nom de fichier : sans accent, sans espace, sans ponctuation.
+
+    `slugify` sans `allow_unicode` translitère « Ndalé » en « ndale » et
+    « 4ème A » en « 4eme-a ». C'est voulu : le fichier voyage par e-mail,
+    WhatsApp et clé USB, et tout ce qui n'est pas ASCII finit tôt ou tard en
+    « recu-Ndal%C3%A9.pdf » chez le destinataire. Tout passe en minuscules :
+    préserver la casse des seules valeurs déjà ASCII produisait « Test-Nom1 »
+    à côté de « ndale-fedior », le même champ rendu de deux façons.
+    """
+    return slugify(str(valeur or ""), allow_unicode=False)
+
+
+def nom_document(*morceaux, extension="pdf", date_du_jour=False):
+    """
+    Assemble un nom de fichier qui dit ce que la pièce contient.
+
+    Un dossier de téléchargement contient vite trente « export.pdf » : en y
+    lisant la pièce, l'élève, la classe et l'année — « bulletin-ndale-fedior-
+    4eme-a-trimestre-1.pdf » —, on retrouve le bon fichier sans l'ouvrir.
+    `date_du_jour` ajoute la date d'édition, pour les états qui changent d'un
+    jour à l'autre (impayés, journal, recettes).
+    """
+    parties = [slugifier(m) for m in morceaux if m not in (None, "")]
+    if date_du_jour:
+        parties.append(date.today().isoformat())
+    base = "-".join(p for p in parties if p) or "document"
+    return f"{base}.{extension}"
 
 # --------------------------------------------------------------------------
 # Excel
@@ -29,6 +66,9 @@ from openpyxl.utils import get_column_letter
 
 _ENTETE_FOND = PatternFill("solid", start_color="1F3A5F")
 _ENTETE_POLICE = Font(bold=True, color="FFFFFF")
+_ENTETE_BORDURE = Border(bottom=Side(style="thin", color="F2760C"))
+# « 25 000 » plutôt que « 25000 » : un montant se lit d'un coup d'œil.
+_FORMAT_NOMBRE = "# ##0"
 
 
 def classeur_xlsx(feuilles):
@@ -36,7 +76,9 @@ def classeur_xlsx(feuilles):
     `feuilles` : liste de (nom, entetes, lignes).
 
     Les colonnes sont dimensionnées d'après le contenu — un export qu'il faut
-    élargir colonne par colonne avant de le lire n'est pas un export.
+    élargir colonne par colonne avant de le lire n'est pas un export. L'en-tête
+    reste figé et filtrable, et les montants sont formatés : le fichier s'ouvre
+    prêt à être trié, pas prêt à être remis en forme.
     """
     classeur = Workbook()
     classeur.remove(classeur.active)
@@ -47,11 +89,22 @@ def classeur_xlsx(feuilles):
         for cellule in feuille[1]:
             cellule.fill = _ENTETE_FOND
             cellule.font = _ENTETE_POLICE
-            cellule.alignment = Alignment(vertical="center")
+            cellule.border = _ENTETE_BORDURE
+            cellule.alignment = Alignment(vertical="center", wrap_text=True)
+        feuille.row_dimensions[1].height = 22
         for ligne in lignes:
             feuille.append(list(ligne))
 
+        for rangee in feuille.iter_rows(min_row=2):
+            for cellule in rangee:
+                if isinstance(cellule.value, (int, float, Decimal)) and not isinstance(cellule.value, bool):
+                    cellule.number_format = _FORMAT_NOMBRE
+                    cellule.alignment = Alignment(horizontal="right")
+
         feuille.freeze_panes = "A2"
+        if lignes:
+            feuille.auto_filter.ref = (
+                f"A1:{get_column_letter(len(entetes))}{len(lignes) + 1}")
         for index, entete in enumerate(entetes, start=1):
             largeur = max(
                 [len(str(entete))] + [len(str(l[index - 1])) for l in lignes if len(l) >= index]
@@ -107,6 +160,26 @@ _FACTEUR_GRAS = 1.05
 A4 = (595.28, 841.89)
 MARGE = 42.0
 _INTERLIGNE = 13.0
+# Hauteur d'une ligne de tableau : de l'air autour du texte, sinon les chiffres
+# se touchent et le document a l'air d'un listing.
+_LIGNE = 16.0
+
+# Palette : le bleu des en-têtes du logiciel, l'orange en filet d'accent. Trois
+# couleurs suffisent — un document imprimé en noir et blanc doit rester lisible,
+# d'où des fonds clairs et un texte sombre.
+BLEU = (0.12, 0.23, 0.37)
+BLEU_CLAIR = (0.80, 0.85, 0.90)
+ORANGE = (0.95, 0.46, 0.05)
+ORANGE_PALE = (0.99, 0.94, 0.88)
+ENCRE = (0.06, 0.10, 0.17)
+BLANC = (1.0, 1.0, 1.0)
+
+
+def _couleur(couleur, gris):
+    """Opérateur PDF de couleur : `rg` pour une couleur, `g` pour un gris."""
+    if couleur is None:
+        return b"%.3f g" % gris
+    return b"%.3f %.3f %.3f rg" % couleur
 
 
 def largeur_texte(texte, taille, gras=False):
@@ -140,16 +213,17 @@ class _Page:
     def __init__(self):
         self.operations = []
 
-    def texte(self, x, y, contenu, taille=10, gras=False, gris=0.0):
+    def texte(self, x, y, contenu, taille=10, gras=False, gris=0.0, couleur=None):
         police = b"/F2" if gras else b"/F1"
         self.operations.append(
-            b"BT %.3f g %s %.2f Tf %.2f %.2f Td (%s) Tj ET"
-            % (gris, police, taille, x, y, _echapper(contenu))
+            b"BT %s %s %.2f Tf %.2f %.2f Td (%s) Tj ET"
+            % (_couleur(couleur, gris), police, taille, x, y, _echapper(contenu))
         )
 
-    def rectangle(self, x, y, largeur, hauteur, gris=0.85):
+    def rectangle(self, x, y, largeur, hauteur, gris=0.85, couleur=None):
         self.operations.append(
-            b"%.3f g %.2f %.2f %.2f %.2f re f" % (gris, x, y, largeur, hauteur))
+            b"%s %.2f %.2f %.2f %.2f re f"
+            % (_couleur(couleur, gris), x, y, largeur, hauteur))
 
     def flux(self):
         return b"\n".join(self.operations)
@@ -181,19 +255,21 @@ class DocumentPDF:
         self._entete()
 
     def _entete(self):
+        """Bandeau de tête : titre en blanc sur bleu, filet orange en dessous."""
         premiere = len(self.pages) == 1
-        self.page.texte(MARGE, self.y - 12, self.titre, taille=16 if premiere else 11,
-                        gras=True, gris=0.11)
-        self.y -= 20 if premiere else 16
+        hauteur = 62 if premiere else 30
+        haut = self.hauteur - MARGE + 16   # le bandeau déborde dans la marge
+        self.page.rectangle(0, haut - hauteur, self.largeur, hauteur, couleur=BLEU)
+        self.page.rectangle(0, haut - hauteur - 3, self.largeur, 3, couleur=ORANGE)
+        self.page.texte(MARGE, haut - (30 if premiere else 20), self.titre,
+                        taille=16 if premiere else 11, gras=True, couleur=BLANC)
         if self.sous_titre and premiere:
-            self.page.texte(MARGE, self.y - 10, self.sous_titre, taille=9.5, gris=0.42)
-            self.y -= 16
-        self.page.rectangle(MARGE, self.y - 4, self.largeur - 2 * MARGE, 0.8, gris=0.75)
-        self.y -= 18
+            self.page.texte(MARGE, haut - 48, self.sous_titre, taille=9.5, couleur=BLEU_CLAIR)
+        self.y = haut - hauteur - 22
 
     def _place(self, hauteur_necessaire):
         """Ouvre une page si le bloc ne tient plus, et réimprime les en-têtes."""
-        if self.y - hauteur_necessaire >= MARGE + 24:
+        if self.y - hauteur_necessaire >= MARGE + 30:
             return
         self._nouvelle_page()
         if self._colonnes:
@@ -204,10 +280,12 @@ class DocumentPDF:
 
     # -- blocs -------------------------------------------------------------
     def section(self, texte):
-        self._place(26)
-        self.espace(4)
-        self.page.texte(MARGE, self.y - 10, texte, taille=11, gras=True, gris=0.15)
-        self.y -= 22
+        """Intertitre, marqué d'un trait orange : l'œil retrouve les blocs."""
+        self._place(30)
+        self.espace(6)
+        self.page.rectangle(MARGE, self.y - 11, 3, 12, couleur=ORANGE)
+        self.page.texte(MARGE + 10, self.y - 10, texte, taille=11, gras=True, couleur=ENCRE)
+        self.y -= 24
 
     def paragraphe(self, texte, taille=9.5, gris=0.3):
         for ligne in self._envelopper(texte, self.largeur - 2 * MARGE, taille):
@@ -227,23 +305,30 @@ class DocumentPDF:
         return lignes + [courante] if courante else lignes
 
     def champs(self, valeurs, largeur_libelle=140):
-        """Bloc « libellé : valeur », utilisé par le reçu."""
+        """Bloc « libellé : valeur », utilisé par le reçu, la facture, le bulletin."""
         for libelle, valeur in valeurs:
-            self._place(16)
+            self._place(17)
             self.page.texte(MARGE, self.y - 10, libelle, taille=9.5, gris=0.45)
             self.page.texte(MARGE + largeur_libelle, self.y - 10, valeur, taille=10,
-                            gras=True, gris=0.11)
-            self.y -= 16
+                            gras=True, couleur=ENCRE)
+            self.y -= 17
 
-    def encadre(self, libelle, valeur, gris_fond=0.94):
-        self._place(34)
+    def encadre(self, libelle, valeur):
+        """
+        Le chiffre qui résume la pièce : montant dû, total encaissé, moyenne.
+
+        Fond pâle et bande orange plutôt qu'un simple gris : c'est la ligne que
+        la famille cherche en premier sur une facture ou un reçu.
+        """
+        self._place(42)
         largeur = self.largeur - 2 * MARGE
-        self.page.rectangle(MARGE, self.y - 30, largeur, 30, gris=gris_fond)
-        self.page.texte(MARGE + 10, self.y - 12, libelle, taille=9, gris=0.4)
-        largeur_valeur = largeur_texte(valeur, 13, gras=True)
-        self.page.texte(MARGE + largeur - 10 - largeur_valeur, self.y - 21, valeur,
-                        taille=13, gras=True, gris=0.11)
-        self.y -= 38
+        self.page.rectangle(MARGE, self.y - 34, largeur, 34, couleur=ORANGE_PALE)
+        self.page.rectangle(MARGE, self.y - 34, 3.5, 34, couleur=ORANGE)
+        self.page.texte(MARGE + 14, self.y - 13, libelle, taille=9, gris=0.40)
+        largeur_valeur = largeur_texte(valeur, 14, gras=True)
+        self.page.texte(MARGE + largeur - 14 - largeur_valeur, self.y - 25, valeur,
+                        taille=14, gras=True, couleur=ENCRE)
+        self.y -= 44
 
     # -- tableaux ----------------------------------------------------------
     def tableau(self, colonnes, lignes, total=None):
@@ -253,26 +338,30 @@ class DocumentPDF:
         """
         colonnes = self._ajuster(colonnes)
         self._colonnes = colonnes
-        self._place(40)
+        self._place(46)
         self._entetes_tableau(colonnes)
 
+        largeur_utile = self.largeur - 2 * MARGE
         for index, ligne in enumerate(lignes):
-            self._place(_INTERLIGNE + 4)
+            self._place(_LIGNE)
+            # Une ligne sur deux très légèrement teintée, et un filet sous
+            # chacune : l'œil suit la ligne jusqu'au montant sans se perdre.
             if index % 2 == 1:
-                self.page.rectangle(MARGE, self.y - 4, self.largeur - 2 * MARGE,
-                                    _INTERLIGNE + 3, gris=0.965)
+                self.page.rectangle(MARGE, self.y - 5, largeur_utile, _LIGNE, gris=0.967)
             self._ligne_tableau(colonnes, ligne, taille=9)
-            self.y -= _INTERLIGNE + 3
+            self.page.rectangle(MARGE, self.y - 5, largeur_utile, 0.4, gris=0.90)
+            self.y -= _LIGNE
 
         if total is not None:
-            self._place(_INTERLIGNE + 8)
-            self.page.rectangle(MARGE, self.y + _INTERLIGNE - 2,
-                                self.largeur - 2 * MARGE, 0.8, gris=0.75)
-            self._ligne_tableau(colonnes, total, taille=9.5, gras=True)
-            self.y -= _INTERLIGNE + 6
+            self._place(_LIGNE + 8)
+            self.page.rectangle(MARGE, self.y - 6, largeur_utile, _LIGNE + 2,
+                                couleur=ORANGE_PALE)
+            self.page.rectangle(MARGE, self.y + _LIGNE - 5, largeur_utile, 0.9, couleur=BLEU)
+            self._ligne_tableau(colonnes, total, taille=9.5, gras=True, couleur=ENCRE)
+            self.y -= _LIGNE + 8
 
         self._colonnes = None
-        self.espace(6)
+        self.espace(8)
 
     def _ajuster(self, colonnes):
         """Répartit la largeur disponible au prorata des largeurs demandées."""
@@ -282,21 +371,23 @@ class DocumentPDF:
         return [(titre, largeur * facteur, align) for titre, largeur, align in colonnes]
 
     def _entetes_tableau(self, colonnes):
-        self.page.rectangle(MARGE, self.y - 5, self.largeur - 2 * MARGE,
-                            _INTERLIGNE + 4, gris=0.90)
+        """En-tête plein bleu, texte blanc : la table se détache de la page."""
+        hauteur = _LIGNE + 2
+        self.page.rectangle(MARGE, self.y - 5, self.largeur - 2 * MARGE, hauteur, couleur=BLEU)
         self._ligne_tableau(colonnes, [c[0] for c in colonnes], taille=8.5, gras=True,
-                            gris=0.2)
-        self.y -= _INTERLIGNE + 5
+                            couleur=BLANC)
+        self.y -= hauteur + 3
 
-    def _ligne_tableau(self, colonnes, cellules, taille, gras=False, gris=0.15):
+    def _ligne_tableau(self, colonnes, cellules, taille, gras=False, gris=0.15, couleur=None):
         x = MARGE
         for (_, largeur, align), valeur in zip(colonnes, list(cellules) + [""] * len(colonnes)):
-            texte = tronquer(valeur, largeur - 10, taille, gras)
+            texte = tronquer(valeur, largeur - 12, taille, gras)
             if align == "d":
-                depart = x + largeur - 6 - largeur_texte(texte, taille, gras)
+                depart = x + largeur - 8 - largeur_texte(texte, taille, gras)
             else:
-                depart = x + 4
-            self.page.texte(depart, self.y, texte, taille=taille, gras=gras, gris=gris)
+                depart = x + 6
+            self.page.texte(depart, self.y, texte, taille=taille, gras=gras, gris=gris,
+                            couleur=couleur)
             x += largeur
 
     # -- sortie ------------------------------------------------------------
@@ -305,10 +396,10 @@ class DocumentPDF:
         total = len(self.pages)
         for numero, page in enumerate(self.pages, start=1):
             page.rectangle(MARGE, MARGE + 14, self.largeur - 2 * MARGE, 0.6, gris=0.85)
-            page.texte(MARGE, MARGE, f"{self.pied} — édité le {horodatage}",
+            page.texte(MARGE, MARGE + 3, f"{self.pied} — édité le {horodatage}",
                        taille=8, gris=0.5)
             mention = f"Page {numero} / {total}"
-            page.texte(self.largeur - MARGE - largeur_texte(mention, 8), MARGE,
+            page.texte(self.largeur - MARGE - largeur_texte(mention, 8), MARGE + 3,
                        mention, taille=8, gris=0.5)
 
     def rendu(self):

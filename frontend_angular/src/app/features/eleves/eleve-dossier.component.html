@@ -2,9 +2,21 @@
 <div class="page-head">
   <div>
     <h1>Dossier de l'élève</h1>
-    <p>Identité, parcours, résultats, situation financière et assiduité.</p>
+    @if (dossier(); as d) {
+      <p style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <strong>{{ d.eleve.prenom }} {{ d.eleve.nom }}</strong>
+        <span class="matricule" title="Matricule de l'élève">{{ d.eleve.matricule }}</span>
+      </p>
+    } @else {
+      <p>Identité, parcours, résultats, situation financière et assiduité.</p>
+    }
   </div>
-  <a class="btn-ghost" routerLink="/eleves">← Retour à la liste</a>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    @if (dossier(); as d) {
+      <a class="btn-ghost" routerLink="/finances/caisse" [queryParams]="{ matricule: d.eleve.matricule }">Caisse</a>
+    }
+    <a class="btn-ghost" routerLink="/eleves">← Retour à la liste</a>
+  </div>
 </div>
 
 @if (chargement()) {
@@ -61,7 +73,7 @@
         {{ d.eleve.prenom }} {{ d.eleve.nom }}
         <span class="chip">{{ d.eleve.statut_libelle }}</span>
       </div>
-      <span class="mono">{{ d.eleve.matricule }}</span>
+      <span class="matricule" title="Matricule de l'élève">{{ d.eleve.matricule }}</span>
     </div>
     <div style="display:flex; gap:22px; align-items:flex-start; flex-wrap:wrap;">
       <div style="display:flex; flex-direction:column; align-items:center; gap:8px; width:150px;">
@@ -131,6 +143,75 @@
     </div>
     </div>
   </div>
+
+  <!-- Inscrit incomplet : ce qui le tient hors de la classe, et l'exception possible. -->
+  @if (d.scolarite_courante; as sc) {
+    @if (sc.statut_code === 'en_attente') {
+      <div class="panel" [style.border-color]="sc.autorise_en_classe ? 'var(--green)' : 'var(--orange-500)'">
+        <div class="panel-head">
+          <div class="panel-title" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            Inscrit incomplet — {{ sc.annee }}
+            @if (sc.autorise_en_classe) {
+              <span class="pill a_jour">Autorisé en classe</span>
+            } @else {
+              <span class="pill non_paye">Pas encore en classe</span>
+            }
+          </div>
+          @if (estAdmin()) {
+            @if (sc.autorise_en_classe) {
+              <button type="button" class="btn-ghost" [disabled]="occupe()" (click)="retirerAutorisation()">
+                Retirer l'autorisation
+              </button>
+            } @else if (!autorisationOuverte()) {
+              <button type="button" class="btn-primary" [disabled]="!sc.droits_regles"
+                      [title]="sc.droits_regles ? '' : aideDroits" (click)="autorisationOuverte.set(true)">
+                Autoriser à entrer en classe
+              </button>
+            }
+          }
+        </div>
+
+        @if (sc.autorise_en_classe) {
+          <p class="hint" style="margin:0;">
+            Autorisé(e) à suivre les cours
+            @if (sc.autorise_par) { par <strong>{{ sc.autorise_par }}</strong> }
+            @if (sc.date_autorisation) { le {{ sc.date_autorisation | date:'dd/MM/yyyy' }} }
+            — motif : « {{ sc.motif_autorisation }} ».
+            L'inscription reste incomplète : elle se confirmera d'elle-même au règlement du premier mois.
+          </p>
+        } @else {
+          <p class="hint" style="margin:0;">
+            {{ d.eleve.prenom }} n'apparaît pas encore parmi les élèves de {{ sc.classe }} :
+            les droits d'inscription et le premier mois ne sont pas tous réglés.
+            @if (sc.droits_regles) {
+              Les droits d'inscription sont réglés : en cas de difficulté financière, l'administration
+              peut l'autoriser à suivre les cours. Son statut restera « Inscrit incomplet ».
+            } @else {
+              Une autorisation exceptionnelle n'est possible qu'une fois les droits d'inscription réglés.
+            }
+          </p>
+
+          @if (autorisationOuverte()) {
+            <form [formGroup]="formAutorisation" (ngSubmit)="autoriserEnClasse()" class="form-section"
+                  style="margin:14px 0 0;">
+              <div class="field">
+                <label for="motif-autorisation">Motif de l'autorisation</label>
+                <input class="input" id="motif-autorisation" formControlName="motif"
+                       placeholder="Difficulté financière passagère, échéancier convenu avec la famille…">
+                @if (formAutorisation.controls.motif.touched && formAutorisation.controls.motif.invalid) {
+                  <span class="hint hint-error">Indique le motif : il reste dans le dossier.</span>
+                }
+              </div>
+              <div class="form-actions">
+                <button type="button" class="btn-ghost" (click)="autorisationOuverte.set(false)">Annuler</button>
+                <button type="submit" class="btn-primary" [disabled]="occupe()">Confirmer l'autorisation</button>
+              </div>
+            </form>
+          }
+        }
+      </div>
+    }
+  }
 
   <!-- Chiffres clés -->
   <div class="tile-grid-generic">

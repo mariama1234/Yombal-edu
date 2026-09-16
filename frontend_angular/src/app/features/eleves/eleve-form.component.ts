@@ -8,6 +8,7 @@ import { HttpClient } from '@angular/common/http';
 import { EleveService } from './eleve.service';
 import { AuthService } from '../../core/services/auth.service';
 import { FinanceService } from '../finances/finance.service';
+import { ToastService } from '../../core/services/toast.service';
 import { environment } from '../../../environments/environment';
 import {
   AnneeScolaire,
@@ -17,9 +18,7 @@ import {
   Paginated,
   TypeFrais,
 } from '../../core/models/models';
-
-/** Dus d'office, dans cet ordre : ils ne se cochent pas. */
-const FRAIS_D_OFFICE: TypeFrais['nature'][] = ['inscription', 'mensualite'];
+import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
 
 /** Les montants arrivent de l'API en chaînes décimales (« 30000.00 ») ou vides. */
 function nombre(valeur: unknown): number | null {
@@ -41,7 +40,7 @@ function nombre(valeur: unknown): number | null {
 @Component({
   selector: 'app-eleve-form',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent],
   templateUrl: './eleve-form.component.html',
 })
 export class EleveFormComponent implements OnInit {
@@ -50,6 +49,7 @@ export class EleveFormComponent implements OnInit {
   private eleveService = inject(EleveService);
   private auth = inject(AuthService);
   private finance = inject(FinanceService);
+  private toast = inject(ToastService);
 
   enregistrement = signal(false);
   erreur = signal<string | null>(null);
@@ -89,27 +89,19 @@ export class EleveFormComponent implements OnInit {
 
   niveauChoisi = computed(() => this.niveaux().find((n) => String(n.id) === this.idNiveau()) ?? null);
 
-  /** Frais dus d'office de l'établissement : son inscription, puis sa mensualité. */
-  fraisDOffice = computed(() =>
-    FRAIS_D_OFFICE
-      .map((nature) => this.typesFrais().find((t) => t.nature === nature))
-      .filter((t): t is TypeFrais => !!t));
-
-  /** Tous les autres frais, par ordre alphabétique. */
-  fraisOptionnels = computed(() =>
-    this.typesFrais()
-      .filter((t) => !FRAIS_D_OFFICE.includes(t.nature))
-      .sort((a, b) => a.libelle.localeCompare(b.libelle)));
-
-  totalDOffice = computed(() => this.fraisDOffice().reduce((somme, t) => somme + this.montantPour(t), 0));
-
-  totalOptions = computed(() =>
-    this.fraisOptionnels()
-      .filter((t) => this.fraisCoches().includes(t.id))
-      .reduce((somme, t) => somme + this.montantPour(t), 0));
-
-  /** Le total à payer, recalculé à chaque case cochée. */
-  total = computed(() => this.totalDOffice() + this.totalOptions());
+  /**
+   * Les frais de l'école au montant du niveau choisi. Le bloc « Frais » —
+   * le même qu'à la réinscription — les range et calcule le total.
+   */
+  fraisAffiches = computed<FraisAffiche[]>(() =>
+    this.typesFrais().map((t) => ({
+      id: t.id,
+      libelle: t.libelle,
+      nature: t.nature,
+      montant: this.montantPour(t),
+      tarifNiveau: this.aTarifNiveau(t),
+      mensuel: this.mensuel(t),
+    })));
 
   /** Classes de l'année et du niveau choisis. */
   classesFiltrees = computed(() =>
@@ -187,10 +179,6 @@ export class EleveFormComponent implements OnInit {
     return type.nature === 'mensualite' || (type.frequence ?? '').toLowerCase().includes('mens');
   }
 
-  estCoche(type: TypeFrais): boolean {
-    return this.fraisCoches().includes(type.id);
-  }
-
   basculerFrais(id: number): void {
     this.fraisCoches.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
   }
@@ -225,6 +213,11 @@ export class EleveFormComponent implements OnInit {
         next: (eleve) => {
           this.enregistrement.set(false);
           this.facture.set((eleve as unknown as { facture: FactureEleve }).facture ?? null);
+          const f = this.facture();
+          if (f) {
+            this.toast.succes(`Inscription enregistrée : ${f.prenom} ${f.nom}`,
+                              `Matricule ${f.matricule} — inscrit incomplet jusqu'au règlement des droits et du premier mois.`);
+          }
           window.scrollTo({ top: 0, behavior: 'smooth' });
         },
         error: (err) => {

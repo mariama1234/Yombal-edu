@@ -87,6 +87,8 @@ export interface Eleve {
   /** Où en est sa scolarité sur l'année consultée. */
   inscription_statut?: 'en_attente' | 'en_cours' | 'terminee' | 'annulee' | null;
   inscription_libelle?: string | null;
+  /** Inscrit incomplet que l'administration a autorisé à suivre les cours. */
+  inscription_autorise_en_classe?: boolean;
   classe?: string | null;
 }
 
@@ -477,6 +479,14 @@ export interface DossierEleve {
     id_annee_scolaire: number;
     date_inscription: string;
     statut: string;
+    statut_code: 'en_attente' | 'en_cours' | 'terminee' | 'annulee';
+    /** Exception : inscrit incomplet autorisé à suivre les cours. */
+    autorise_en_classe: boolean;
+    motif_autorisation: string | null;
+    date_autorisation: string | null;
+    autorise_par: string | null;
+    /** Droits d'inscription de l'année réglés : condition de l'autorisation. */
+    droits_regles: boolean;
   } | null;
   parents: {
     id: number;
@@ -853,6 +863,8 @@ export interface SituationFinanciereEleve {
     frais_soldes: number;
     frais_en_retard: number;
     prochaine_echeance: string | null;
+    /** Frais dus d'office jamais émis : tant qu'il en manque, l'élève n'est pas à jour. */
+    frais_manquants?: string[];
   };
   /**
    * Où en est la confirmation de l'inscription : droits d'inscription ET
@@ -885,6 +897,85 @@ export interface SituationFinanciereEleve {
 export interface ResultatEncaissement {
   paiements: Paiement[];
   situation: SituationFinanciereEleve;
+  /** Renseigné quand ce versement fait passer l'élève d'« inscrit incomplet » à « Inscrit ». */
+  inscription_confirmee?: { eleve: string; classe: string | null; annee: string } | null;
+}
+
+/** Réponse de GET /eleves/{id}/frais-disponibles/ — ce qu'« Ajouter des frais » propose. */
+export interface FraisDisponibles {
+  annee: { id: number; libelle: string; date_debut: string; date_fin: string };
+  classe: string;
+  niveau: string | null;
+  types: {
+    id: number;
+    libelle: string;
+    montant: number;
+    tarif_niveau: boolean;
+    mensuel: boolean;
+    /** L'élève a déjà ce frais sur l'année. */
+    deja: boolean;
+  }[];
+}
+
+/** Réponse de POST /eleves/{id}/ajouter-frais/. */
+export interface ResultatAjoutFrais {
+  id_annee_scolaire: number;
+  annee: string;
+  crees: number;
+  total: number;
+  frais: { libelle: string; echeances: number; montant: number }[];
+  deja: string[];
+  sans_tarif: string[];
+  situation: SituationFinanciereEleve;
+}
+
+/** Réponse de GET /caisse/historique/ — une journée de caisse. */
+export interface HistoriqueCaisse {
+  date: string;
+  caissier: { id: number; nom: string } | null;
+  caissiers: { id: number; nom: string; role: string }[];
+  totaux: {
+    encaisse: number;
+    depense: number;
+    solde: number;
+    especes: number;
+    especes_en_caisse: number;
+    nombre_paiements: number;
+    nombre_depenses: number;
+    par_methode: { methode: string; libelle: string; montant: number; nombre: number }[];
+  };
+  par_caissier: {
+    id: number | null;
+    nom: string;
+    encaisse: number;
+    depense: number;
+    nombre_paiements: number;
+    nombre_depenses: number;
+  }[];
+  paiements: {
+    id: number;
+    heure: string;
+    id_eleve: number;
+    eleve: string;
+    matricule: string;
+    frais: string;
+    montant: number;
+    methode: string;
+    methode_libelle: string;
+    reference: string | null;
+    numero_recu: string | null;
+    id_recu: number | null;
+    id_caissier: number | null;
+    caissier: string;
+  }[];
+  depenses: {
+    id: number;
+    categorie: string;
+    motif: string;
+    montant: number;
+    id_caissier: number | null;
+    caissier: string;
+  }[];
 }
 
 /** Réponse de GET /frais-eleves/situation/ — un élève par ligne. */

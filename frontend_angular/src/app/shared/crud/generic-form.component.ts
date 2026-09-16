@@ -1,9 +1,10 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { forkJoin } from 'rxjs';
 import { GenericCrudService } from './generic-crud.service';
+import { ToastService } from '../../core/services/toast.service';
 import { ENTITY_CONFIGS } from './entity-configs';
 import { EntityConfig, FieldConfig } from './crud-config.model';
 
@@ -20,6 +21,7 @@ export class GenericFormComponent implements OnInit {
   idEnCours: number | null = null;
   optionsParChamp: Record<string, any[]> = {};
   enregistrement = signal(false);
+  private toast = inject(ToastService);
 
   constructor(
     private route: ActivatedRoute,
@@ -91,7 +93,16 @@ export class GenericFormComponent implements OnInit {
     requete.subscribe({
       next: () => {
         this.enregistrement.set(false);
-        this.router.navigate(['..'], { relativeTo: this.route });
+        // La liste affiche « enregistrement effectué » et propose la suite
+        // logique : le nom saisi sert de repère quand il y en a un.
+        const champTexte = this.config.fields.find((f) => f.type === 'text');
+        const libelle = champTexte ? String(payload[champTexte.key] ?? '').trim() || null : null;
+        this.toast.succes(this.modeEdition ? 'Modifications enregistrées' : 'Enregistrement effectué',
+                          libelle ?? undefined);
+        this.router.navigate(['..'], {
+          relativeTo: this.route,
+          state: { enregistre: { libelle, creation: !this.modeEdition } },
+        });
       },
       error: () => this.enregistrement.set(false),
     });

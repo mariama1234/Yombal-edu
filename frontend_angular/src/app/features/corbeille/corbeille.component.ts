@@ -5,6 +5,7 @@ import { GenericCrudService } from '../../shared/crud/generic-crud.service';
 import { ENTITY_CONFIGS } from '../../shared/crud/entity-configs';
 import { EntityConfig } from '../../shared/crud/crud-config.model';
 import { AuthService } from '../../core/services/auth.service';
+import { ToastService } from '../../core/services/toast.service';
 
 /** Une ligne de GET /api/corbeille/. */
 export interface ElementCorbeille {
@@ -39,6 +40,7 @@ export class CorbeilleComponent {
   private route = inject(ActivatedRoute);
   private crud: GenericCrudService<any> = inject(GenericCrudService);
   private auth = inject(AuthService);
+  private toast = inject(ToastService);
 
   elements = signal<ElementCorbeille[]>([]);
   total = signal(0);
@@ -93,8 +95,8 @@ export class CorbeilleComponent {
     this.enCours.set(element.id);
     this.crud.action('corbeille', element.id, 'restaurer').subscribe({
       next: () => {
-        this.succes.set(
-          `« ${element.libelle} » a été restauré${element.emporte ? `, avec ${element.emporte}` : ''}.`);
+        this.toast.succes('Élément restauré',
+          `« ${element.libelle} » est de retour${element.emporte ? `, avec ${element.emporte}` : ''}.`);
         this.enCours.set(null);
         this.reculerSiPageVide();
         this.charger();
@@ -116,7 +118,7 @@ export class CorbeilleComponent {
     this.enCours.set(element.id);
     this.crud.remove('corbeille', element.id).subscribe({
       next: () => {
-        this.succes.set(`« ${element.libelle} » a été supprimé définitivement.`);
+        this.toast.succes('Supprimé définitivement', `« ${element.libelle} »`);
         this.enCours.set(null);
         this.reculerSiPageVide();
         this.charger();

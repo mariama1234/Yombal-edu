@@ -11,6 +11,7 @@ import {
   ResultatReinscription,
 } from '../../core/models/models';
 import { ScolariteService } from './scolarite.service';
+import { ToastService } from '../../core/services/toast.service';
 
 /**
  * Réinscription d'une classe en bloc — le cas d'exception.
@@ -33,6 +34,7 @@ export class ReinscriptionComponent implements OnInit {
   private fb = inject(FormBuilder);
   private http = inject(HttpClient);
   private scolarite = inject(ScolariteService);
+  private toast = inject(ToastService);
 
   annees = signal<AnneeScolaire[]>([]);
   classes = signal<Classe[]>([]);
@@ -165,6 +167,7 @@ export class ReinscriptionComponent implements OnInit {
     this.appeler(true, (r) => {
       this.resultat.set(r);
       this.apercu.set(null);
+      this.toast.succes('Réinscription de la classe enregistrée', `${this.coches().length} élève(s) retenu(s).`);
     });
   }
 

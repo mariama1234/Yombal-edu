@@ -4,7 +4,7 @@
 @if (situation(); as s) {
 
   @if (message()) { <div class="form-success">{{ message() }}</div> }
-  @if (erreur() && !saisieOuverte()) { <div class="form-error">{{ erreur() }}</div> }
+  @if (erreur() && !saisieOuverte() && !ajoutOuvert()) { <div class="form-error">{{ erreur() }}</div> }
 
   <!-- En-tête : année, classe, statut -->
   <div class="panel">
@@ -13,7 +13,7 @@
         Finances
         <span class="pill" [class]="s.resume.statut">{{ s.resume.statut_libelle }}</span>
       </div>
-      <div style="display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         @if (s.annees.length) {
           <label for="annee-finances" class="hint">Année scolaire</label>
           <select class="input" id="annee-finances" style="width:auto;"
@@ -25,6 +25,12 @@
               </option>
             }
           </select>
+        }
+        @if (s.scolarite) {
+          <button type="button" class="btn-ghost" (click)="ouvrirAjout()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4L12 22l-9-9V3h10z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>
+            Ajouter des frais
+          </button>
         }
         <button type="button" class="btn-primary" (click)="ouvrirSaisie()"
                 [disabled]="!peutEncaisser()">
@@ -44,10 +50,17 @@
         } @else {
           — aucune inscription cette année-là : seuls les frais restants sont affichés.
         }
-        @if (!sansFrais() && reste() <= 0) {
+        @if (!sansFrais() && reste() <= 0 && !s.resume.frais_manquants?.length) {
           — tout est soldé, il n'y a rien à encaisser.
         }
       </p>
+      @if (s.resume.frais_manquants?.length) {
+        <div class="form-error" style="margin:10px 0 0;">
+          Pas encore à jour : {{ s.resume.frais_manquants!.join(', ') }} non émis pour {{ s.annee.libelle }}.
+          Un élève n'est à jour qu'une fois réglés tous les frais qui lui reviennent.
+          <a class="panel-link" routerLink="/finances/generer">Générer les frais →</a>
+        </div>
+      }
     }
   </div>
 
@@ -229,6 +242,82 @@
               </button>
             </div>
           </form>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- Frais au choix souscrits en cours d'année (taekwondo, transport…) -->
+  @if (ajoutOuvert()) {
+    <div (click)="fermer()"
+         style="position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:1000; display:flex; align-items:flex-start; justify-content:center; padding:48px 16px; overflow-y:auto;">
+      <div role="dialog" aria-modal="true" aria-labelledby="titre-ajout" (click)="$event.stopPropagation()"
+           style="background:var(--surface); border-radius:14px; width:100%; max-width:760px; padding:22px 24px; box-shadow:0 20px 50px rgba(0,0,0,0.25);">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
+          <div>
+            <div id="titre-ajout" class="form-section-title" style="margin:0;">Ajouter des frais</div>
+            <div class="form-section-sub" style="margin:4px 0 0;">
+              {{ s.eleve.nom_complet }} — {{ s.scolarite?.classe }} ({{ s.annee?.libelle }})
+            </div>
+          </div>
+          <button type="button" class="icon-btn" aria-label="Fermer" (click)="fermer()">✕</button>
+        </div>
+
+        @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+        @if (disponibles(); as dispo) {
+          @if (!fraisAAjouter().length) {
+            <p style="font-size:13px; color:var(--ink-600); margin:0 0 14px;">
+              @if (dejaSouscrits().length) {
+                {{ s.eleve.prenom }} a déjà tous les frais au choix de l'école pour {{ dispo.annee.libelle }}.
+              } @else {
+                L'école n'a déclaré aucun frais au choix : crée-les dans « Types de frais ».
+              }
+            </p>
+            <div class="form-actions">
+              <button type="button" class="btn-ghost" (click)="fermer()">Fermer</button>
+            </div>
+          } @else {
+            @if (dejaSouscrits().length) {
+              <p class="hint" style="margin:0 0 10px;">Déjà souscrits cette année : {{ dejaSouscrits().join(', ') }}.</p>
+            }
+
+            <app-choix-frais
+              [frais]="fraisAAjouter()"
+              [coches]="fraisAjoutes()"
+              [niveau]="dispo.niveau ?? dispo.classe"
+              [afficherDOffice]="false"
+              titreTotal="Montant par échéance"
+              (basculer)="basculerAjout($event)"
+              (toutDecocher)="fraisAjoutes.set([])"></app-choix-frais>
+
+            <div class="form-grid" style="margin-top:16px;">
+              <div class="field">
+                <label for="date-debut-ajout">À partir du</label>
+                <input class="input" id="date-debut-ajout" type="date" [value]="dateDebutAjout()"
+                       [attr.min]="dispo.annee.date_debut" [attr.max]="dispo.annee.date_fin"
+                       (change)="dateDebutAjout.set($any($event.target).value)">
+                <span class="hint">
+                  @if (mensuelsCoches()) {
+                    Frais mensuels : une échéance chaque mois, de cette date jusqu'à la fin de l'année
+                    ({{ dispo.annee.date_fin | date:'dd/MM/yyyy' }}).
+                  } @else {
+                    Date d'échéance des frais ajoutés.
+                  }
+                </span>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" class="btn-ghost" (click)="fermer()">Annuler</button>
+              <button type="button" class="btn-primary" [disabled]="occupe() || !fraisAjoutes().length"
+                      (click)="ajouterFrais()">
+                {{ occupe() ? 'Ajout…' : 'Ajouter les frais cochés' }}
+              </button>
+            </div>
+          }
+        } @else if (!erreur()) {
+          <p class="hint">Chargement des frais…</p>
         }
       </div>
     </div>

@@ -6,6 +6,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { FactureEleve, MethodePaiement } from '../../core/models/models';
 import { FinanceService } from './finance.service';
+import { ToastService } from '../../core/services/toast.service';
 
 const METHODES: { value: MethodePaiement; label: string }[] = [
   { value: 'especes', label: 'Espèces' },
@@ -17,6 +18,7 @@ const METHODES: { value: MethodePaiement; label: string }[] = [
 
 /** Ce qui s'affiche après l'encaissement, et que le PDF reprend. */
 interface RecuGuichet {
+  idEleve: number;
   numero: string;
   matricule: string;
   nom: string;
@@ -47,6 +49,7 @@ interface RecuGuichet {
 export class CaisseComponent implements OnInit {
   private http = inject(HttpClient);
   private finance = inject(FinanceService);
+  private toast = inject(ToastService);
   private route = inject(ActivatedRoute);
 
   readonly methodes = METHODES;
@@ -122,6 +125,7 @@ export class CaisseComponent implements OnInit {
         next: (r) => {
           const premier = r.paiements[0];
           this.recu.set({
+            idEleve: f.id_eleve,
             numero: premier?.numero_recu ?? '—',
             matricule: f.matricule,
             nom: f.nom,
@@ -133,6 +137,13 @@ export class CaisseComponent implements OnInit {
             statut: r.situation.confirmation?.statut_libelle ?? null,
             ids: r.paiements.map((p) => p.id).join(','),
           });
+          this.toast.succes('Paiement enregistré',
+                            `${f.prenom} ${f.nom} — reçu n° ${premier?.numero_recu ?? '—'}`);
+          const inscrit = r.inscription_confirmee;
+          if (inscrit) {
+            this.toast.succes(`🎉 ${inscrit.eleve} est maintenant inscrit`,
+                              `Droits d'inscription et premier mois réglés${inscrit.classe ? ' — ' + inscrit.classe : ''}.`);
+          }
           this.facture.set(null);
           this.montant = null;
           this.reference = '';

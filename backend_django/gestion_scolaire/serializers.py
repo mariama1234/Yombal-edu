@@ -378,6 +378,7 @@ class EleveSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
     # qu'une liste qui n'affiche que « actif » faisait disparaître.
     inscription_statut = serializers.SerializerMethodField()
     inscription_libelle = serializers.SerializerMethodField()
+    inscription_autorise_en_classe = serializers.SerializerMethodField()
     classe = serializers.SerializerMethodField()
 
     class Meta:
@@ -414,6 +415,10 @@ class EleveSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
     def get_classe(self, obj) -> str | None:
         inscription = self._inscription(obj)
         return inscription.id_classe.nom if inscription else None
+
+    def get_inscription_autorise_en_classe(self, obj) -> bool:
+        inscription = self._inscription(obj)
+        return bool(inscription and inscription.autorise_en_classe)
 
 
 class EleveInscriptionSerializer(serializers.Serializer):
@@ -554,6 +559,22 @@ class RadiationSerializer(serializers.Serializer):
     date_effet = serializers.DateField(required=False, allow_null=True)
     motif = serializers.CharField(max_length=255)
     commentaire = serializers.CharField(required=False, allow_blank=True)
+
+
+class AutorisationClasseSerializer(serializers.Serializer):
+    """Entrée de POST /api/eleves/{id}/autoriser-en-classe/ : le motif reste au dossier."""
+    motif = serializers.CharField(max_length=255, min_length=3)
+
+
+class RetraitAutorisationSerializer(serializers.Serializer):
+    """Entrée (vide) de POST /api/eleves/{id}/retirer-autorisation/."""
+
+
+class AjoutFraisSerializer(serializers.Serializer):
+    """Entrée de POST /api/eleves/{id}/ajouter-frais/."""
+    frais = serializers.ListField(child=serializers.IntegerField(), allow_empty=False)
+    date_debut = serializers.DateField(required=False, allow_null=True)
+    id_annee_scolaire = serializers.IntegerField(required=False, allow_null=True)
 
 
 class TransfertSerializer(serializers.Serializer):
@@ -1081,11 +1102,17 @@ class TypeDepenseSerializer(serializers.ModelSerializer):
 
 class DepenseSerializer(serializers.ModelSerializer):
     categorie = serializers.CharField(source="id_type_depense.libelle", read_only=True)
+    saisi_par = serializers.SerializerMethodField()
 
     class Meta:
         model = models.Depense
         fields = "__all__"
-        read_only_fields = ["id_ecole"]
+        # L'auteur est celui du compte connecté, jamais une valeur saisie.
+        read_only_fields = ["id_ecole", "id_utilisateur"]
+
+    def get_saisi_par(self, obj) -> str | None:
+        u = obj.id_utilisateur
+        return f"{u.prenom} {u.nom}".strip() if u else None
 
 
 class BudgetSerializer(serializers.ModelSerializer):

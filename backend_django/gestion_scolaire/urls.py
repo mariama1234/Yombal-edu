@@ -52,5 +52,6 @@ urlpatterns = [
     path("auth/moi/", views.MoiView.as_view(), name="moi"),
     path("finances/bilan/", views.BilanFinancierView.as_view(), name="finances-bilan"),
     path("tarifs/grille/", views.GrilleTarifsView.as_view(), name="tarifs-grille"),
+    path("caisse/historique/", views.HistoriqueCaisseView.as_view(), name="caisse-historique"),
     path("", include(router.urls)),
 ]

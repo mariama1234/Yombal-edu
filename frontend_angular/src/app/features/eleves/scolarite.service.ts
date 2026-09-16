@@ -73,6 +73,15 @@ export class ScolariteService {
     return this.http.post<DossierEleve>(`${this.base}/eleves/${idEleve}/transferer/`, corps);
   }
 
+  /** Exception : l'inscrit incomplet suit les cours, son statut ne change pas. */
+  autoriserEnClasse(idEleve: number, corps: { motif: string }): Observable<DossierEleve> {
+    return this.http.post<DossierEleve>(`${this.base}/eleves/${idEleve}/autoriser-en-classe/`, corps);
+  }
+
+  retirerAutorisation(idEleve: number): Observable<DossierEleve> {
+    return this.http.post<DossierEleve>(`${this.base}/eleves/${idEleve}/retirer-autorisation/`, {});
+  }
+
   // ---- Réinscription ---------------------------------------------------
   /** `valider: false` renvoie l'aperçu sans rien écrire. */
   reinscrire(corps: Record<string, unknown>): Observable<ResultatReinscription> {

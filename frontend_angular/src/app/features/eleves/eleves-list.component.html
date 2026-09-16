@@ -3,7 +3,7 @@
     <h1>Élèves</h1>
     <p>
       @switch (vue()) {
-        @case ('inscrits') { {{ total() }} élève(s) inscrit(s) en {{ libelleAnnee() }}. }
+        @case ('inscrits') { {{ total() }} élève(s) en classe en {{ libelleAnnee() }} : les inscrits, et les inscrits incomplets autorisés par l'administration. }
         @case ('attente') { {{ total() }} inscrit(s) incomplet(s) : droits d'inscription ou premier mois pas encore réglés. }
         @case ('a_reinscrire') { {{ total() }} élève(s) de l'année précédente pas encore réinscrit(s). }
       }
@@ -165,6 +165,9 @@
             <td>
               @if (e.inscription_statut === 'en_attente') {
                 <span class="pill non_paye">{{ e.inscription_libelle }}</span>
+                @if (e.inscription_autorise_en_classe) {
+                  <span class="pill a_jour" style="margin-left:4px;">Autorisé en classe</span>
+                }
               } @else if (e.inscription_libelle) {
                 <span class="pill a_jour">{{ e.inscription_libelle }}</span>
               } @else {

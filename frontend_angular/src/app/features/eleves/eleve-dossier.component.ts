@@ -7,6 +7,7 @@ import { environment } from '../../../environments/environment';
 import { Classe, DossierEleve, Paginated, PeriodeScolaire } from '../../core/models/models';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { AuthService } from '../../core/services/auth.service';
+import { ToastService } from '../../core/services/toast.service';
 import { EleveFinancesComponent } from './eleve-finances.component';
 import { ScolariteService } from './scolarite.service';
 
@@ -58,6 +59,7 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
   chargement = signal(true);
 
   private auth = inject(AuthService);
+  private toast = inject(ToastService);
   /** Seul un administrateur ajoute, change ou retire la photo. */
   estAdmin = computed(() => this.auth.currentUser()?.role === 'admin');
   /** Photo lue en binaire, affichée par une adresse locale au navigateur. */
@@ -117,6 +119,14 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
 
   formReleve = this.fb.group({
     id_periode: [null as number | null],
+  });
+
+  /** Formulaire de l'autorisation exceptionnelle d'entrer en classe, ouvert ou non. */
+  autorisationOuverte = signal(false);
+  readonly aideDroits = "Les droits d'inscription doivent d'abord être réglés.";
+
+  formAutorisation = this.fb.group({
+    motif: ['', [Validators.required, Validators.minLength(3)]],
   });
 
   ngOnInit(): void {
@@ -197,7 +207,7 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
     this.scolarite.envoyerPhoto(this.idEleve, fichier).subscribe({
       next: () => {
         this.photoEnCours.set(false);
-        this.message.set('Photo enregistrée.');
+        this.toast.succes('Photo enregistrée');
         this.chargerPhoto(true);
       },
       error: (e) => {
@@ -215,7 +225,7 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
       next: () => {
         this.photoEnCours.set(false);
         this.libererPhoto();
-        this.message.set('Photo retirée.');
+        this.toast.succes('Photo retirée');
       },
       error: (e) => {
         this.photoEnCours.set(false);
@@ -242,12 +252,14 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
     appel().subscribe({
       next: (d) => {
         this.dossier.set(d);
-        this.message.set(succes);
+        this.toast.succes(succes);
         this.mouvement.set(null);
         this.occupe.set(false);
         this.formClasse.reset();
         this.formRadiation.reset();
         this.formTransfert.reset();
+        this.autorisationOuverte.set(false);
+        this.formAutorisation.reset();
       },
       error: (e) => {
         this.erreur.set(this.messageErreur(e));
@@ -293,6 +305,22 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
       }),
       'Transfert enregistré.',
     );
+  }
+
+  /** Exception : l'élève suit les cours, son inscription reste incomplète. */
+  autoriserEnClasse(): void {
+    if (this.formAutorisation.invalid) return this.formAutorisation.markAllAsTouched();
+    const eleve = this.dossier()?.eleve;
+    const motif = this.formAutorisation.getRawValue().motif ?? '';
+    this.appliquer(
+      () => this.scolarite.autoriserEnClasse(this.idEleve, { motif }),
+      `${eleve?.prenom ?? ''} ${eleve?.nom ?? ''} est autorisé(e) à entrer en classe`.trim(),
+    );
+  }
+
+  retirerAutorisation(): void {
+    if (!confirm("Retirer l'autorisation d'entrer en classe ? L'élève sortira de la liste de sa classe.")) return;
+    this.appliquer(() => this.scolarite.retirerAutorisation(this.idEleve), 'Autorisation retirée');
   }
 
   telechargerReleve(): void {

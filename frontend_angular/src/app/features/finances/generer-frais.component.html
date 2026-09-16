@@ -22,6 +22,11 @@
         <tr><td>Montant total facturé</td><td class="mono">{{ resultat()!.total_genere | number:'1.0-0' }} F CFA</td></tr>
       </tbody>
     </table>
+    <div class="form-actions">
+      <a class="btn-ghost" routerLink="/finances/relances">Relances</a>
+      <a class="btn-ghost" routerLink="/finances/caisse">Caisse</a>
+      <a class="btn-primary" routerLink="/finances">Voir les impayés →</a>
+    </div>
   </div>
 } @else {
   <form class="form-section" [formGroup]="form" style="max-width:720px;">

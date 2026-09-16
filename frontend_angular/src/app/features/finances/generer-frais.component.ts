@@ -12,6 +12,7 @@ import {
   TypeFrais,
 } from '../../core/models/models';
 import { FinanceService } from './finance.service';
+import { ToastService } from '../../core/services/toast.service';
 
 /**
  * Facturation en masse : un type de frais, une année, des échéances.
@@ -30,6 +31,7 @@ export class GenererFraisComponent implements OnInit {
   private fb = inject(FormBuilder);
   private http = inject(HttpClient);
   private finance = inject(FinanceService);
+  private toast = inject(ToastService);
 
   annees = signal<AnneeScolaire[]>([]);
   classes = signal<Classe[]>([]);
@@ -112,6 +114,7 @@ export class GenererFraisComponent implements OnInit {
     this.appeler(true, (r) => {
       this.resultat.set(r);
       this.apercu.set(null);
+      this.toast.succes('Frais générés', `${r.crees} frais créé(s) — ${r.type_frais}, ${r.classe}.`);
     });
   }
 

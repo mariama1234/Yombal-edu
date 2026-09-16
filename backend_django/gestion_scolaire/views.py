@@ -427,10 +427,12 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
                     "inscription": "Attendu : " + ", ".join(self.ETATS_INSCRIPTION) + "."
                 })
             inscriptions = inscriptions.filter(id_annee_scolaire=brut)
-            if etat != "toutes":
-                statuts = (models.Inscription.STATUTS_CONFIRMES if etat == "confirmee"
-                           else [models.Inscription.Statut.EN_ATTENTE])
-                inscriptions = inscriptions.filter(statut__in=statuts)
+            if etat == "confirmee":
+                # Les élèves en classe : les inscrits, et les inscrits incomplets
+                # que l'administration a autorisés à suivre les cours.
+                inscriptions = inscriptions.filter(models.Inscription.filtre_en_classe())
+            elif etat == "en_attente":
+                inscriptions = inscriptions.filter(statut=models.Inscription.Statut.EN_ATTENTE)
         return qs.filter(pk__in=inscriptions.values("id_eleve"))
 
     def get_serializer_class(self):
@@ -985,6 +987,102 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
             lambda eleve, d: f"Transfert de {eleve.prenom} {eleve.nom} "
                              f"vers {d['etablissement']}",
         )
+
+    @extend_schema(request=serializers.AutorisationClasseSerializer, responses=dict)
+    @action(detail=True, methods=["post"], url_path="autoriser-en-classe",
+            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    def autoriser_en_classe(self, request, pk=None):
+        """
+        Exception : POST /api/eleves/{id}/autoriser-en-classe/
+
+        L'inscrit incomplet suit les cours ; son inscription reste incomplète.
+        """
+        return self._mouvement(
+            request, serializers.AutorisationClasseSerializer,
+            lambda d, eleve: scolarite.autoriser_en_classe(
+                request.user.id_ecole, eleve, d["motif"], utilisateur=request.user),
+            models.JournalActivite.Action.MODIFICATION,
+            lambda eleve, d: f"Autorisation d'entrer en classe pour {eleve.prenom} {eleve.nom} "
+                             f"(inscription incomplète) — {d['motif']}",
+        )
+
+    @extend_schema(request=serializers.RetraitAutorisationSerializer, responses=dict)
+    @action(detail=True, methods=["post"], url_path="retirer-autorisation",
+            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    def retirer_autorisation(self, request, pk=None):
+        """Retrait de l'exception : POST /api/eleves/{id}/retirer-autorisation/"""
+        return self._mouvement(
+            request, serializers.RetraitAutorisationSerializer,
+            lambda d, eleve: scolarite.retirer_autorisation(request.user.id_ecole, eleve),
+            models.JournalActivite.Action.MODIFICATION,
+            lambda eleve, d: f"Retrait de l'autorisation d'entrer en classe de "
+                             f"{eleve.prenom} {eleve.nom}",
+        )
+
+    def _eleve_de_lecole(self, request, pk):
+        """
+        L'élève par son identifiant, dans l'école connectée.
+
+        Pas `get_object()` : le filtre de liste par année (`?id_annee_scolaire=`)
+        écarterait un inscrit incomplet, précisément celui qu'on veut servir.
+        """
+        try:
+            return models.Eleve.objects.get(pk=pk, id_ecole=request.user.id_ecole)
+        except (models.Eleve.DoesNotExist, ValueError, TypeError):
+            return None
+
+    @extend_schema(responses=dict)
+    @action(detail=True, methods=["get"], url_path="frais-disponibles",
+            permission_classes=[permissions.IsAuthenticated, EstAdminOuCaissier])
+    def frais_disponibles(self, request, pk=None):
+        """Frais au choix qu'on peut ajouter : GET /api/eleves/{id}/frais-disponibles/"""
+        ecole = request.user.id_ecole
+        eleve = self._eleve_de_lecole(request, pk)
+        if eleve is None:
+            return Response({"detail": "Élève introuvable."}, status=status.HTTP_404_NOT_FOUND)
+        annee = _reference(models.AnneeScolaire, request.query_params.get("id_annee_scolaire"),
+                           ecole, "id_annee_scolaire")
+        try:
+            return Response(finances.frais_disponibles(ecole, eleve, annee))
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
+
+    @extend_schema(request=serializers.AjoutFraisSerializer, responses=dict)
+    @action(detail=True, methods=["post"], url_path="ajouter-frais",
+            permission_classes=[permissions.IsAuthenticated, EstAdminOuCaissier])
+    def ajouter_frais(self, request, pk=None):
+        """
+        Frais au choix souscrits en cours d'année : POST /api/eleves/{id}/ajouter-frais/
+
+        Renvoie les lignes émises et la situation financière recalculée.
+        """
+        ecole = request.user.id_ecole
+        eleve = self._eleve_de_lecole(request, pk)
+        if eleve is None:
+            return Response({"detail": "Élève introuvable."}, status=status.HTTP_404_NOT_FOUND)
+        entree = serializers.AjoutFraisSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        donnees = entree.validated_data
+
+        ids = set(donnees["frais"])
+        types = list(models.TypeFrais.objects.filter(id_ecole=ecole, pk__in=ids).order_by("libelle"))
+        if len(types) != len(ids):
+            raise ValidationError({"frais": "Frais inconnu pour cette école."})
+        annee = _reference(models.AnneeScolaire, donnees.get("id_annee_scolaire"),
+                           ecole, "id_annee_scolaire")
+        try:
+            resultat = finances.ajouter_frais_optionnels(
+                ecole, eleve, types, annee=annee, date_debut=donnees.get("date_debut"))
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
+
+        journaliser(request, models.JournalActivite.Action.CREATION, entite="eleve",
+                    id_entite=eleve.pk,
+                    description=f"Ajout de frais pour {eleve.prenom} {eleve.nom} : "
+                                + ", ".join(f["libelle"] for f in resultat["frais"]))
+        annee = models.AnneeScolaire.objects.get(pk=resultat["id_annee_scolaire"])
+        resultat["situation"] = finances.situation_eleve(ecole, eleve, annee)
+        return Response(resultat, status=status.HTTP_201_CREATED)
 
 
 class InscriptionViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
@@ -1731,6 +1829,13 @@ class PaiementViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, 
             if objet is not None and ecole_de(objet) != ecole.pk:
                 raise ValidationError({champ: "Cet élément appartient à une autre école."})
 
+        # Les inscriptions encore incomplètes avant ce versement : celle qu'il
+        # confirme est annoncée à l'écran (« … est maintenant inscrit »).
+        en_attente = list(models.Inscription.objects
+                          .filter(id_eleve=donnees["id_eleve"],
+                                  statut=models.Inscription.Statut.EN_ATTENTE)
+                          .values_list("pk", flat=True))
+
         try:
             paiements = finances.affecter_paiement(
                 ecole,
@@ -1759,9 +1864,18 @@ class PaiementViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, 
         )
         annee = (donnees.get("id_annee_scolaire")
                  or paiements[0].id_frais_eleve.id_annee_scolaire)
+        confirmee = (models.Inscription.objects
+                     .filter(pk__in=en_attente, statut__in=models.Inscription.STATUTS_CONFIRMES)
+                     .select_related("id_classe", "id_annee_scolaire")
+                     .first())
         return Response({
             "paiements": serializers.PaiementSerializer(paiements, many=True).data,
             "situation": finances.situation_eleve(ecole, eleve, annee),
+            "inscription_confirmee": None if confirmee is None else {
+                "eleve": f"{eleve.prenom} {eleve.nom}".strip(),
+                "classe": confirmee.id_classe.nom,
+                "annee": confirmee.id_annee_scolaire.libelle,
+            },
         }, status=status.HTTP_201_CREATED)
 
     @extend_schema(responses={200: None})
@@ -1888,7 +2002,10 @@ class DepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, E
 
     def perform_create(self, serializer):
         super().perform_create(serializer)
-        finances.enregistrer_depense(serializer.instance, utilisateur=self.request.user)
+        depense = serializer.instance
+        depense.id_utilisateur = self.request.user
+        depense.save(update_fields=["id_utilisateur"])
+        finances.enregistrer_depense(depense, utilisateur=self.request.user)
 
     def perform_update(self, serializer):
         super().perform_update(serializer)
@@ -2390,6 +2507,38 @@ class CorbeilleViewSet(EcoleFiltreeMixin, mixins.ListModelMixin, mixins.DestroyM
 
 
 # ---------- Grille des tarifs ----------
+
+class HistoriqueCaisseView(APIView):
+    """
+    Historique de caisse d'une journée : GET /api/caisse/historique/?date=AAAA-MM-JJ
+
+    Un administrateur voit toute la caisse, et peut isoler un caissier avec
+    `?caissier=<id>` ; un caissier ne voit que ses propres opérations, quoi
+    qu'il demande.
+    """
+    permission_classes = [permissions.IsAuthenticated, EstAdminOuCaissier]
+
+    def get(self, request):
+        ecole = request.user.id_ecole
+        brut = request.query_params.get("date")
+        try:
+            jour = parse_date(brut) if brut else timezone.localdate()
+        except ValueError:
+            jour = None
+        if jour is None:
+            raise ValidationError({"date": "Date attendue au format AAAA-MM-JJ."})
+
+        caissier = None
+        if request.user.role == "caissier":
+            caissier = request.user
+        elif request.query_params.get("caissier"):
+            try:
+                caissier = get_user_model().objects.get(
+                    pk=request.query_params["caissier"], id_ecole=ecole)
+            except (get_user_model().DoesNotExist, ValueError, TypeError):
+                raise ValidationError({"caissier": "Caissier inconnu pour cette école."})
+        return Response(finances.historique_caisse(ecole, jour, caissier))
+
 
 class GrilleTarifsView(APIView):
     """

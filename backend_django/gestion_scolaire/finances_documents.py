@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from datetime import date
 
-from django.utils.text import slugify
-
 from . import exports
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -51,36 +49,22 @@ def _sous_titre(ecole, complement=None):
     return " · ".join(morceaux)
 
 
-def _nom_fichier(base, extension):
-    return f"{base}-{date.today().isoformat()}.{extension}"
+# Le nom des fichiers est composé par `exports` : tous les documents de
+# l'application le nomment de la même façon.
+nom_document = exports.nom_document
+_morceau = exports.slugifier
 
 
-def _morceau(valeur):
+def _nom_etat(document, ecole, extension, precision=None):
     """
-    Un fragment de nom de fichier : sans accent, sans espace, sans ponctuation.
+    Nom d'un état daté : « etat-des-impayes-ecole-mic-cite-2026-09-16.xlsx ».
 
-    `slugify` sans `allow_unicode` translitère « Ndalé » en « ndale » et
-    « 4ème A » en « 4eme-a ». C'est voulu : le fichier voyage par e-mail,
-    WhatsApp et clé USB, et tout ce qui n'est pas ASCII finit tôt ou tard en
-    « recu-Ndal%C3%A9.pdf » chez le destinataire.
-
-    Tout est ramené en minuscules, numéro de pièce compris : préserver la
-    casse des seules valeurs déjà ASCII produisait « Test-Nom1 » à côté de
-    « ndale-fedior » — le même champ rendu différemment selon qu'il porte un
-    accent. Les systèmes de fichiers qui nous concernent ignorent la casse.
+    L'école figure dans le nom parce que ces fichiers circulent par e-mail
+    entre plusieurs établissements gérés par la même personne ; la date, parce
+    qu'un état des impayés du 3 et du 10 ne se distinguent pas autrement.
     """
-    return slugify(str(valeur or ""), allow_unicode=False)
-
-
-def nom_document(*morceaux, extension="pdf"):
-    """
-    Assemble un nom de fichier parlant à partir de ce qui identifie la pièce.
-
-    Un dossier de téléchargement contient vite trente « recu.pdf » ; en y
-    lisant l'élève, sa classe et l'année, la pièce se retrouve sans l'ouvrir.
-    """
-    parties = [_morceau(m) for m in morceaux if m]
-    return "-".join(p for p in parties if p) + f".{extension}"
+    return exports.nom_document(document, ecole.nom, precision,
+                                extension=extension, date_du_jour=True)
 
 
 # ---------------------------------------------------------------------------
@@ -135,14 +119,14 @@ def impayes(ecole, frais, format="xlsx"):
               formater_montant(l["solde"])] for l in lignes],
             total=["", "", "", "", "", "TOTAL", "", "", formater_montant(total)],
         )
-        return doc.rendu(), _nom_fichier("impayes", "pdf"), PDF
+        return doc.rendu(), _nom_etat("etat-des-impayes", ecole, "pdf"), PDF
 
     contenu = exports.classeur_xlsx([(
         "Impayés", _ENTETES_IMPAYES,
         [[l["matricule"], l["eleve"], l["classe"], l["type"], _jour(l["echeance"]),
           l["statut"], float(l["du"]), float(l["paye"]), float(l["solde"])] for l in lignes],
     )])
-    return contenu, _nom_fichier("impayes", "xlsx"), XLSX
+    return contenu, _nom_etat("etat-des-impayes", ecole, "xlsx"), XLSX
 
 
 # ---------------------------------------------------------------------------
@@ -171,14 +155,14 @@ def journal(ecole, mouvements, format="xlsx", titre="Journal de caisse"):
               formater_montant(l[5])] for l in lignes],
             total=["", "", "TOTAL", formater_montant(debits), formater_montant(credits), ""],
         )
-        return doc.rendu(), _nom_fichier("journal-caisse", "pdf"), PDF
+        return doc.rendu(), _nom_etat(titre, ecole, "pdf"), PDF
 
     contenu = exports.classeur_xlsx([(
         "Journal", _ENTETES_JOURNAL,
         [[l[0], l[1], l[2], float(l[3] or 0), float(l[4] or 0),
           float(l[5] or 0)] for l in lignes],
     )])
-    return contenu, _nom_fichier("journal-caisse", "xlsx"), XLSX
+    return contenu, _nom_etat(titre, ecole, "xlsx"), XLSX
 
 
 # ---------------------------------------------------------------------------
@@ -201,13 +185,13 @@ def depenses(ecole, liste, format="xlsx"):
             [[l[0], l[1], l[2], formater_montant(l[4])] for l in lignes],
             total=["", "", "TOTAL", formater_montant(total)],
         )
-        return doc.rendu(), _nom_fichier("depenses", "pdf"), PDF
+        return doc.rendu(), _nom_etat("depenses", ecole, "pdf"), PDF
 
     contenu = exports.classeur_xlsx([(
         "Dépenses", ["Date", "Catégorie", "Motif", "Justificatif", "Montant"],
         [[l[0], l[1], l[2], l[3], float(l[4])] for l in lignes],
     )])
-    return contenu, _nom_fichier("depenses", "xlsx"), XLSX
+    return contenu, _nom_etat("depenses", ecole, "xlsx"), XLSX
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +241,9 @@ def bilan(ecole, donnees, format="xlsx"):
          [[m["mois"], m["recettes"], m["depenses"], m["recettes"] - m["depenses"]]
           for m in donnees["evolution"]]),
     ]
-    return exports.classeur_xlsx(feuilles), _nom_fichier("bilan-financier", "xlsx"), XLSX
+    return (exports.classeur_xlsx(feuilles),
+            exports.nom_document("bilan-financier", ecole.nom, intitule, extension="xlsx"),
+            XLSX)
 
 
 def _date(texte):
@@ -336,7 +322,9 @@ def _bilan_pdf(ecole, donnees, intitule):
               formater_montant(m["recettes"] - m["depenses"])] for m in donnees["evolution"]],
         )
 
-    return doc.rendu(), _nom_fichier("bilan-financier", "pdf"), PDF
+    return (doc.rendu(),
+            exports.nom_document("bilan-financier", ecole.nom, intitule, extension="pdf"),
+            PDF)
 
 
 # ---------------------------------------------------------------------------
@@ -479,14 +467,14 @@ def paiements(ecole, liste, format="xlsx"):
             [[*l[:-1], formater_montant(l[-1])] for l in lignes],
             total=["", "", "", "", "", "", "TOTAL", formater_montant(total)],
         )
-        return doc.rendu(), _nom_fichier("recettes", "pdf"), PDF
+        return doc.rendu(), _nom_etat("journal-des-recettes", ecole, "pdf"), PDF
 
     contenu = exports.classeur_xlsx([(
         "Recettes",
         ["Date", "Reçu", "Matricule", "Élève", "Type de frais", "Moyen", "Référence", "Montant"],
         [[*l[:-1], float(l[-1])] for l in lignes],
     )])
-    return contenu, _nom_fichier("recettes", "xlsx"), XLSX
+    return contenu, _nom_etat("journal-des-recettes", ecole, "xlsx"), XLSX
 
 
 # ---------------------------------------------------------------------------

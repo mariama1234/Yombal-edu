@@ -3,8 +3,9 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { GenericCrudService } from './generic-crud.service';
 import { ENTITY_CONFIGS } from './entity-configs';
-import { EntityConfig, FiltreConfig, RowAction } from './crud-config.model';
+import { EntityConfig, FiltreConfig, LienLigne, RowAction } from './crud-config.model';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
+import { ToastService } from '../../core/services/toast.service';
 
 @Component({
   selector: 'app-generic-list',
@@ -22,11 +23,15 @@ export class GenericListComponent implements OnInit {
   /** Libellé du dernier élément envoyé à la corbeille, pour offrir de le récupérer. */
   dernierSupprime = signal<string | null>(null);
 
+  /** Enregistrement qui vient d'être fait depuis le formulaire : on propose la suite. */
+  enregistre = signal<{ libelle: string | null; creation: boolean } | null>(null);
+
   /** Valeur choisie dans chaque liste déroulante, par paramètre d'URL. */
   valeursFiltres = signal<Record<string, string>>({});
   optionsFiltres = signal<Record<string, any[]>>({});
 
   annees = inject(AnneeScolaireService);
+  private toast = inject(ToastService);
 
   constructor(private route: ActivatedRoute, private router: Router, private crud: GenericCrudService<any>) {
     // Changer d'année dans le bandeau haut recharge la liste courante, sans
@@ -42,6 +47,11 @@ export class GenericListComponent implements OnInit {
       this.config = ENTITY_CONFIGS[data['entityKey']];
       this.valeursFiltres.set({});
       this.dernierSupprime.set(null);
+      // Transmis par le formulaire à la navigation ; effacé aussitôt lu, sans
+      // quoi un rafraîchissement de la page ferait réapparaître le bandeau.
+      const etat = history.state?.enregistre ?? null;
+      this.enregistre.set(etat);
+      if (etat) history.replaceState({ ...history.state, enregistre: null }, '');
       this.chargerFiltres();
       this.charger();
     });
@@ -124,14 +134,22 @@ export class GenericListComponent implements OnInit {
     if (!confirm('Supprimer cet élément ? Il restera récupérable depuis la corbeille.')) return;
     this.erreur.set(null);
     this.dernierSupprime.set(null);
+    this.enregistre.set(null);
     this.crud.remove(this.config.endpoint, item.id).subscribe({
       next: () => {
         const colonne = this.config.columns[0]?.key;
         this.dernierSupprime.set(String((colonne && item[colonne]) ?? `#${item.id}`));
+        this.toast.succes('Placé dans la corbeille',
+                          `« ${this.dernierSupprime()} » reste récupérable depuis la corbeille.`);
         this.charger();
       },
       error: (e) => this.erreur.set(e?.error?.detail ?? 'La suppression a échoué.'),
     });
+  }
+
+  /** Paramètres d'URL d'un raccourci de ligne, ex: `{ classe: 12 }`. */
+  parametresLien(lien: LienLigne, item: any): Record<string, unknown> {
+    return { [lien.parametre]: item[lien.champ ?? 'id'] };
   }
 
   ouvrirNouveau(): void {

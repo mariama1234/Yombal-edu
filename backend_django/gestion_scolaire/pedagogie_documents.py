@@ -11,8 +11,6 @@ attendu par `_fichier()` dans les vues.
 """
 from __future__ import annotations
 
-from datetime import date
-
 from . import exports
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -26,17 +24,6 @@ def _sous_titre(ecole, complement=None):
     if complement:
         morceaux.append(complement)
     return " · ".join(morceaux)
-
-
-def _nom_fichier(base, extension):
-    return f"{base}-{date.today().isoformat()}.{extension}"
-
-
-def _sans_accent_ni_espace(texte):
-    """Nom de fichier sûr : « Aïssatou Ba » → « aissatou-ba »."""
-    remplacements = str.maketrans("àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ",
-                                  "aaaeeeeiioouuucAAAEEEEIIOOUUUC")
-    return "-".join(str(texte).translate(remplacements).split()).lower()
 
 
 def _texte(valeur, defaut="—"):
@@ -105,8 +92,10 @@ def bulletin(ecole, releve, conseil=None):
     document.paragraphe("Le professeur principal                     "
                         "La Direction                     Les parents", gris=0.45)
 
-    base = f"bulletin-{_sans_accent_ni_espace(eleve['nom'] + ' ' + eleve['prenom'])}"
-    return document.rendu(), _nom_fichier(base, "pdf"), PDF
+    # Le bulletin se classe par élève : son nom d'abord, puis la période.
+    nom = exports.nom_document("bulletin", eleve["prenom"], eleve["nom"],
+                               releve["classe"], releve["periode"], extension="pdf")
+    return document.rendu(), nom, PDF
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +135,9 @@ def releve_de_notes(ecole, releve):
     document.espace(4)
     document.encadre("Moyenne générale", f"{_moyenne(releve['moyenne_generale'])} / 20")
 
-    base = f"releve-{_sans_accent_ni_espace(eleve['nom'] + ' ' + eleve['prenom'])}"
-    return document.rendu(), _nom_fichier(base, "pdf"), PDF
+    nom = exports.nom_document("releve-de-notes", eleve["prenom"], eleve["nom"],
+                               releve["classe"], releve["periode"], extension="pdf")
+    return document.rendu(), nom, PDF
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +152,10 @@ def palmares(ecole, donnees, format="xlsx"):
                float(l["moyenne_generale"]), l["appreciation"]]
               for l in donnees["lignes"]]
     intitule = f"Palmarès {donnees['classe']} — {donnees['periode']}"
-    base = f"palmares-{_sans_accent_ni_espace(donnees['classe'])}"
+
+    def nom(extension):
+        return exports.nom_document("palmares", donnees["classe"], donnees["periode"],
+                                    ecole.nom, extension=extension)
 
     if format == "pdf":
         document = exports.DocumentPDF(
@@ -176,10 +169,10 @@ def palmares(ecole, donnees, format="xlsx"):
         )
         if not donnees["lignes"]:
             document.paragraphe("Aucun élève classé sur cette période.")
-        return document.rendu(), _nom_fichier(base, "pdf"), PDF
+        return document.rendu(), nom("pdf"), PDF
 
     contenu = exports.classeur_xlsx([(donnees["classe"][:31], _ENTETES_PALMARES, lignes)])
-    return contenu, _nom_fichier(base, "xlsx"), XLSX
+    return contenu, nom("xlsx"), XLSX
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +203,10 @@ def moyennes_classe(ecole, resultat, format="xlsx"):
         )
 
     intitule = f"Moyennes {resultat['classe']} — {resultat['periode']}"
-    base = f"moyennes-{_sans_accent_ni_espace(resultat['classe'])}"
+
+    def nom(extension):
+        return exports.nom_document("moyennes", resultat["classe"], resultat["periode"],
+                                    ecole.nom, extension=extension)
 
     if format == "pdf":
         document = exports.DocumentPDF(
@@ -227,7 +223,7 @@ def moyennes_classe(ecole, resultat, format="xlsx"):
         )
         if not lignes_source:
             document.paragraphe("Aucun élève inscrit dans cette classe.")
-        return document.rendu(), _nom_fichier(base, "pdf"), PDF
+        return document.rendu(), nom("pdf"), PDF
 
     contenu = exports.classeur_xlsx([(resultat["classe"][:31], entetes, lignes)])
-    return contenu, _nom_fichier(base, "xlsx"), XLSX
+    return contenu, nom("xlsx"), XLSX

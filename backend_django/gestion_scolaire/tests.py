@@ -3053,6 +3053,15 @@ class BaseDossierFinancier(BaseFinances):
         finances.enregistrer_paiement(paiement, utilisateur=self.admin)
         return paiement
 
+    def _droits_exoneres(self, eleve=None, annee=None):
+        """
+        Droits d'inscription émis puis entièrement remisés : la ligne existe —
+        l'élève peut être à jour — sans rien changer aux totaux du test.
+        """
+        annee = annee or self.annee
+        return self._frais(50000, date(annee.date_fin.year, 6, 30), self.inscription_frais,
+                           annee=annee, eleve=eleve, remise=50000)
+
     def _situation(self, annee=None, aujourdhui=None):
         # Date figée : les statuts dépendent des échéances dépassées, et un
         # test qui lit l'horloge réelle change de verdict avec le calendrier.
@@ -3074,6 +3083,7 @@ class TestSituationFinanciereEleve(BaseDossierFinancier):
         self.assertEqual(resume["statut"], "non_paye")
 
     def test_paiement_complet_met_a_jour(self):
+        self._droits_exoneres()
         frais = self._frais(25000, date(2026, 10, 5))
         self._payer(frais, 25000)
 
@@ -3084,6 +3094,7 @@ class TestSituationFinanciereEleve(BaseDossierFinancier):
 
     def test_paiement_partiel_puis_solde(self):
         """25 000 dus, 10 000 versés : partiel ; les 15 000 suivants soldent."""
+        self._droits_exoneres()
         frais = self._frais(25000, date(2026, 11, 5))
         self._payer(frais, 10000)
 
@@ -3164,6 +3175,7 @@ class TestAnneesNonMelangees(BaseDossierFinancier):
             id_eleve=self.eleve, id_classe=self.classe_passee,
             id_annee_scolaire=self.annee_passee,
             date_inscription=self.annee_passee.date_debut)
+        self._droits_exoneres(annee=self.annee_passee)
         self._payer(self._frais(30000, date(2025, 11, 5), annee=self.annee_passee), 30000)
         self._frais(25000, date(2026, 11, 5))
 
@@ -3208,6 +3220,7 @@ class TestRemise(BaseDossierFinancier):
 
     def test_la_remise_peut_solder_un_frais(self):
         """Une remise accordée après coup doit faire suivre le statut."""
+        self._droits_exoneres()
         frais = self._frais(25000, date(2026, 11, 5))
         self._payer(frais, 20000)
         self.assertEqual(frais.statut, "partiel")
@@ -3305,6 +3318,7 @@ class TestEncaissementDepuisLeDossier(BaseDossierFinancier):
 
     def test_un_versement_peut_couvrir_deux_echeances(self):
         """50 000 sur deux mensualités : deux paiements, deux reçus."""
+        self._droits_exoneres()
         reponse = self._encaisser(montant="50000")
         self.assertEqual(len(reponse.data["paiements"]), 2)
         self.assertEqual(models.Recu.objects.count(), 2)
@@ -3390,6 +3404,7 @@ class TestSituationGlobale(BaseDossierFinancier):
             nom="6ème B", capacite_max=40,
         )
         # eleves[0] à jour, eleves[1] partiel, eleves[2] rien versé.
+        self._droits_exoneres(self.eleves[0])
         self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[0]), 25000)
         self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[1]), 10000)
         self._frais(25000, date(2026, 11, 5), eleve=self.eleves[2])
@@ -3490,6 +3505,7 @@ class TestRechercheDesPaiements(BaseDossierFinancier):
 class TestBilanEnrichi(BaseDossierFinancier):
     def test_repartition_des_eleves_et_derniers_paiements(self):
         # Datés dans l'année scolaire : le bilan borne les recettes à sa période.
+        self._droits_exoneres(self.eleves[0])
         self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[0]), 25000,
                     date_paiement=datetime(2026, 11, 6, 9, 0, tzinfo=dt_timezone.utc))
         self._payer(self._frais(25000, date(2026, 11, 5), eleve=self.eleves[1]), 10000,
@@ -3947,6 +3963,7 @@ class TestStatutSansFrais(BaseDossierFinancier):
         self.assertEqual(self._situation()["resume"]["statut"], "non_paye")
 
     def test_puis_a_jour_une_fois_regle(self):
+        self._droits_exoneres()
         frais = self._frais(25000, date(2026, 11, 5))
         self._payer(frais, 25000)
         self.assertEqual(self._situation()["resume"]["statut"], "a_jour")
@@ -3958,6 +3975,387 @@ class TestStatutSansFrais(BaseDossierFinancier):
         self.assertEqual(par_eleve[self.eleve.pk]["statut"], "sans_frais")
         self.assertEqual(reponse.data["repartition"]["a_jour"], 0)
         self.assertEqual(reponse.data["repartition"]["sans_frais"], 3)
+
+
+class TestAJourExigeTousLesFrais(BaseDossierFinancier):
+    """
+    « À jour », c'est avoir réglé tous les frais qui reviennent à l'élève :
+    une facture à laquelle manque un frais dû d'office ne suffit pas.
+    """
+
+    def test_droits_regles_sans_mensualite_emise(self):
+        """Le cas relevé au test : droits payés, aucune mensualité émise."""
+        self._payer(self._frais(30000, date(2026, 10, 20), self.inscription_frais), 30000)
+        resume = self._situation()["resume"]
+        self.assertEqual(resume["reste"], 0)
+        self.assertEqual(resume["statut"], "partiel")
+        self.assertEqual(resume["frais_manquants"], ["Mensualité"])
+
+    def test_mensualite_reglee_sans_droits_emis(self):
+        self._payer(self._frais(25000, date(2026, 10, 5)), 25000)
+        resume = self._situation()["resume"]
+        self.assertEqual(resume["statut"], "partiel")
+        self.assertEqual(resume["frais_manquants"], ["Inscription"])
+
+    def test_a_jour_une_fois_tout_emis_et_regle(self):
+        self._payer(self._frais(50000, date(2026, 10, 5), self.inscription_frais), 50000)
+        self._payer(self._frais(25000, date(2026, 10, 5)), 25000)
+        resume = self._situation()["resume"]
+        self.assertEqual(resume["statut"], "a_jour")
+        self.assertEqual(resume["frais_manquants"], [])
+
+    def test_la_vue_densemble_et_le_bilan_suivent(self):
+        self._payer(self._frais(30000, date(2026, 10, 20), self.inscription_frais), 30000)
+        reponse = self.client.get("/api/frais-eleves/situation/",
+                                  {"id_annee_scolaire": self.annee.pk})
+        ligne = [l for l in reponse.data["eleves"] if l["id_eleve"] == self.eleve.pk][0]
+        self.assertEqual(ligne["statut"], "partiel")
+        self.assertEqual(ligne["frais_manquants"], ["Mensualité"])
+        self.assertEqual(reponse.data["repartition"]["a_jour"], 0)
+        self.assertEqual(finances.bilan(self.ecole, self.annee)["eleves"]["a_jour"], 0)
+
+
+class TestEncaissementAnnonceLInscription(BaseDossierFinancier):
+    """
+    L'encaissement dit quand il fait d'un inscrit incomplet un inscrit : c'est
+    ce que l'écran annonce (« … est maintenant inscrit »).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.inscription = models.Inscription.objects.get(
+            id_eleve=self.eleve, id_annee_scolaire=self.annee)
+        self.inscription.statut = models.Inscription.Statut.EN_ATTENTE
+        self.inscription.save()
+        self._frais(50000, date(2026, 10, 1), self.inscription_frais)
+        self._frais(25000, date(2026, 10, 5))
+
+    def _encaisser(self, montant):
+        return self.client.post("/api/paiements/encaisser/", {
+            "id_eleve": self.eleve.pk, "id_annee_scolaire": self.annee.pk,
+            "montant": montant, "methode": "especes",
+        }, format="json")
+
+    def test_droits_et_premier_mois_regles_annoncent_linscription(self):
+        reponse = self._encaisser("75000")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(reponse.data["inscription_confirmee"], {
+            "eleve": f"{self.eleve.prenom} {self.eleve.nom}",
+            "classe": self.classe.nom,
+            "annee": self.annee.libelle,
+        })
+
+    def test_un_versement_partiel_nannonce_rien(self):
+        reponse = self._encaisser("50000")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertIsNone(reponse.data["inscription_confirmee"])
+
+    def test_un_eleve_deja_inscrit_nest_pas_annonce_deux_fois(self):
+        self._encaisser("75000")
+        self._frais(25000, date(2026, 11, 5))
+        reponse = self._encaisser("25000")
+        self.assertIsNone(reponse.data["inscription_confirmee"])
+
+
+class TestNomsDesFichiersTelecharges(BaseDossierFinancier):
+    """
+    Le nom d'un fichier téléchargé doit dire ce qu'il contient : un dossier de
+    téléchargements plein d'« export.pdf » ne sert personne.
+    """
+
+    def test_les_etats_financiers_portent_lecole_et_le_jour(self):
+        jour = date.today().isoformat()
+        cas = [
+            (finances_documents.impayes(self.ecole, models.FraisEleve.objects.none(),
+                                        format="xlsx"),
+             f"etat-des-impayes-ecole-a-{jour}.xlsx"),
+            (finances_documents.impayes(self.ecole, models.FraisEleve.objects.none(),
+                                        format="pdf"),
+             f"etat-des-impayes-ecole-a-{jour}.pdf"),
+            (finances_documents.journal(self.ecole, [], format="pdf", titre="Journal de banque"),
+             f"journal-de-banque-ecole-a-{jour}.pdf"),
+            (finances_documents.depenses(self.ecole, [], format="xlsx"),
+             f"depenses-ecole-a-{jour}.xlsx"),
+            (finances_documents.paiements(self.ecole, [], format="xlsx"),
+             f"journal-des-recettes-ecole-a-{jour}.xlsx"),
+        ]
+        for (_, nom, _mime), attendu in cas:
+            with self.subTest(attendu=attendu):
+                self.assertEqual(nom, attendu)
+
+    def test_le_bilan_nomme_sa_periode(self):
+        donnees = finances.bilan(self.ecole, self.annee)
+        _, nom, _ = finances_documents.bilan(self.ecole, donnees, format="xlsx")
+        self.assertEqual(nom, "bilan-financier-ecole-a-2026-2027.xlsx")
+
+    def test_les_documents_pedagogiques_nomment_leleve_la_classe_et_la_periode(self):
+        from . import pedagogie_documents
+
+        releve = {
+            "eleve": {"prenom": "Ndalé", "nom": "FÉDIOR", "matricule": "E-1"},
+            "classe": "6ème A", "periode": "Trimestre 1", "matieres": [],
+            "moyenne_generale": None, "rang_classe": None, "effectif": 0,
+            "appreciation": None,
+        }
+        _, nom, _ = pedagogie_documents.bulletin(self.ecole, releve)
+        self.assertEqual(nom, "bulletin-ndale-fedior-6eme-a-trimestre-1.pdf")
+
+        _, nom, _ = pedagogie_documents.releve_de_notes(self.ecole, releve)
+        self.assertEqual(nom, "releve-de-notes-ndale-fedior-6eme-a-trimestre-1.pdf")
+
+        donnees = {"classe": "6ème A", "periode": "Trimestre 1", "lignes": []}
+        _, nom, _ = pedagogie_documents.palmares(self.ecole, donnees, format="pdf")
+        self.assertEqual(nom, "palmares-6eme-a-trimestre-1-ecole-a.pdf")
+
+        _, nom, _ = pedagogie_documents.moyennes_classe(self.ecole, donnees, format="xlsx")
+        self.assertEqual(nom, "moyennes-6eme-a-trimestre-1-ecole-a.xlsx")
+
+    def test_un_nom_de_fichier_reste_sans_accent_ni_espace(self):
+        self.ecole.nom = "École Mixité Cité"
+        _, nom, _ = finances_documents.depenses(self.ecole, [], format="pdf")
+        self.assertTrue(nom.startswith("depenses-ecole-mixite-cite-"), nom)
+        self.assertTrue(nom.isascii(), nom)
+        self.assertNotIn(" ", nom)
+
+
+class TestAutorisationEnClasse(BaseDossierFinancier):
+    """
+    L'exception de l'administration : un inscrit incomplet, droits
+    d'inscription réglés, est autorisé à suivre les cours — sans devenir
+    « Inscrit » pour autant.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.inscription = models.Inscription.objects.get(
+            id_eleve=self.eleve, id_annee_scolaire=self.annee)
+        self.droits = self._frais(50000, date(2026, 10, 1), self.inscription_frais)
+        self.premier_mois = self._frais(25000, date(2026, 10, 5))
+
+    def _autoriser(self, client=None, motif="Difficulté financière passagère"):
+        return (client or self.client).post(
+            f"/api/eleves/{self.eleve.pk}/autoriser-en-classe/", {"motif": motif}, format="json")
+
+    def _en_classe(self, **params):
+        reponse = self.client.get("/api/eleves/", {"id_annee_scolaire": self.annee.pk, **params})
+        return [e["id"] for e in self.resultats(reponse)]
+
+    def test_refusee_tant_que_les_droits_ne_sont_pas_regles(self):
+        self.assertEqual(self._autoriser().status_code, 400)
+        self.inscription.refresh_from_db()
+        self.assertFalse(self.inscription.autorise_en_classe)
+
+    def test_lautorisation_laisse_linscription_incomplete(self):
+        self._payer(self.droits, 50000)
+        self.assertNotIn(self.eleve.pk, self._en_classe())
+
+        reponse = self._autoriser()
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.inscription.refresh_from_db()
+        self.assertEqual(self.inscription.statut, "en_attente")
+        self.assertTrue(self.inscription.autorise_en_classe)
+        self.assertEqual(self.inscription.id_utilisateur_autorisation, self.admin)
+
+        courante = reponse.data["scolarite_courante"]
+        self.assertTrue(courante["autorise_en_classe"])
+        self.assertEqual(courante["motif_autorisation"], "Difficulté financière passagère")
+        self.assertEqual(courante["statut_code"], "en_attente")
+        # En classe, et toujours parmi les inscrits incomplets.
+        self.assertIn(self.eleve.pk, self._en_classe())
+        self.assertIn(self.eleve.pk, self._en_classe(inscription="en_attente"))
+        ligne = [e for e in self.resultats(self.client.get(
+            "/api/eleves/", {"id_annee_scolaire": self.annee.pk})) if e["id"] == self.eleve.pk][0]
+        self.assertTrue(ligne["inscription_autorise_en_classe"])
+
+    def test_le_retrait_sort_leleve_de_la_classe(self):
+        self._payer(self.droits, 50000)
+        self._autoriser()
+        reponse = self.client.post(f"/api/eleves/{self.eleve.pk}/retirer-autorisation/", {},
+                                   format="json")
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.assertNotIn(self.eleve.pk, self._en_classe())
+
+    def test_le_premier_mois_regle_confirme_toujours(self):
+        self._payer(self.droits, 50000)
+        self._autoriser()
+        self._payer(self.premier_mois, 25000)
+        self.inscription.refresh_from_db()
+        self.assertEqual(self.inscription.statut, "en_cours")
+
+    def test_inutile_pour_un_inscrit(self):
+        self.inscription.statut = "en_cours"
+        self.inscription.save()
+        self.assertEqual(self._autoriser().status_code, 400)
+
+    def test_un_motif_est_exige(self):
+        self._payer(self.droits, 50000)
+        self.assertEqual(self._autoriser(motif="").status_code, 400)
+
+    def test_reservee_a_ladministrateur(self):
+        self._payer(self.droits, 50000)
+        caissier = self._compte("caisse@a.sn", self.ecole, "caissier")
+        self.assertEqual(self._autoriser(self._client(caissier.email)).status_code, 403)
+
+    def test_une_autre_ecole_ne_peut_pas_autoriser(self):
+        self._payer(self.droits, 50000)
+        self.assertEqual(self._autoriser(self.client_autre).status_code, 404)
+
+
+class TestAjoutDeFraisEnCoursDAnnee(BaseDossierFinancier):
+    """L'élève inscrit qui s'ajoute un frais au choix en cours d'année."""
+
+    def setUp(self):
+        super().setUp()
+        self.taekwondo = models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Taekwondo", nature="autre",
+            montant_defaut=5000, frequence="Mensuelle")
+        self.uniforme = models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Uniforme", nature="autre",
+            montant_defaut=15000, frequence="Unique")
+
+    def _ajouter(self, frais, date_debut="2027-01-10", client=None):
+        return (client or self.client).post(
+            f"/api/eleves/{self.eleve.pk}/ajouter-frais/",
+            {"frais": frais, "date_debut": date_debut}, format="json")
+
+    def _lignes(self, type_frais):
+        return list(models.FraisEleve.objects
+                    .filter(id_eleve=self.eleve, id_type_frais=type_frais)
+                    .order_by("echeance"))
+
+    def test_les_frais_proposes_suivent_le_niveau(self):
+        models.TarifNiveau.objects.create(id_niveau=self.niveau, id_type_frais=self.taekwondo,
+                                          montant=7000)
+        reponse = self.client.get(f"/api/eleves/{self.eleve.pk}/frais-disponibles/")
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        par_id = {t["id"]: t for t in reponse.data["types"]}
+        self.assertEqual(par_id[self.taekwondo.pk]["montant"], 7000)
+        self.assertTrue(par_id[self.taekwondo.pk]["tarif_niveau"])
+        self.assertTrue(par_id[self.taekwondo.pk]["mensuel"])
+        self.assertFalse(par_id[self.uniforme.pk]["mensuel"])
+        # La mensualité est due d'office : elle ne se propose pas.
+        self.assertNotIn(self.type_frais.pk, par_id)
+
+    def test_un_frais_mensuel_court_jusqua_la_fin_de_lannee(self):
+        reponse = self._ajouter([self.taekwondo.pk])
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        lignes = self._lignes(self.taekwondo)
+        self.assertEqual(len(lignes), 7)
+        self.assertEqual(lignes[0].echeance, date(2027, 1, 10))
+        self.assertEqual(lignes[-1].echeance, date(2027, 7, 10))
+        self.assertEqual(reponse.data["crees"], 7)
+        self.assertEqual(reponse.data["total"], 35000)
+        self.assertIn("situation", reponse.data)
+
+    def test_un_frais_unique_est_emis_une_fois(self):
+        self.assertEqual(self._ajouter([self.uniforme.pk]).status_code, 201)
+        lignes = self._lignes(self.uniforme)
+        self.assertEqual(len(lignes), 1)
+        self.assertEqual(lignes[0].montant_du, Decimal("15000"))
+
+    def test_un_frais_deja_souscrit_nest_pas_double(self):
+        self._ajouter([self.uniforme.pk])
+        reponse = self._ajouter([self.uniforme.pk])
+        self.assertEqual(reponse.status_code, 400)
+        self.assertEqual(len(self._lignes(self.uniforme)), 1)
+        disponibles = self.client.get(f"/api/eleves/{self.eleve.pk}/frais-disponibles/").data
+        self.assertTrue([t for t in disponibles["types"] if t["id"] == self.uniforme.pk][0]["deja"])
+
+    def test_un_frais_du_doffice_est_refuse(self):
+        self.assertEqual(self._ajouter([self.type_frais.pk]).status_code, 400)
+
+    def test_un_frais_dune_autre_ecole_est_refuse(self):
+        piscine = models.TypeFrais.objects.create(
+            id_ecole=self.autre, libelle="Piscine", nature="autre", montant_defaut=3000)
+        self.assertEqual(self._ajouter([piscine.pk]).status_code, 400)
+        self.assertFalse(models.FraisEleve.objects.filter(id_type_frais=piscine).exists())
+
+    def test_une_autre_ecole_ne_peut_pas_ajouter(self):
+        self.assertEqual(self._ajouter([self.uniforme.pk], client=self.client_autre).status_code, 404)
+
+    def test_un_eleve_sans_inscription_est_refuse(self):
+        models.Inscription.objects.filter(id_eleve=self.eleve).delete()
+        self.assertEqual(self._ajouter([self.uniforme.pk]).status_code, 400)
+
+
+class TestHistoriqueCaisse(BaseDossierFinancier):
+    """Paiements et dépenses d'une journée, rattachés à leur caissier."""
+
+    def setUp(self):
+        super().setUp()
+        self.caissier = self._compte("caisse@a.sn", self.ecole, "caissier")
+        self.client_caissier = self._client(self.caissier.email)
+        midi = datetime(2026, 10, 10, 12, 0, tzinfo=dt_timezone.utc)
+
+        # Encaissé par l'administrateur, en espèces.
+        self._payer(self._frais(25000, date(2026, 10, 5)), 25000, date_paiement=midi)
+        # Encaissé par le caissier, en Wave.
+        frais = self._frais(50000, date(2026, 10, 1), self.inscription_frais, eleve=self.eleves[1])
+        paiement = models.Paiement.objects.create(
+            id_frais_eleve=frais, montant=Decimal("20000"), methode="wave",
+            date_paiement=midi, id_utilisateur_caissier=self.caissier)
+        finances.enregistrer_paiement(paiement, utilisateur=self.caissier)
+        # Dépense saisie par l'administrateur.
+        reponse = self.client.post("/api/depenses/", {
+            "id_type_depense": self.type_depense.pk, "motif": "Craies",
+            "montant": "3000", "date_depense": "2026-10-10",
+        }, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+
+    def _historique(self, client=None, **params):
+        params.setdefault("date", "2026-10-10")
+        return (client or self.client).get("/api/caisse/historique/", params)
+
+    def test_ladministrateur_voit_toute_la_journee(self):
+        reponse = self._historique()
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.assertEqual(len(reponse.data["paiements"]), 2)
+        self.assertEqual(len(reponse.data["depenses"]), 1)
+        totaux = reponse.data["totaux"]
+        self.assertEqual(totaux["encaisse"], 45000)
+        self.assertEqual(totaux["depense"], 3000)
+        self.assertEqual(totaux["solde"], 42000)
+        self.assertEqual(totaux["especes_en_caisse"], 22000)
+        par_caissier = {c["nom"]: c for c in reponse.data["par_caissier"]}
+        self.assertEqual(par_caissier["Caissier Test"]["encaisse"], 20000)
+        self.assertEqual(par_caissier["Admin Test"]["encaisse"], 25000)
+        self.assertEqual(par_caissier["Admin Test"]["depense"], 3000)
+        self.assertEqual(reponse.data["depenses"][0]["caissier"], "Admin Test")
+        self.assertTrue(reponse.data["paiements"][0]["numero_recu"])
+
+    def test_filtre_sur_un_caissier(self):
+        reponse = self._historique(caissier=self.caissier.pk)
+        self.assertEqual([p["caissier"] for p in reponse.data["paiements"]], ["Caissier Test"])
+        self.assertEqual(reponse.data["depenses"], [])
+
+    def test_un_caissier_ne_voit_que_ses_operations(self):
+        reponse = self._historique(self.client_caissier, caissier=self.admin.pk)
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.assertEqual([p["caissier"] for p in reponse.data["paiements"]], ["Caissier Test"])
+        self.assertEqual(reponse.data["depenses"], [])
+
+    def test_un_autre_jour_est_vide(self):
+        reponse = self._historique(date="2026-10-11")
+        self.assertEqual(reponse.data["paiements"], [])
+        self.assertEqual(reponse.data["totaux"]["encaisse"], 0)
+
+    def test_isolation_entre_ecoles(self):
+        reponse = self._historique(self.client_autre)
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.assertEqual(reponse.data["paiements"], [])
+        self.assertEqual(reponse.data["depenses"], [])
+        self.assertEqual(self._historique(self.client_autre, caissier=self.caissier.pk).status_code, 400)
+
+    def test_reserve_a_la_caisse(self):
+        enseignant = self._client(self.enseignant_user.email)
+        self.assertEqual(self._historique(enseignant).status_code, 403)
+
+    def test_la_depense_retient_qui_la_saisit(self):
+        depense = models.Depense.objects.get(motif="Craies")
+        self.assertEqual(depense.id_utilisateur, self.admin)
+
+    def test_date_illisible(self):
+        self.assertEqual(self._historique(date="10/10/2026").status_code, 400)
 
 
 class TestRecuDePaiement(BaseDossierFinancier):

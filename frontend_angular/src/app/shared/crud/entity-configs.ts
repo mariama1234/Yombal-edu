@@ -11,6 +11,10 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   // peut pas créer une classe, donc pas inscrire un élève.
   'annees-scolaires': {
     key: 'annees-scolaires',
+    suite: [
+      { label: 'Niveaux', chemin: '/niveaux' },
+      { label: 'Périodes scolaires', chemin: '/periodes' },
+    ],
     endpoint: 'annees-scolaires',
     titre: 'Années scolaires',
     titreSingulier: 'une année scolaire',
@@ -45,6 +49,10 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   niveaux: {
     key: 'niveaux',
+    suite: [
+      { label: 'Classes', chemin: '/classes' },
+      { label: 'Tarifs par niveau', chemin: '/finances/tarifs' },
+    ],
     endpoint: 'niveaux',
     titre: 'Niveaux',
     titreSingulier: 'un niveau',
@@ -63,6 +71,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   salles: {
     key: 'salles',
+    suite: [
+      { label: 'Emploi du temps', chemin: '/emploi-du-temps' },
+    ],
     endpoint: 'salles',
     titre: 'Salles',
     titreSingulier: 'une salle',
@@ -82,6 +93,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   'conseils-classe': {
     key: 'conseils-classe',
+    suite: [
+      { label: 'Bulletins', chemin: '/pedagogie/bulletins' },
+    ],
     filtreParAnnee: true,
     endpoint: 'conseils-classe',
     titre: 'Conseils de classe',
@@ -104,6 +118,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   parents: {
     key: 'parents',
+    suite: [
+      { label: 'Élèves', chemin: '/eleves' },
+    ],
     endpoint: 'parents',
     titre: 'Parents & tuteurs',
     titreSingulier: 'un contact',
@@ -126,6 +143,10 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   matieres: {
     key: 'matieres',
+    suite: [
+      { label: 'Coefficients', chemin: '/coefficients' },
+      { label: 'Affectations', chemin: '/affectations' },
+    ],
     endpoint: 'matieres',
     titre: 'Matières',
     titreSingulier: 'une matière',
@@ -137,6 +158,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   personnel: {
     key: 'personnel',
+    suite: [
+      { label: 'Affectations', chemin: '/affectations' },
+    ],
     endpoint: 'enseignants',
     titre: 'Enseignants & personnel',
     titreSingulier: 'un enseignant',
@@ -189,6 +213,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   // d'entrée du module pédagogique, avant la grille de saisie.
   evaluations: {
     key: 'evaluations',
+    suite: [
+      { label: 'Saisie des notes', chemin: '/pedagogie/notes' },
+    ],
     filtreParAnnee: true,
     endpoint: 'evaluations',
     titre: 'Évaluations',
@@ -223,6 +250,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   notes: {
     key: 'notes',
+    suite: [
+      { label: 'Bulletins', chemin: '/pedagogie/bulletins' },
+    ],
     endpoint: 'notes',
     titre: 'Notes',
     titreSingulier: 'une note',
@@ -247,6 +277,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   'emploi-du-temps': {
     key: 'emploi-du-temps',
+    suite: [
+      { label: 'Présences', chemin: '/presences' },
+    ],
     filtreParAnnee: true,
     endpoint: 'emplois-du-temps',
     titre: 'Emploi du temps',
@@ -276,6 +309,13 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   classes: {
     key: 'classes',
+    suite: [
+      { label: 'Inscrire un élève', chemin: '/eleves/nouveau' },
+      { label: 'Coefficients', chemin: '/coefficients' },
+    ],
+    liens: [
+      { label: 'Élèves', chemin: '/eleves', parametre: 'classe' },
+    ],
     filtreParAnnee: true,
     endpoint: 'classes',
     titre: 'Classes',
@@ -302,6 +342,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   'types-frais': {
     key: 'types-frais',
+    suite: [
+      { label: 'Tarifs par niveau', chemin: '/finances/tarifs' },
+    ],
     endpoint: 'types-frais',
     titre: 'Types de frais',
     titreSingulier: 'un type de frais',
@@ -343,6 +386,10 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   'types-depenses': {
     key: 'types-depenses',
+    suite: [
+      { label: 'Dépenses', chemin: '/depenses' },
+      { label: 'Budgets', chemin: '/budgets' },
+    ],
     endpoint: 'types-depenses',
     titre: 'Catégories de dépenses',
     titreSingulier: 'une catégorie',
@@ -356,6 +403,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   budgets: {
     key: 'budgets',
+    suite: [
+      { label: 'Bilan financier', chemin: '/finances/bilan' },
+    ],
     endpoint: 'budgets',
     titre: 'Budgets',
     titreSingulier: 'un budget',
@@ -378,6 +428,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   depenses: {
     key: 'depenses',
+    suite: [
+      { label: 'Bilan financier', chemin: '/finances/bilan' },
+    ],
     endpoint: 'depenses',
     titre: 'Dépenses',
     titreSingulier: 'une dépense',
@@ -388,6 +441,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'categorie', label: 'Catégorie' },
       { key: 'motif', label: 'Motif' },
       { key: 'montant', label: 'Montant', type: 'number' },
+      { key: 'saisi_par', label: 'Saisie par' },
     ],
     fields: [
       { key: 'motif', label: 'Motif', type: 'text', required: true, span2: true },
@@ -572,6 +626,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   periodes: {
     key: 'periodes',
+    suite: [
+      { label: 'Évaluations', chemin: '/evaluations' },
+    ],
     filtreParAnnee: true,
     endpoint: 'periodes',
     titre: 'Périodes scolaires',
@@ -594,6 +651,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   coefficients: {
     key: 'coefficients',
+    suite: [
+      { label: 'Évaluations', chemin: '/evaluations' },
+    ],
     filtreParAnnee: true,
     endpoint: 'coefficients',
     titre: 'Coefficients',
@@ -615,6 +675,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   affectations: {
     key: 'affectations',
+    suite: [
+      { label: 'Emploi du temps', chemin: '/emploi-du-temps' },
+    ],
     filtreParAnnee: true,
     endpoint: 'affectations',
     titre: 'Affectations',

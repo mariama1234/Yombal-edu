@@ -35,6 +35,7 @@ from datetime import date
 
 from django.db import transaction
 from django.db.models import Count, Q
+from django.utils import timezone
 
 from . import finances, models, photos
 
@@ -534,6 +535,64 @@ def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None, frais_op
 # Dossier numérique (1.2 de la priorisation)
 # ---------------------------------------------------------------------------
 
+def _droits_regles(inscription):
+    """Les droits d'inscription de l'année sont émis et entièrement réglés."""
+    reste = finances.reste_dinscription(inscription.id_eleve_id, inscription.id_annee_scolaire_id)
+    return reste is not None and reste <= 0
+
+
+def autoriser_en_classe(ecole, eleve, motif, utilisateur=None):
+    """
+    Exception : un inscrit incomplet est autorisé à suivre les cours.
+
+    Le cas visé est celui d'une famille en difficulté passagère : les droits
+    d'inscription sont réglés, le premier mois ne l'est pas encore. Sans droits
+    réglés, pas d'exception — ce serait une inscription gratuite.
+
+    L'inscription garde son statut « Inscrit incomplet » : l'autorisation ne
+    vaut pas règlement, et la confirmation viendra d'elle-même au paiement.
+    Motif, date et auteur sont conservés : une exception qu'on ne sait plus
+    justifier ne tient pas longtemps.
+    """
+    _verifier_ecole(ecole, eleve=eleve)
+    inscription = inscription_courante(eleve)
+    if inscription is None:
+        raise ErreurScolarite("Cet élève n'a aucune inscription en cours.")
+    if inscription.statut != models.Inscription.Statut.EN_ATTENTE:
+        raise ErreurScolarite(
+            f"{_nom(eleve)} est déjà inscrit : aucune autorisation n'est nécessaire.")
+    if not _droits_regles(inscription):
+        raise ErreurScolarite(
+            "Les droits d'inscription doivent être réglés avant d'autoriser l'entrée en classe.")
+    motif = (motif or "").strip()
+    if len(motif) < 3:
+        raise ErreurScolarite("Indiquez le motif de l'autorisation.")
+
+    inscription.autorise_en_classe = True
+    inscription.motif_autorisation = motif[:255]
+    inscription.date_autorisation = timezone.now()
+    inscription.id_utilisateur_autorisation = (
+        utilisateur if utilisateur is not None and utilisateur.is_authenticated else None)
+    inscription.save(update_fields=["autorise_en_classe", "motif_autorisation",
+                                    "date_autorisation", "id_utilisateur_autorisation"])
+    return inscription
+
+
+def retirer_autorisation(ecole, eleve):
+    """Revient sur l'exception : l'inscrit incomplet ne suit plus les cours."""
+    _verifier_ecole(ecole, eleve=eleve)
+    inscription = inscription_courante(eleve)
+    if inscription is None or not inscription.autorise_en_classe:
+        raise ErreurScolarite("Cet élève n'a pas d'autorisation d'entrer en classe à retirer.")
+    inscription.autorise_en_classe = False
+    inscription.motif_autorisation = None
+    inscription.date_autorisation = None
+    inscription.id_utilisateur_autorisation = None
+    inscription.save(update_fields=["autorise_en_classe", "motif_autorisation",
+                                    "date_autorisation", "id_utilisateur_autorisation"])
+    return inscription
+
+
 def _nom(personne):
     return f"{personne.prenom} {personne.nom}".strip()
 
@@ -614,6 +673,13 @@ def dossier(ecole, eleve):
             "id_annee_scolaire": courante.id_annee_scolaire_id,
             "date_inscription": courante.date_inscription,
             "statut": courante.get_statut_display(),
+            "statut_code": courante.statut,
+            "autorise_en_classe": courante.autorise_en_classe,
+            "motif_autorisation": courante.motif_autorisation,
+            "date_autorisation": courante.date_autorisation,
+            "autorise_par": (_nom(courante.id_utilisateur_autorisation)
+                             if courante.id_utilisateur_autorisation_id else None),
+            "droits_regles": _droits_regles(courante),
         },
         "parents": [{
             "id": lien.id_parent_id,

@@ -23,6 +23,7 @@ from collections import OrderedDict
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Count, DecimalField, F, Q, Sum, Value
 from django.db.models.functions import Coalesce, TruncMonth
@@ -72,20 +73,25 @@ class StatutFinancier:
     VALEURS = (A_JOUR, PARTIEL, EN_RETARD, NON_PAYE, SANS_FRAIS)
 
 
-def statut_financier(du, paye, en_retard=False):
+def statut_financier(du, paye, en_retard=False, complet=True):
     """
-    Statut d'ensemble d'un jeu de frais, à partir des seuls montants.
+    Statut d'ensemble d'un jeu de frais, à partir des montants.
 
     « À jour » exige qu'il y ait eu quelque chose à payer *et* que ce soit
     payé : sans facture émise, on ne dit rien de la famille, on dit qu'on ne
     lui a rien demandé.
+
+    Il exige aussi que tous les frais qui reviennent à l'élève aient été émis
+    (`complet`, voir `frais_d_office_manquants`). Un élève dont la facture ne
+    porte que les droits d'inscription, sans sa mensualité, a tout réglé de
+    cette facture sans avoir payé ce qu'il doit : il n'est pas à jour.
     """
     du = Decimal(str(du or 0))
     paye = Decimal(str(paye or 0))
     if du <= ZERO:
         return StatutFinancier.SANS_FRAIS
     if paye >= du:
-        return StatutFinancier.A_JOUR
+        return StatutFinancier.A_JOUR if complet else StatutFinancier.PARTIEL
     if en_retard:
         return StatutFinancier.EN_RETARD
     return StatutFinancier.PARTIEL if paye > ZERO else StatutFinancier.NON_PAYE
@@ -490,6 +496,40 @@ def types_d_office(ecole):
     return types
 
 
+def frais_d_office_manquants(types, natures_presentes):
+    """
+    Libellés des frais dus d'office (droits d'inscription, mensualité) dont
+    aucune ligne n'a été émise, parmi `types` (voir `types_d_office`).
+    """
+    return [t.libelle for t in types if t.nature not in natures_presentes]
+
+
+def eleves_aux_frais_incomplets(ecole, frais):
+    """
+    `{id_eleve: [libellés manquants]}` pour les élèves du jeu `frais` à qui il
+    manque un frais dû d'office, sur l'une des années de ce jeu.
+
+    Une seule requête pour toute une promotion : les natures présentes par
+    élève et par année suffisent.
+    """
+    types = types_d_office(ecole)
+    if not types:
+        return {}
+    presentes = {}
+    for id_eleve, id_annee, nature in (frais.order_by()
+                                       .values_list("id_eleve_id", "id_annee_scolaire_id",
+                                                    "id_type_frais__nature")
+                                       .distinct()):
+        presentes.setdefault((id_eleve, id_annee), set()).add(nature)
+    manquants = {}
+    for (id_eleve, _), natures in presentes.items():
+        for libelle in frais_d_office_manquants(types, natures):
+            libelles = manquants.setdefault(id_eleve, [])
+            if libelle not in libelles:
+                libelles.append(libelle)
+    return manquants
+
+
 @transaction.atomic
 def emettre_frais_inscription(eleve, annee, date_inscription, optionnels=(), classe=None):
     """
@@ -578,6 +618,137 @@ def types_optionnels_de(eleve, annee):
                 .filter(frais_eleves__id_eleve=eleve, frais_eleves__id_annee_scolaire=annee)
                 .exclude(nature__in=TYPES_D_OFFICE)
                 .distinct().order_by("pk"))
+
+
+def _inscription_de_lannee(eleve, annee=None):
+    """L'inscription non annulée de l'élève sur `annee`, à défaut la plus récente."""
+    qs = (models.Inscription.objects
+          .filter(id_eleve=eleve)
+          .exclude(statut=models.Inscription.Statut.ANNULEE)
+          .select_related("id_classe", "id_annee_scolaire"))
+    if annee is not None:
+        qs = qs.filter(id_annee_scolaire=annee)
+    return qs.order_by("-id_annee_scolaire__date_debut", "-date_inscription").first()
+
+
+def frais_disponibles(ecole, eleve, annee=None):
+    """
+    Les frais au choix de l'école, au tarif du niveau de l'élève, et ceux
+    qu'il a déjà cette année — ce que propose « Ajouter des frais ».
+    """
+    if eleve.id_ecole_id != ecole.pk:
+        raise ErreurFinance("Cet élève appartient à une autre école.")
+    inscription = _inscription_de_lannee(eleve, annee)
+    if inscription is None:
+        raise ErreurFinance("Cet élève n'a aucune inscription en cours : inscrivez-le d'abord.")
+    annee, classe = inscription.id_annee_scolaire, inscription.id_classe
+    deja = set(models.FraisEleve.objects
+               .filter(id_eleve=eleve, id_annee_scolaire=annee)
+               .values_list("id_type_frais_id", flat=True))
+    avec_tarif = set()
+    if classe.id_niveau_id:
+        avec_tarif = set(models.TarifNiveau.objects
+                         .filter(id_niveau_id=classe.id_niveau_id)
+                         .values_list("id_type_frais_id", flat=True))
+    types = (models.TypeFrais.objects
+             .filter(id_ecole=ecole, nature=models.TypeFrais.Nature.AUTRE)
+             .order_by("libelle"))
+    return {
+        "annee": {
+            "id": annee.pk,
+            "libelle": annee.libelle,
+            "date_debut": annee.date_debut.isoformat(),
+            "date_fin": annee.date_fin.isoformat(),
+        },
+        "classe": classe.nom,
+        "niveau": classe.libelle_niveau,
+        "types": [{
+            "id": t.pk,
+            "libelle": t.libelle,
+            "montant": montant_json(tarif(t, classe)),
+            "tarif_niveau": t.pk in avec_tarif,
+            "mensuel": est_mensuel(t),
+            "deja": t.pk in deja,
+        } for t in types],
+    }
+
+
+@transaction.atomic
+def ajouter_frais_optionnels(ecole, eleve, types, annee=None, date_debut=None):
+    """
+    Frais au choix souscrits en cours d'année : l'élève commence le taekwondo
+    en janvier, prend le transport à la rentrée des vacances.
+
+    Un frais unique (uniforme) est émis une fois, dû à la date de début. Un
+    frais mensuel l'est pour chaque mois restant, de la date de début à la fin
+    de l'année scolaire : la famille voit d'emblée à quoi elle s'engage, et
+    chaque mois se relance comme une mensualité. Le montant est celui du niveau
+    de l'élève, à défaut le montant par défaut du frais.
+
+    Un frais que l'élève a déjà sur l'année n'est pas émis une seconde fois.
+    """
+    if eleve.id_ecole_id != ecole.pk:
+        raise ErreurFinance("Cet élève appartient à une autre école.")
+    inscription = _inscription_de_lannee(eleve, annee)
+    if inscription is None:
+        raise ErreurFinance("Cet élève n'a aucune inscription en cours : inscrivez-le d'abord.")
+    annee, classe = inscription.id_annee_scolaire, inscription.id_classe
+
+    date_debut = max(date_debut or timezone.localdate(), annee.date_debut)
+    if date_debut > annee.date_fin:
+        raise ErreurFinance(f"L'année {annee.libelle} se termine le {annee.date_fin:%d/%m/%Y} : "
+                            "choisissez une date antérieure.")
+
+    deja = set(models.FraisEleve.objects
+               .filter(id_eleve=eleve, id_annee_scolaire=annee)
+               .values_list("id_type_frais_id", flat=True))
+    crees, resume, ignores, sans_tarif = [], [], [], []
+    for type_frais in types:
+        if type_frais.id_ecole_id != ecole.pk:
+            raise ErreurFinance("Ce type de frais appartient à une autre école.")
+        if type_frais.nature != models.TypeFrais.Nature.AUTRE:
+            raise ErreurFinance(f"« {type_frais.libelle} » est dû d'office : il n'a pas à être ajouté.")
+        if type_frais.pk in deja:
+            ignores.append(type_frais.libelle)
+            continue
+        montant = tarif(type_frais, classe)
+        if not montant or montant <= 0:
+            sans_tarif.append(type_frais.libelle)
+            continue
+
+        echeances = [date_debut]
+        if est_mensuel(type_frais):
+            mois = ((annee.date_fin.year - date_debut.year) * 12
+                    + annee.date_fin.month - date_debut.month + 1)
+            echeances = [e for e in echeances_mensuelles(date_debut, mois) if e <= annee.date_fin]
+        for echeance in echeances:
+            crees.append(models.FraisEleve.objects.create(
+                id_eleve=eleve, id_type_frais=type_frais, id_annee_scolaire=annee,
+                montant_du=montant, echeance=echeance,
+                statut=models.FraisEleve.Statut.IMPAYE,
+            ))
+        resume.append({"libelle": type_frais.libelle, "echeances": len(echeances),
+                       "montant": montant_json(montant)})
+
+    if not crees:
+        motifs = []
+        if ignores:
+            motifs.append("déjà souscrit(s) cette année : " + ", ".join(ignores))
+        if sans_tarif:
+            motifs.append("aucun montant pour : " + ", ".join(sans_tarif)
+                          + " (renseignez le tarif du niveau ou le montant par défaut)")
+        raise ErreurFinance("Aucun frais ajouté — " + " ; ".join(motifs) + "."
+                            if motifs else "Aucun frais à ajouter.")
+
+    return {
+        "id_annee_scolaire": annee.pk,
+        "annee": annee.libelle,
+        "crees": len(crees),
+        "total": montant_json(sum((f.montant_du for f in crees), ZERO)),
+        "frais": resume,
+        "deja": ignores,
+        "sans_tarif": sans_tarif,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -785,7 +956,7 @@ def bilan(ecole, annee=None, debut=None, fin=None):
         },
         # Combien d'élèves à jour, en retard, partiels : un montant global ne
         # dit pas si l'ardoise pèse sur trois familles ou sur trois cents.
-        "eleves": repartition_eleves(frais, aujourdhui),
+        "eleves": repartition_eleves(frais, aujourdhui, ecole=ecole),
         "derniers_paiements": [
             {
                 "id": p.pk,
@@ -1040,7 +1211,13 @@ def situation_eleve(ecole, eleve, annee=None, aujourdhui=None):
             "en_retard": retard,
         })
 
-    code = statut_financier(du, paye, en_retard)
+    # Un inscrit de l'année doit ses droits d'inscription et sa mensualité ;
+    # une facture qui n'en porte pas ne peut pas le dire à jour.
+    manquants = []
+    if inscription is not None and lignes:
+        manquants = frais_d_office_manquants(
+            types_d_office(ecole), {f.id_type_frais.nature for f in lignes})
+    code = statut_financier(du, paye, en_retard, complet=not manquants)
     return {
         "eleve": {
             "id": eleve.pk,
@@ -1079,6 +1256,7 @@ def situation_eleve(ecole, eleve, annee=None, aujourdhui=None):
             "frais_soldes": sum(1 for f in frais if f["reste"] <= 0),
             "frais_en_retard": sum(1 for f in frais if f["en_retard"]),
             "prochaine_echeance": prochaine.isoformat() if prochaine else None,
+            "frais_manquants": manquants,
         },
         "confirmation": _confirmation(eleve, annee, inscription, lignes),
         "frais": frais,
@@ -1288,6 +1466,7 @@ def situation_globale(ecole, annee, classe=None, niveau=None, statut=None,
     en_retard = set(frais.filter(echeance__lt=aujourdhui)
                     .exclude(statut=models.FraisEleve.Statut.PAYE)
                     .values_list("id_eleve_id", flat=True))
+    incomplets = eleves_aux_frais_incomplets(ecole, frais)
 
     lignes = []
     totaux = {"du": ZERO, "paye": ZERO, "reste": ZERO}
@@ -1297,7 +1476,8 @@ def situation_globale(ecole, annee, classe=None, niveau=None, statut=None,
         chiffres = montants.get(eleve.pk) or {}
         du = chiffres.get("du") or ZERO
         paye = paye_par_eleve.get(eleve.pk) or ZERO
-        code = statut_financier(du, paye, eleve.pk in en_retard)
+        code = statut_financier(du, paye, eleve.pk in en_retard,
+                                complet=eleve.pk not in incomplets)
         repartition[code] += 1
         totaux["du"] += du
         totaux["paye"] += paye
@@ -1319,6 +1499,7 @@ def situation_globale(ecole, annee, classe=None, niveau=None, statut=None,
             "reste": montant_json(du - paye),
             "statut": code,
             "statut_libelle": StatutFinancier.LIBELLES[code],
+            "frais_manquants": incomplets.get(eleve.pk, []),
         })
 
     return {
@@ -1444,9 +1625,15 @@ def affecter_paiement(ecole, eleve, montant, methode, annee=None, type_frais=Non
 # Répartition des élèves par statut (tableau de bord)
 # ---------------------------------------------------------------------------
 
-def repartition_eleves(frais, aujourdhui=None):
-    """Combien d'élèves à jour, partiels, en retard, sans aucun règlement."""
+def repartition_eleves(frais, aujourdhui=None, ecole=None):
+    """
+    Combien d'élèves à jour, partiels, en retard, sans aucun règlement.
+
+    Avec `ecole`, un élève à qui manque un frais dû d'office n'est pas compté
+    à jour, comme dans son dossier.
+    """
     aujourdhui = aujourdhui or timezone.localdate()
+    incomplets = eleves_aux_frais_incomplets(ecole, frais) if ecole is not None else {}
     du_par_eleve = {l["id_eleve"]: l["du"] for l in
                     frais.values("id_eleve").annotate(du=_somme(NET))}
     paye_par_eleve = {
@@ -1462,7 +1649,125 @@ def repartition_eleves(frais, aujourdhui=None):
     repartition = {v: 0 for v in StatutFinancier.VALEURS}
     for id_eleve, du in du_par_eleve.items():
         code = statut_financier(du, paye_par_eleve.get(id_eleve, ZERO),
-                                id_eleve in en_retard)
+                                id_eleve in en_retard, complet=id_eleve not in incomplets)
         repartition[code] += 1
     repartition["total"] = len(du_par_eleve)
     return repartition
+
+
+# ---------------------------------------------------------------------------
+# Historique de caisse
+# ---------------------------------------------------------------------------
+
+def historique_caisse(ecole, jour, caissier=None):
+    """
+    Ce qui est entré et sorti de la caisse un jour donné, et qui l'a saisi.
+
+    Les paiements portent le caissier qui les a encaissés, les dépenses la
+    personne qui les a enregistrées. Les totaux par caissier servent au
+    rapprochement du soir : ce que chacun a en tiroir contre ce que dit le
+    logiciel. « Espèces attendues » ne compte que les espèces, moins les
+    dépenses — le mobile money et la carte ne passent pas par le tiroir.
+
+    `caissier` restreint le tout aux opérations d'une seule personne.
+    """
+    paiements = (models.Paiement.objects
+                 .filter(id_frais_eleve__id_eleve__id_ecole=ecole, date_paiement__date=jour)
+                 .select_related("id_frais_eleve__id_eleve", "id_frais_eleve__id_type_frais",
+                                 "id_utilisateur_caissier", "recu")
+                 .order_by("date_paiement", "pk"))
+    depenses = (models.Depense.objects
+                .filter(id_ecole=ecole, date_depense=jour)
+                .select_related("id_type_depense", "id_utilisateur")
+                .order_by("pk"))
+    if caissier is not None:
+        paiements = paiements.filter(id_utilisateur_caissier=caissier)
+        depenses = depenses.filter(id_utilisateur=caissier)
+
+    def nom(utilisateur):
+        return f"{utilisateur.prenom} {utilisateur.nom}".strip() if utilisateur else "Non renseigné"
+
+    par_caissier = {}
+
+    def compte(utilisateur):
+        cle = utilisateur.pk if utilisateur else None
+        return par_caissier.setdefault(cle, {
+            "id": cle, "nom": nom(utilisateur), "encaisse": ZERO, "depense": ZERO,
+            "nombre_paiements": 0, "nombre_depenses": 0,
+        })
+
+    methodes = dict(models.Paiement.Methode.choices)
+    par_methode = {}
+    encaisse = especes = depense_totale = ZERO
+    lignes_paiements = []
+    for p in paiements:
+        frais = p.id_frais_eleve
+        eleve = frais.id_eleve
+        recu = getattr(p, "recu", None)
+        encaisse += p.montant
+        if p.methode == models.Paiement.Methode.ESPECES:
+            especes += p.montant
+        methode = par_methode.setdefault(p.methode, {
+            "methode": p.methode, "libelle": methodes.get(p.methode, p.methode),
+            "montant": ZERO, "nombre": 0})
+        methode["montant"] += p.montant
+        methode["nombre"] += 1
+        ligne_caissier = compte(p.id_utilisateur_caissier)
+        ligne_caissier["encaisse"] += p.montant
+        ligne_caissier["nombre_paiements"] += 1
+        mensuel = {frais.id_type_frais_id} if est_mensuel(frais.id_type_frais) else set()
+        lignes_paiements.append({
+            "id": p.pk,
+            "heure": timezone.localtime(p.date_paiement).strftime("%H:%M"),
+            "id_eleve": eleve.pk,
+            "eleve": f"{eleve.prenom} {eleve.nom}".strip(),
+            "matricule": eleve.matricule,
+            "frais": _libelle_frais(frais, mensuel),
+            "montant": montant_json(p.montant),
+            "methode": p.methode,
+            "methode_libelle": methodes.get(p.methode, p.methode),
+            "reference": p.reference_transaction,
+            "numero_recu": recu.numero_recu if recu else None,
+            "id_recu": recu.pk if recu else None,
+            "id_caissier": p.id_utilisateur_caissier_id,
+            "caissier": nom(p.id_utilisateur_caissier),
+        })
+
+    lignes_depenses = []
+    for d in depenses:
+        depense_totale += d.montant
+        ligne_caissier = compte(d.id_utilisateur)
+        ligne_caissier["depense"] += d.montant
+        ligne_caissier["nombre_depenses"] += 1
+        lignes_depenses.append({
+            "id": d.pk,
+            "categorie": d.id_type_depense.libelle,
+            "motif": d.motif,
+            "montant": montant_json(d.montant),
+            "id_caissier": d.id_utilisateur_id,
+            "caissier": nom(d.id_utilisateur),
+        })
+
+    caissiers = (get_user_model().objects
+                 .filter(id_ecole=ecole, role__in=("admin", "caissier"))
+                 .order_by("nom", "prenom"))
+    return {
+        "date": jour.isoformat(),
+        "caissier": None if caissier is None else {"id": caissier.pk, "nom": nom(caissier)},
+        "caissiers": [{"id": u.pk, "nom": nom(u), "role": u.role} for u in caissiers],
+        "totaux": {
+            "encaisse": montant_json(encaisse),
+            "depense": montant_json(depense_totale),
+            "solde": montant_json(encaisse - depense_totale),
+            "especes": montant_json(especes),
+            "especes_en_caisse": montant_json(especes - depense_totale),
+            "nombre_paiements": len(lignes_paiements),
+            "nombre_depenses": len(lignes_depenses),
+            "par_methode": [dict(m, montant=montant_json(m["montant"]))
+                            for m in sorted(par_methode.values(), key=lambda m: -m["montant"])],
+        },
+        "par_caissier": [dict(c, encaisse=montant_json(c["encaisse"]), depense=montant_json(c["depense"]))
+                         for c in sorted(par_caissier.values(), key=lambda c: c["nom"])],
+        "paiements": lignes_paiements,
+        "depenses": lignes_depenses,
+    }

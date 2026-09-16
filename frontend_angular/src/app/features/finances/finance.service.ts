@@ -12,6 +12,9 @@ import {
   Paiement,
   Relance,
   ResultatEncaissement,
+  FraisDisponibles,
+  HistoriqueCaisse,
+  ResultatAjoutFrais,
   ResultatGenerationFrais,
   ResultatRelances,
   SituationFinanciereEleve,
@@ -107,6 +110,24 @@ export class FinanceService {
    */
   encaisserPourEleve(corps: Record<string, unknown>): Observable<ResultatEncaissement> {
     return this.http.post<ResultatEncaissement>(`${this.base}/paiements/encaisser/`, corps);
+  }
+
+  /** Frais au choix qu'on peut encore ajouter à un élève inscrit. */
+  fraisDisponibles(idEleve: number, idAnnee: number | null): Observable<FraisDisponibles> {
+    return this.http.get<FraisDisponibles>(`${this.base}/eleves/${idEleve}/frais-disponibles/`, {
+      params: this.params({ id_annee_scolaire: idAnnee }),
+    });
+  }
+
+  ajouterFrais(idEleve: number, corps: Record<string, unknown>): Observable<ResultatAjoutFrais> {
+    return this.http.post<ResultatAjoutFrais>(`${this.base}/eleves/${idEleve}/ajouter-frais/`, corps);
+  }
+
+  /** Paiements et dépenses d'une journée, avec leur caissier. */
+  historiqueCaisse(filtres: Filtres = {}): Observable<HistoriqueCaisse> {
+    return this.http.get<HistoriqueCaisse>(`${this.base}/caisse/historique/`, {
+      params: this.params(filtres),
+    });
   }
 
   paiements(filtres: Filtres = {}): Observable<Paginated<Paiement>> {

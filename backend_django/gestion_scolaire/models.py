@@ -323,6 +323,22 @@ class Inscription(models.Model):
     id_annee_scolaire = models.ForeignKey(AnneeScolaire, on_delete=models.CASCADE, related_name="inscriptions", db_column="id_annee_scolaire")
     date_inscription = models.DateField()
     statut = models.CharField(max_length=20, choices=Statut.choices, default=Statut.EN_ATTENTE)
+    # Exception décidée par l'administration : un inscrit incomplet — droits
+    # d'inscription réglés, premier mois non — suit malgré tout les cours
+    # (difficulté financière passagère). Son statut ne change pas : il reste
+    # incomplet, et se confirmera de lui-même au règlement.
+    autorise_en_classe = models.BooleanField(default=False)
+    motif_autorisation = models.CharField(max_length=255, blank=True, null=True)
+    date_autorisation = models.DateTimeField(blank=True, null=True)
+    id_utilisateur_autorisation = models.ForeignKey(
+        Utilisateur, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="autorisations_en_classe", db_column="id_utilisateur_autorisation")
+
+    @classmethod
+    def filtre_en_classe(cls):
+        """Les inscrits, et les inscrits incomplets autorisés à suivre les cours."""
+        return (models.Q(statut__in=cls.STATUTS_CONFIRMES)
+                | models.Q(statut=cls.Statut.EN_ATTENTE, autorise_en_classe=True))
 
     class Meta:
         db_table = "inscription"
@@ -752,6 +768,9 @@ class Depense(models.Model):
     montant = models.DecimalField(max_digits=12, decimal_places=2)
     date_depense = models.DateField()
     justificatif_url = models.CharField(max_length=255, blank=True, null=True)
+    # Qui l'a saisie : l'historique de caisse rattache chaque sortie à quelqu'un.
+    id_utilisateur = models.ForeignKey(Utilisateur, on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name="depenses_saisies", db_column="id_utilisateur")
 
     class Meta:
         db_table = "depense"

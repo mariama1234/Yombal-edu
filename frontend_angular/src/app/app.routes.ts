@@ -75,6 +75,10 @@ export const routes: Routes = [
         loadComponent: () => import('./features/finances/caisse.component').then((m) => m.CaisseComponent),
       },
       {
+        path: 'finances/historique-caisse',
+        loadComponent: () => import('./features/finances/historique-caisse.component').then((m) => m.HistoriqueCaisseComponent),
+      },
+      {
         path: 'finances/tarifs',
         loadComponent: () => import('./features/finances/tarifs-niveaux.component').then((m) => m.TarifsNiveauxComponent),
       },

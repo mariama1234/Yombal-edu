@@ -3,11 +3,14 @@ import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import {
+  FraisDisponibles,
   LigneFrais,
   MethodePaiement,
   SituationFinanciereEleve,
 } from '../../core/models/models';
 import { FinanceService } from '../finances/finance.service';
+import { ToastService } from '../../core/services/toast.service';
+import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
 
 /**
  * Onglet « Finances » du dossier de l'élève.
@@ -29,7 +32,7 @@ import { FinanceService } from '../finances/finance.service';
 @Component({
   selector: 'app-eleve-finances',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent],
   templateUrl: './eleve-finances.component.html',
 })
 export class EleveFinancesComponent implements OnInit {
@@ -37,6 +40,7 @@ export class EleveFinancesComponent implements OnInit {
 
   private fb = inject(FormBuilder);
   private finance = inject(FinanceService);
+  private toast = inject(ToastService);
 
   situation = signal<SituationFinanciereEleve | null>(null);
   chargement = signal(true);
@@ -51,6 +55,32 @@ export class EleveFinancesComponent implements OnInit {
 
   /** Frais cochés dans la fenêtre d'encaissement : le paiement ne va que sur eux. */
   fraisCoches = signal<number[]>([]);
+
+  /** Fenêtre « Ajouter des frais » : frais au choix souscrits en cours d'année. */
+  ajoutOuvert = signal(false);
+  disponibles = signal<FraisDisponibles | null>(null);
+  fraisAjoutes = signal<number[]>([]);
+  dateDebutAjout = signal('');
+
+  /** Les frais au choix que l'élève n'a pas encore, au montant de son niveau. */
+  fraisAAjouter = computed<FraisAffiche[]>(() =>
+    (this.disponibles()?.types ?? [])
+      .filter((t) => !t.deja)
+      .map((t) => ({
+        id: t.id,
+        libelle: t.libelle,
+        nature: 'autre' as const,
+        montant: Number(t.montant),
+        tarifNiveau: t.tarif_niveau,
+        mensuel: t.mensuel,
+      })));
+
+  dejaSouscrits = computed(() =>
+    (this.disponibles()?.types ?? []).filter((t) => t.deja).map((t) => t.libelle));
+
+  /** Un frais mensuel est coché : l'écran annonce une échéance par mois jusqu'à la fin de l'année. */
+  mensuelsCoches = computed(() =>
+    this.fraisAAjouter().some((f) => f.mensuel && this.fraisAjoutes().includes(f.id)));
 
   methodes: { value: MethodePaiement; label: string }[] = [
     { value: 'especes', label: 'Espèces' },
@@ -113,7 +143,7 @@ export class EleveFinancesComponent implements OnInit {
   /** Échap ferme la fenêtre de paiement, comme le bouton ✕. */
   @HostListener('document:keydown.escape')
   surEchap(): void {
-    if (this.saisieOuverte()) this.fermer();
+    if (this.saisieOuverte() || this.ajoutOuvert()) this.fermer();
   }
 
   charger(idAnnee?: number | null): void {
@@ -160,6 +190,7 @@ export class EleveFinancesComponent implements OnInit {
 
   fermer(): void {
     this.saisieOuverte.set(false);
+    this.ajoutOuvert.set(false);
     this.remiseOuverte.set(null);
   }
 
@@ -192,9 +223,13 @@ export class EleveFinancesComponent implements OnInit {
           // Le serveur renvoie la situation déjà recalculée : pas de second
           // appel, et surtout aucun risque d'afficher un état intermédiaire.
           this.situation.set(resultat.situation);
-          this.message.set(
-            `Paiement enregistré (${resultat.paiements.length} frais réglé(s) ou entamé(s)).`,
-          );
+          this.toast.succes('Paiement enregistré',
+                            `${resultat.paiements.length} frais réglé(s) ou entamé(s).`);
+          const inscrit = resultat.inscription_confirmee;
+          if (inscrit) {
+            this.toast.succes(`🎉 ${inscrit.eleve} est maintenant inscrit`,
+                              `Droits d'inscription et premier mois réglés${inscrit.classe ? ' — ' + inscrit.classe : ''}.`);
+          }
           this.saisieOuverte.set(false);
           this.fraisCoches.set([]);
           this.occupe.set(false);
@@ -219,10 +254,61 @@ export class EleveFinancesComponent implements OnInit {
       })
       .subscribe({
         next: () => {
-          this.message.set('Remise enregistrée.');
+          this.toast.succes('Remise enregistrée');
           this.remiseOuverte.set(null);
           this.occupe.set(false);
           this.charger(this.situation()?.annee?.id ?? null);
+        },
+        error: (e) => {
+          this.erreur.set(this.messageErreur(e));
+          this.occupe.set(false);
+        },
+      });
+  }
+
+  ouvrirAjout(): void {
+    const annee = this.situation()?.annee;
+    if (!annee) return;
+    this.saisieOuverte.set(false);
+    this.remiseOuverte.set(null);
+    this.erreur.set(null);
+    this.fraisAjoutes.set([]);
+    this.disponibles.set(null);
+    // Aujourd'hui, ramené dans les bornes de l'année affichée.
+    const aujourdhui = new Date().toISOString().slice(0, 10);
+    this.dateDebutAjout.set(aujourdhui < annee.date_debut ? annee.date_debut
+      : aujourdhui > annee.date_fin ? annee.date_fin : aujourdhui);
+    this.ajoutOuvert.set(true);
+    this.finance.fraisDisponibles(this.idEleve, annee.id).subscribe({
+      next: (d) => this.disponibles.set(d),
+      error: (e) => this.erreur.set(this.messageErreur(e)),
+    });
+  }
+
+  basculerAjout(id: number): void {
+    this.fraisAjoutes.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
+  }
+
+  ajouterFrais(): void {
+    const annee = this.situation()?.annee;
+    if (!annee || !this.fraisAjoutes().length) return;
+    this.occupe.set(true);
+    this.erreur.set(null);
+    this.finance
+      .ajouterFrais(this.idEleve, {
+        frais: this.fraisAjoutes(),
+        date_debut: this.dateDebutAjout() || null,
+        id_annee_scolaire: annee.id,
+      })
+      .subscribe({
+        next: (r) => {
+          this.situation.set(r.situation);
+          this.toast.succes(
+            `Frais ajoutés : ${r.frais.map((f) => f.libelle).join(', ')}`,
+            `${r.crees} échéance(s) émise(s), ${Number(r.total).toLocaleString('fr-FR')} F au total.`,
+          );
+          this.ajoutOuvert.set(false);
+          this.occupe.set(false);
         },
         error: (e) => {
           this.erreur.set(this.messageErreur(e));
