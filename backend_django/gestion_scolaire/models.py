@@ -750,8 +750,17 @@ class Relance(models.Model):
 
 
 class TypeDepense(models.Model):
+    """
+    Poste de charge de l'école, et l'enveloppe qu'elle lui accorde.
+
+    Le budget alloué se saisit ici ; ce qui en reste ne se stocke pas, il se
+    déduit des dépenses de l'année (voir `finances.annoter_consommation`).
+    Stocker le disponible reviendrait à le laisser dériver dès la première
+    dépense corrigée ou supprimée — même raison qu'`imputer_au_budget`.
+    """
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="types_depenses", db_column="id_ecole")
     libelle = models.CharField(max_length=100)
+    budget_alloue = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     class Meta:
         db_table = "type_depense"

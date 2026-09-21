@@ -303,6 +303,23 @@ def imputer_au_budget(depense):
         budget.save(update_fields=["montant_realise"])
 
 
+def annoter_consommation(queryset, annee=None):
+    """
+    Ajoute à chaque catégorie de dépense ce qu'elle a déjà consommé.
+
+    Le disponible s'en déduit : budget alloué moins `montant_depense`. Le
+    calcul est fait en SQL, sur la fenêtre de l'année scolaire visée, pour que
+    la liste des catégories tienne en une requête quel que soit le nombre de
+    dépenses. Sans année — une école qui démarre n'en a pas encore — tout
+    l'historique compte, faute de fenêtre à appliquer.
+    """
+    fenetre = None
+    if annee is not None:
+        fenetre = Q(depenses__date_depense__gte=annee.date_debut,
+                    depenses__date_depense__lte=annee.date_fin)
+    return queryset.annotate(montant_depense=_somme("depenses__montant", fenetre))
+
+
 # ---------------------------------------------------------------------------
 # Génération des frais
 # ---------------------------------------------------------------------------

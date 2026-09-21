@@ -391,13 +391,27 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { label: 'Budgets', chemin: '/budgets' },
     ],
     endpoint: 'types-depenses',
+    // Le budget disponible se compte sur l'année du bandeau haut : la liste
+    // la transmet, sinon une enveloppe annuelle compterait toutes les années.
+    filtreParAnnee: true,
     titre: 'Catégories de dépenses',
     titreSingulier: 'une catégorie',
     eyebrow: 'Gestion financière',
-    description: 'Postes de charge de l’école : loyer, salaires, fournitures, transport… Ce sont eux qui structurent le bilan et les budgets.',
-    columns: [{ key: 'libelle', label: 'Catégorie' }],
+    description: 'Postes de charge de l’école : loyer, salaires, fournitures, transport… Chacun porte son budget, '
+      + 'que les dépenses de l’année consomment au fur et à mesure.',
+    columns: [
+      { key: 'libelle', label: 'Catégorie' },
+      { key: 'budget_alloue', label: 'Budget alloué', type: 'number' },
+      { key: 'montant_depense', label: 'Dépensé', type: 'number' },
+      { key: 'budget_disponible', label: 'Budget disponible', type: 'number' },
+    ],
     fields: [
       { key: 'libelle', label: 'Libellé', type: 'text', required: true, placeholder: 'Loyer' },
+      {
+        key: 'budget_alloue', label: 'Budget alloué (F CFA)', type: 'number',
+        aide: 'Enveloppe de l’année pour ce poste. Le disponible ne se saisit pas : '
+            + 'il se déduit des dépenses déjà enregistrées sur l’année consultée.',
+      },
     ],
   },
 
@@ -444,8 +458,15 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'saisi_par', label: 'Saisie par' },
     ],
     fields: [
-      { key: 'motif', label: 'Motif', type: 'text', required: true, span2: true },
+      // La catégorie passe avant le motif : c'est elle qui décide du budget,
+      // et le disponible s'affiche à côté avant qu'un montant soit saisi.
       { key: 'id_type_depense', label: 'Catégorie', type: 'select', required: true, optionsEndpoint: 'types-depenses', optionsLabelKey: 'libelle' },
+      {
+        key: 'budget_disponible', label: 'Budget disponible', type: 'lecture',
+        source: { champ: 'id_type_depense', cle: 'budget_disponible', suffixe: 'F CFA', compare: 'montant' },
+        aide: 'Ce qui reste sur le budget de la catégorie. Chaque dépense enregistrée le diminue d’autant.',
+      },
+      { key: 'motif', label: 'Motif', type: 'text', required: true, span2: true },
       { key: 'montant', label: 'Montant (F CFA)', type: 'number', required: true },
       { key: 'date_depense', label: 'Date', type: 'date', required: true },
       { key: 'justificatif_url', label: 'Justificatif (lien)', type: 'text', span2: true, aide: 'Lien vers la facture ou le reçu numérisé.' },
@@ -552,10 +573,16 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   parametres: {
     key: 'parametres',
     endpoint: 'parametres',
+    // L'identité de l'école (nom, adresse, coordonnées) ne se règle pas en
+    // clé/valeur : elle a son propre écran, rappelé ici pour qu'on le trouve.
+    suite: [
+      { label: 'Informations de l’école', chemin: '/parametres/ecole' },
+    ],
     titre: 'Paramètres',
     titreSingulier: 'un paramètre',
     eyebrow: 'Administration',
-    description: 'Réglages propres à l’établissement, en clé/valeur (devise, barème de notation, seuil de relance, en-tête des reçus...).',
+    description: 'Réglages propres à l’établissement, en clé/valeur (devise, barème de notation, seuil de relance, en-tête des reçus...). '
+      + 'Le nom, l’adresse et les coordonnées de l’école se modifient sur la fiche de l’établissement.',
     columns: [
       { key: 'cle', label: 'Clé' },
       { key: 'libelle', label: 'Libellé' },

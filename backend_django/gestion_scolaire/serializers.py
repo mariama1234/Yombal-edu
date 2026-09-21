@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -1100,10 +1101,29 @@ class GenerationRelancesSerializer(serializers.Serializer):
 
 
 class TypeDepenseSerializer(serializers.ModelSerializer):
+    """
+    Poste de charge, avec son enveloppe et ce qu'il en reste.
+
+    Le dépensé vient de l'annotation posée par la vue (`annoter_consommation`)
+    et vaut 0 en son absence — après une création, par exemple, où l'instance
+    renvoyée sort de l'écriture et non de la liste annotée.
+    """
+    montant_depense = serializers.SerializerMethodField()
+    budget_disponible = serializers.SerializerMethodField()
+
     class Meta:
         model = models.TypeDepense
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+
+    def _consomme(self, obj) -> Decimal:
+        return Decimal(getattr(obj, "montant_depense", 0) or 0)
+
+    def get_montant_depense(self, obj) -> float:
+        return float(self._consomme(obj))
+
+    def get_budget_disponible(self, obj) -> float:
+        return float((obj.budget_alloue or 0) - self._consomme(obj))
 
 
 class DepenseSerializer(serializers.ModelSerializer):

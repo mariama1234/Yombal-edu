@@ -187,6 +187,11 @@ export const routes: Routes = [
       { path: 'documents/:id', component: GenericFormComponent, data: { entityKey: 'documents' } },
 
       { path: 'parametres', component: GenericListComponent, data: { entityKey: 'parametres' } },
+      // Avant la route à paramètre : sinon « ecole » serait pris pour un id.
+      {
+        path: 'parametres/ecole',
+        loadComponent: () => import('./features/parametres/fiche-ecole.component').then((m) => m.FicheEcoleComponent),
+      },
       { path: 'parametres/:id', component: GenericFormComponent, data: { entityKey: 'parametres' } },
 
       // Consultation seule : pas de route de formulaire pour un journal d'audit.

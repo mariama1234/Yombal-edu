@@ -27,6 +27,7 @@ export interface Ecole {
   adresse?: string;
   telephone?: string;
   email?: string;
+  logo_url?: string;
   plan_abonnement: 'essai' | 'standard' | 'premium';
   statut: 'actif' | 'suspendu' | 'resilie';
 }

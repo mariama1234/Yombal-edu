@@ -1913,6 +1913,42 @@ class TestCaisseEtDepenses(BaseFinances):
         budget.refresh_from_db()
         self.assertEqual(budget.montant_realise, Decimal("30000.00"))
 
+    def _categorie(self):
+        return self.client.get(f"/api/types-depenses/{self.type_depense.pk}/").data
+
+    def test_budget_de_la_categorie_diminue_a_chaque_depense(self):
+        self.type_depense.budget_alloue = Decimal("50000.00")
+        self.type_depense.save(update_fields=["budget_alloue"])
+        self.assertEqual(self._categorie()["budget_disponible"], 50000.0)
+        self._depenser("30000.00")
+        categorie = self._categorie()
+        self.assertEqual(categorie["montant_depense"], 30000.0)
+        self.assertEqual(categorie["budget_disponible"], 20000.0)
+        self._depenser("5000.00")
+        self.assertEqual(self._categorie()["budget_disponible"], 15000.0)
+
+    def test_depense_supprimee_rend_le_budget(self):
+        self.type_depense.budget_alloue = Decimal("50000.00")
+        self.type_depense.save(update_fields=["budget_alloue"])
+        depense = self._depenser("30000.00").data
+        self.client.delete(f"/api/depenses/{depense['id']}/")
+        self.assertEqual(self._categorie()["budget_disponible"], 50000.0,
+                         "le disponible se recalcule, il ne se décrémente pas")
+
+    def test_budget_disponible_ne_compte_que_l_annee_consultee(self):
+        self.type_depense.budget_alloue = Decimal("50000.00")
+        self.type_depense.save(update_fields=["budget_alloue"])
+        precedente = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2024-2025",
+            date_debut=date(2024, 10, 1), date_fin=date(2025, 7, 31),
+            statut=models.AnneeScolaire.Statut.ARCHIVEE)
+        self._depenser("30000.00", jour=date(2024, 11, 10))
+        self.assertEqual(self._categorie()["budget_disponible"], 50000.0,
+                         "une dépense de l'an dernier ne pèse pas sur l'enveloppe en cours")
+        r = self.client.get("/api/types-depenses/",
+                            {"id_annee_scolaire": precedente.pk})
+        self.assertEqual(r.data["results"][0]["budget_disponible"], 20000.0)
+
     def test_budget_cree_apres_coup_rattrape_les_depenses(self):
         self._depenser("30000.00")
         r = self.client.post("/api/budgets/", {

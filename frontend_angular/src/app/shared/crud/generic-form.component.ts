@@ -48,6 +48,9 @@ export class GenericFormComponent implements OnInit {
   private construireFormulaire(): void {
     const controls: Record<string, any> = {};
     for (const field of this.config.fields) {
+      // Un champ `lecture` n'a pas de contrôle : il affiche une valeur qui
+      // vient d'ailleurs, et ne doit pas partir dans le payload.
+      if (field.type === 'lecture') continue;
       const validators = field.required ? [Validators.required] : [];
       controls[field.key] = [field.type === 'checkbox' ? false : '', validators];
       if (field.optionsEndpoint) {
@@ -78,6 +81,45 @@ export class GenericFormComponent implements OnInit {
     return option[cle] ?? `#${option.id}`;
   }
 
+  /** Valeur brute d'un champ `lecture`, lue sur l'option choisie dans son champ source. */
+  private valeurSource(field: FieldConfig): unknown {
+    const source = field.source;
+    if (!source) return null;
+    const choisi = this.form.get(source.champ)?.value;
+    const option = (this.optionsParChamp[source.champ] ?? [])
+      .find((o) => String(o.id) === String(choisi));
+    return option?.[source.cle];
+  }
+
+  /** Affichage d'un champ `lecture`. Tant que rien n'est choisi, il n'y a rien à montrer. */
+  valeurLecture(field: FieldConfig): string {
+    const valeur = this.valeurSource(field);
+    if (valeur === undefined || valeur === null || valeur === '') return '—';
+    const nombre = Number(valeur);
+    const texte = Number.isFinite(nombre) ? nombre.toLocaleString('fr-FR') : String(valeur);
+    return field.source?.suffixe ? `${texte} ${field.source.suffixe}` : texte;
+  }
+
+  /** Vrai quand la valeur affichée est négative — un budget déjà dépassé. */
+  lectureEnNegatif(field: FieldConfig): boolean {
+    return Number(this.valeurSource(field)) < 0;
+  }
+
+  /**
+   * Vrai quand ce qui est saisi dépasse la valeur affichée.
+   *
+   * Averti, pas bloqué : une école peut avoir à passer une dépense au-delà de
+   * son enveloppe, et un formulaire qui refuse l'enregistrement la laisserait
+   * sans autre solution que de fausser le budget.
+   */
+  depasseLecture(field: FieldConfig): boolean {
+    const compare = field.source?.compare;
+    if (!compare) return false;
+    const saisi = Number(this.form.get(compare)?.value);
+    const reste = Number(this.valeurSource(field));
+    return Number.isFinite(saisi) && saisi > 0 && Number.isFinite(reste) && saisi > reste;
+  }
+
   submit(): void {
     if (this.form.invalid) {
       this.form.markAllAsTouched();
@@ -85,6 +127,17 @@ export class GenericFormComponent implements OnInit {
     }
     this.enregistrement.set(true);
     const payload = this.form.getRawValue();
+
+    // Un nombre, une date ou une liste déroulante laissés vides n'ont pas de
+    // valeur à transmettre : « » n'est ni un nombre, ni une date, ni un
+    // identifiant, et l'API le refuse. On omet la clé — le serveur applique
+    // alors sa valeur par défaut (un budget non renseigné vaut 0).
+    for (const field of this.config.fields) {
+      const vide = payload[field.key] === '' || payload[field.key] === null;
+      if (vide && ['number', 'date', 'time', 'select'].includes(field.type)) {
+        delete payload[field.key];
+      }
+    }
 
     const requete = this.modeEdition
       ? this.crud.update(this.config.endpoint, this.idEnCours!, payload)

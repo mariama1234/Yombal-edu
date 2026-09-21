@@ -1976,9 +1976,26 @@ class RelanceViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, v
 
 
 class TypeDepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
+    """
+    Catégories de dépenses, chacune avec son budget alloué et son disponible.
+
+    Le disponible est calculé sur l'année consultée — celle du bandeau haut
+    quand l'écran la transmet, l'année active sinon : une enveloppe annuelle
+    qui compterait les dépenses des années passées serait vide d'office.
+    """
     queryset = models.TypeDepense.objects.all()
     serializer_class = serializers.TypeDepenseSerializer
     permission_classes = [EstAdmin]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if not self.request.user.is_authenticated:
+            return qs
+        annee = _annee_demandee(self.request, self.request.user.id_ecole)
+        # L'agrégat pose un GROUP BY, et Django écarte l'ordre par défaut du
+        # modèle sur ces requêtes : sans ce tri explicite, la liste des
+        # catégories sortirait dans l'ordre que la base veut bien donner.
+        return finances.annoter_consommation(qs, annee).order_by("libelle")
 
 
 class DepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):

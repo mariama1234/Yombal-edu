@@ -16,12 +16,33 @@ export interface FieldOption {
   label: string;
 }
 
+/**
+ * Valeur affichée en lecture seule, lue sur l'option choisie dans un autre
+ * champ du formulaire (ex: le budget restant de la catégorie sélectionnée).
+ */
+export interface SourceLecture {
+  /** Champ `select` dont on suit le choix. */
+  champ: string;
+  /** Clé à lire sur l'option choisie. */
+  cle: string;
+  /** Unité ajoutée après la valeur, ex: « F CFA ». */
+  suffixe?: string;
+  /** Champ de saisie comparé à la valeur : au-delà, le formulaire avertit. */
+  compare?: string;
+}
+
 export interface FieldConfig {
   key: string;
   label: string;
-  type: 'text' | 'email' | 'tel' | 'password' | 'number' | 'date' | 'time' | 'select' | 'textarea' | 'checkbox';
+  /**
+   * `lecture` n'est pas saisissable : le champ n'a pas de contrôle de
+   * formulaire et n'est pas envoyé à l'API, il ne fait qu'afficher.
+   */
+  type: 'text' | 'email' | 'tel' | 'password' | 'number' | 'date' | 'time' | 'select' | 'textarea' | 'checkbox' | 'lecture';
   /** Texte d'aide affiché sous le champ. */
   aide?: string;
+  /** Requis par les champs `lecture` : d'où vient la valeur affichée. */
+  source?: SourceLecture;
   required?: boolean;
   /** Options statiques (ex: enum Django TextChoices) */
   options?: FieldOption[];

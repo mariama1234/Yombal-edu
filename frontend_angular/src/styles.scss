@@ -215,16 +215,25 @@ table.simple tr:hover td{background:var(--bg);}
 .radio-pill.checked{border-color:var(--orange-500);background:var(--orange-100);color:var(--orange-500);font-weight:600;}
 
 /* ---------- Page de connexion ---------- */
-.login-screen{display:grid;grid-template-columns:1fr 1fr;min-height:100vh;}
+/* La photo d'arrière-plan couvre tout l'écran de connexion ; les deux
+   panneaux la voilent chacun à leur manière, sinon ni le texte blanc de
+   gauche ni le formulaire de droite ne resteraient lisibles dessus. */
+.login-screen{display:grid;grid-template-columns:1fr 1fr;min-height:100vh;background:var(--navy-950) url('/assets/arriereplan.jpg') center/cover no-repeat;}
 @media (max-width:860px){.login-screen{grid-template-columns:1fr;} .login-side{display:none;}}
-.login-side{background:linear-gradient(165deg, var(--navy-950), var(--navy-900) 55%, var(--navy-800));color:#fff;padding:56px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;}
+.login-side{background:linear-gradient(165deg, rgba(11,29,51,0.94), rgba(18,42,72,0.82) 55%, rgba(27,58,99,0.60));color:#fff;padding:56px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;}
 .login-side-top{display:flex;align-items:center;gap:10px;}
 .login-side-quote{max-width:400px;}
 .login-side-quote p{font-family:var(--font-display);font-size:26px;line-height:1.35;font-weight:600;margin:0 0 14px;}
 .login-side-quote span{font-size:13px;color:#9FB4D6;}
 .login-orbit{position:absolute;right:-60px;bottom:-60px;width:280px;height:280px;border-radius:50%;border:1.5px solid rgba(255,255,255,0.08);}
-.login-form-wrap{display:flex;align-items:center;justify-content:center;padding:40px 24px;background:var(--bg);}
+.login-form-wrap{display:flex;align-items:center;justify-content:center;padding:40px 24px;background:rgba(255,255,255,0.94);backdrop-filter:blur(10px);}
 .login-card{width:100%;max-width:380px;}
+/* Sur mobile le panneau de gauche disparaît : la photo resterait cachée
+   derrière un aplat blanc. Le formulaire redevient une carte posée dessus. */
+@media (max-width:860px){
+  .login-form-wrap{background:rgba(11,29,51,0.55);backdrop-filter:none;}
+  .login-card{background:var(--surface);border-radius:var(--radius);padding:26px 22px;box-shadow:0 18px 40px rgba(11,29,51,0.35);}
+}
 .login-card-brand{display:flex;align-items:center;gap:10px;margin-bottom:34px;}
 .login-card h1{font-size:23px;font-weight:600;margin:0 0 6px;}
 .login-card p.lead{color:var(--ink-600);font-size:13.5px;margin:0 0 28px;}

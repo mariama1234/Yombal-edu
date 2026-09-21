@@ -1,0 +1,84 @@
+<div class="page-head">
+  <div>
+    <p class="module-eyebrow">Administration</p>
+    <h1>Informations de l'école</h1>
+    <p>
+      Nom, adresse et coordonnées de l'établissement, tels qu'ils apparaissent
+      sur les reçus, les bulletins et les documents imprimés.
+    </p>
+    <p style="margin-top:6px; font-size:12.5px; color:var(--ink-400);">
+      Étape suivante :
+      <a class="panel-link" routerLink="/parametres">Réglages de l'application →</a>
+    </p>
+  </div>
+  <a class="btn-ghost" routerLink="/parametres">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+    Paramètres
+  </a>
+</div>
+
+@if (erreur()) {
+  <div class="panel" style="border-color:var(--red); color:var(--red); font-size:13px;">
+    {{ erreur() }}
+  </div>
+}
+
+@if (chargement()) {
+  <div class="panel"><p style="color:var(--ink-400); font-size:13px;">Chargement…</p></div>
+} @else {
+  <!-- `as` n'est accepté que sur le @if principal : d'où ce bloc imbriqué
+       plutôt qu'un @else if (ecole(); as e). -->
+  @if (ecole(); as e) {
+  <div class="form-section" style="max-width:760px;">
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      <div class="form-grid">
+        <div class="field span-2">
+          <label for="nom">Nom de l'école</label>
+          <input class="input" id="nom" type="text" formControlName="nom" placeholder="École MIC CITE">
+          @if (form.controls.nom.invalid && form.controls.nom.touched) {
+            <span class="hint" style="color:var(--red);">Ce champ est requis.</span>
+          }
+        </div>
+
+        <div class="field span-2">
+          <label for="adresse">Adresse</label>
+          <input class="input" id="adresse" type="text" formControlName="adresse" placeholder="Rue 12, Dakar">
+        </div>
+
+        <div class="field">
+          <label for="telephone">Téléphone</label>
+          <input class="input" id="telephone" type="tel" formControlName="telephone" placeholder="+221 77 000 00 00">
+        </div>
+
+        <div class="field">
+          <label for="email">Adresse e-mail</label>
+          <input class="input" id="email" type="email" formControlName="email" placeholder="contact@ecole.sn">
+          @if (form.controls.email.invalid && form.controls.email.touched) {
+            <span class="hint" style="color:var(--red);">Saisissez une adresse e-mail valide.</span>
+          }
+        </div>
+
+        <div class="field span-2">
+          <label for="logo_url">Logo (lien)</label>
+          <input class="input" id="logo_url" type="text" formControlName="logo_url" placeholder="/media/logo-ecole.png">
+          <span class="hint">Repris en en-tête des documents imprimés.</span>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn-ghost" routerLink="/parametres">Annuler</a>
+        <button type="submit" class="btn-primary" [disabled]="enregistrement()">
+          {{ enregistrement() ? 'Enregistrement…' : 'Enregistrer' }}
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Contrat : affiché parce que l'école doit pouvoir le lire, en lecture
+       seule parce qu'il relève de la plateforme et non du réglage. -->
+  <div class="panel" style="max-width:760px; font-size:13px; color:var(--ink-600);">
+    Abonnement <strong>{{ e.plan_abonnement }}</strong> · compte <strong>{{ e.statut }}</strong>.
+    Ces deux réglages relèvent de YombalEdu : contactez votre interlocuteur pour les faire changer.
+  </div>
+  }
+}
