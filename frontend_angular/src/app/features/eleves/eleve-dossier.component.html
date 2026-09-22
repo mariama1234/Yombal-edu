@@ -76,7 +76,16 @@
         {{ d.eleve.prenom }} {{ d.eleve.nom }}
         <span class="chip">{{ d.eleve.statut_libelle }}</span>
       </div>
-      <span class="matricule" title="Matricule de l'élève">{{ d.eleve.matricule }}</span>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <!-- Sans compte rattaché à sa fiche, un élève connecté ne verrait rien. -->
+        @if (peutCreerLAcces() && !d.eleve.a_un_acces) {
+          <button type="button" class="btn-ghost" style="padding:6px 12px; font-size:12.5px;"
+                  (click)="accesOuvert.set(true)">Créer son accès</button>
+        } @else if (d.eleve.acces_email) {
+          <span style="font-size:12px; color:var(--ink-400);" [title]="d.eleve.acces_email">Accès créé</span>
+        }
+        <span class="matricule" title="Matricule de l'élève">{{ d.eleve.matricule }}</span>
+      </div>
     </div>
     <div style="display:flex; gap:22px; align-items:flex-start; flex-wrap:wrap;">
       <div style="display:flex; flex-direction:column; align-items:center; gap:8px; width:150px;">
@@ -472,4 +481,12 @@
   </div>
   }
 }
+}
+
+@if (accesOuvert() && dossier(); as d) {
+  <app-creer-acces endpoint="eleves" [idFiche]="idEleve"
+                   [libelle]="d.eleve.prenom + ' ' + d.eleve.nom" role="élève"
+                   [nom]="d.eleve.nom" [prenom]="d.eleve.prenom"
+                   (ferme)="accesOuvert.set(false)"
+                   (cree)="accesOuvert.set(false); charger()"></app-creer-acces>
 }

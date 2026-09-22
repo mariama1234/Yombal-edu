@@ -5610,3 +5610,89 @@ class TestPerimetreFamilleEtEnseignant(BaseAPI):
             id_enseignant=self.enseignant, id_matiere=self.matiere,
             id_classe=self.classe, id_annee_scolaire=self.annee)
         self.assertEqual(len(self.resultats(self.prof.get("/api/evaluations/"))), 1)
+
+
+class TestCreationDAcces(BaseAPI):
+    """« Créer son accès » : le compte de connexion d'une fiche, et son rattachement."""
+
+    def setUp(self):
+        super().setUp()
+        self.fiche_parent = models.ParentTuteur.objects.create(
+            id_ecole=self.ecole, nom="Diop", prenom="Modou",
+            telephone="+221770000009", email="modou.diop@exemple.sn")
+        self.enfant = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="E-201", nom="Diop", prenom="Awa")
+        models.EleveParent.objects.create(
+            id_eleve=self.enfant, id_parent=self.fiche_parent, lien_parente="pere")
+
+    def _creer(self, client, endpoint, id_fiche, **corps):
+        return client.post(f"/api/{endpoint}/{id_fiche}/creer-acces/", corps, format="json")
+
+    def test_lacces_dun_parent_ouvre_le_dossier_de_ses_enfants(self):
+        r = self._creer(self.client, "parents", self.fiche_parent.pk)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["email"], "modou.diop@exemple.sn")
+        self.assertEqual(r.data["role"], "parent")
+        mot_de_passe = r.data["mot_de_passe_provisoire"]
+        self.assertGreaterEqual(len(mot_de_passe), 8)
+
+        self.fiche_parent.refresh_from_db()
+        compte = self.fiche_parent.id_utilisateur
+        self.assertIsNotNone(compte)
+        self.assertEqual((compte.nom, compte.prenom), ("Diop", "Modou"))
+        self.assertEqual(compte.telephone, "+221770000009")
+
+        # Le compte se connecte et ne voit que l'enfant de la fiche.
+        connexion = APIClient()
+        jeton = connexion.post("/api/auth/token/",
+                               {"email": compte.email, "password": mot_de_passe}, format="json")
+        self.assertEqual(jeton.status_code, 200, jeton.content)
+        connexion.credentials(HTTP_AUTHORIZATION=f"Bearer {jeton.data['access']}")
+        self.assertEqual([e["id"] for e in self.resultats(connexion.get("/api/eleves/"))],
+                         [self.enfant.pk])
+
+    def test_lacces_dun_eleve_et_celui_dun_enseignant(self):
+        r = self._creer(self.client, "eleves", self.enfant.pk, email="awa.diop@exemple.sn")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.enfant.refresh_from_db()
+        self.assertEqual(self.enfant.id_utilisateur.role, "eleve")
+
+        # Un enseignant n'a ni nom ni e-mail sur sa fiche : ils sont saisis.
+        fiche = models.Enseignant.objects.create(id_ecole=self.ecole, matricule="ENS-777")
+        r = self._creer(self.client, "enseignants", fiche.pk)
+        self.assertEqual(r.status_code, 400)
+        r = self._creer(self.client, "enseignants", fiche.pk,
+                        nom="Ndiaye", prenom="Fatou", email="fatou.ndiaye@exemple.sn")
+        self.assertEqual(r.status_code, 201, r.content)
+        fiche.refresh_from_db()
+        self.assertEqual(fiche.id_utilisateur.role, "enseignant")
+        self.assertEqual(self.client.get(f"/api/enseignants/{fiche.pk}/").data["nom_complet"],
+                         "Fatou Ndiaye")
+
+    def test_une_fiche_na_quun_acces_et_un_email_ne_sert_quune_fois(self):
+        self.assertEqual(self._creer(self.client, "parents", self.fiche_parent.pk).status_code, 201)
+        r = self._creer(self.client, "parents", self.fiche_parent.pk)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("déjà un accès", r.data["detail"])
+
+        autre = models.ParentTuteur.objects.create(
+            id_ecole=self.ecole, nom="Sy", prenom="Omar", telephone="+221770000010")
+        r = self._creer(self.client, "parents", autre.pk, email="MODOU.DIOP@exemple.sn")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("e-mail", str(r.data["email"]))
+
+    def test_reserve_a_la_direction_et_a_son_ecole(self):
+        for role in ("surveillant", "caissier", "comptable", "enseignant"):
+            compte = self._compte(f"{role}@acces.sn", self.ecole, role)
+            with self.subTest(role=role):
+                r = self._creer(self._client(compte.email), "parents", self.fiche_parent.pk)
+                self.assertEqual(r.status_code, 403)
+        # Une autre école ne voit pas la fiche.
+        self.assertEqual(self._creer(self.client_autre, "parents", self.fiche_parent.pk).status_code, 404)
+        self.assertFalse(models.ParentTuteur.objects.get(pk=self.fiche_parent.pk).id_utilisateur_id)
+
+    def test_la_creation_est_journalisee(self):
+        self._creer(self.client, "parents", self.fiche_parent.pk)
+        self.assertTrue(models.JournalActivite.objects.filter(
+            action="creation", entite="utilisateur",
+            description__contains="Création de l'accès parent").exists())

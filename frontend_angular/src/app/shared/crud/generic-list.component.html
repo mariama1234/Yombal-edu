@@ -131,6 +131,13 @@
                     &nbsp;·&nbsp;
                   }
                 }
+                @if (peutCreerUnAcces(item)) {
+                  <button class="panel-link" (click)="accesPour.set(item)">Créer son accès</button>
+                  &nbsp;·&nbsp;
+                } @else if (config.acces && item.acces_email) {
+                  <span style="color:var(--ink-400); font-size:12px;" [title]="item.acces_email">Accès créé</span>
+                  &nbsp;·&nbsp;
+                }
                 @for (lien of config.liens ?? []; track lien.chemin) {
                   <a class="panel-link" [routerLink]="lien.chemin" [queryParams]="parametresLien(lien, item)">{{ lien.label }}</a>
                   &nbsp;·&nbsp;
@@ -152,4 +159,11 @@
       </div>
     }
   </div>
+}
+
+@if (accesPour(); as fiche) {
+  <app-creer-acces [endpoint]="config.endpoint" [idFiche]="fiche.id"
+                   [libelle]="libelleAcces(fiche)" [role]="config.acces?.role ?? ''"
+                   [nom]="fiche.nom ?? ''" [prenom]="fiche.prenom ?? ''" [email]="fiche.email ?? ''"
+                   (ferme)="accesPour.set(null)" (cree)="accesCree()"></app-creer-acces>
 }

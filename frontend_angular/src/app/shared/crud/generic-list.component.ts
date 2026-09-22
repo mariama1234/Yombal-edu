@@ -4,6 +4,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { GenericCrudService } from './generic-crud.service';
 import { ENTITY_CONFIGS } from './entity-configs';
 import { EntityConfig, FiltreConfig, LienLigne, RowAction } from './crud-config.model';
+import { CreerAccesComponent } from '../acces/creer-acces.component';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { ToastService } from '../../core/services/toast.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -12,7 +13,7 @@ import { MODULE_DE_L_ENTITE } from '../../core/guards/acces.guard';
 @Component({
   selector: 'app-generic-list',
   standalone: true,
-  imports: [CommonModule, RouterLink],
+  imports: [CommonModule, RouterLink, CreerAccesComponent],
   templateUrl: './generic-list.component.html',
 })
 export class GenericListComponent implements OnInit {
@@ -21,6 +22,9 @@ export class GenericListComponent implements OnInit {
   loading = signal(true);
   total = signal(0);
   erreur = signal<string | null>(null);
+
+  /** Fiche dont on est en train de créer le compte de connexion. */
+  accesPour = signal<any | null>(null);
 
   /** Libellé du dernier élément envoyé à la corbeille, pour offrir de le récupérer. */
   dernierSupprime = signal<string | null>(null);
@@ -158,6 +162,25 @@ export class GenericListComponent implements OnInit {
       },
       error: (e) => this.erreur.set(e?.error?.detail ?? 'La suppression a échoué.'),
     });
+  }
+
+  /**
+   * Créer le compte de connexion d'une fiche : réservé à la direction, et
+   * seulement tant que la fiche n'en a pas.
+   */
+  peutCreerUnAcces(item: any): boolean {
+    return !!this.config?.acces && this.auth.peutEcrire('comptes') && !item.a_un_acces;
+  }
+
+  libelleAcces(item: any): string {
+    const cle = this.config?.acces?.libelle ?? 'nom_complet';
+    const nom = item[cle] ?? `${item.prenom ?? ''} ${item.nom ?? ''}`.trim();
+    return nom || `#${item.id}`;
+  }
+
+  accesCree(): void {
+    this.accesPour.set(null);
+    this.charger();
   }
 
   /** Paramètres d'URL d'un raccourci de ligne, ex: `{ classe: 12 }`. */

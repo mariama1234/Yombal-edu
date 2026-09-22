@@ -118,6 +118,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   parents: {
     key: 'parents',
+    acces: { role: 'parent' },
     suite: [
       { label: 'Élèves', chemin: '/eleves' },
     ],
@@ -158,6 +159,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
 
   personnel: {
     key: 'personnel',
+    acces: { role: 'enseignant' },
     suite: [
       { label: 'Affectations', chemin: '/affectations' },
     ],

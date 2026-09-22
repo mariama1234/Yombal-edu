@@ -661,6 +661,9 @@ def dossier(ecole, eleve):
             "photo_url": eleve.photo_url,
             # La photo se lit par GET /api/eleves/{id}/photo/, jamais par une URL publique.
             "a_photo": photos.chemin(eleve) is not None,
+            # Compte de connexion de l'élève : l'écran propose de le créer.
+            "a_un_acces": eleve.id_utilisateur_id is not None,
+            "acces_email": eleve.id_utilisateur.email if eleve.id_utilisateur_id else None,
             "date_premiere_inscription": eleve.date_premiere_inscription,
             "statut": eleve.statut,
             "statut_libelle": eleve.get_statut_display(),

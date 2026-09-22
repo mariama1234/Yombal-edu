@@ -1,0 +1,75 @@
+<div (click)="ferme.emit()"
+     style="position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:1000; display:flex; align-items:flex-start; justify-content:center; padding:48px 16px; overflow-y:auto;">
+  <div role="dialog" aria-modal="true" aria-labelledby="titre-acces" (click)="$event.stopPropagation()"
+       style="background:var(--surface); border-radius:14px; width:100%; max-width:560px; padding:22px 24px; box-shadow:0 20px 50px rgba(0,0,0,0.25);">
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
+      <div>
+        <div id="titre-acces" class="form-section-title" style="margin:0;">Créer son accès</div>
+        <div class="form-section-sub" style="margin:4px 0 0;">
+          {{ libelle }}@if (role) { — compte {{ role }} }
+        </div>
+      </div>
+      <button type="button" class="icon-btn" aria-label="Fermer" (click)="ferme.emit()">✕</button>
+    </div>
+
+    @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+    @if (resultat(); as r) {
+      <p style="font-size:13px; color:var(--ink-600); margin:0 0 14px;">
+        Le compte est créé et rattaché à la fiche. Transmettez ces identifiants :
+        <strong>le mot de passe ne sera plus affiché</strong>, et la personne pourra le
+        changer après sa première connexion.
+      </p>
+      <div class="panel" style="margin:0 0 14px;">
+        <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px;">
+          <span style="color:var(--ink-400);">Identifiant</span>
+          <span class="mono">{{ r.email }}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; gap:12px; font-size:13px; margin-top:8px;">
+          <span style="color:var(--ink-400);">Mot de passe provisoire</span>
+          <strong class="mono">{{ r.mot_de_passe_provisoire }}</strong>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-ghost" (click)="copier()">
+          {{ copie() ? 'Copié ✓' : 'Copier' }}
+        </button>
+        <button type="button" class="btn-primary" (click)="ferme.emit()">Terminé</button>
+      </div>
+    } @else {
+      <form [formGroup]="form" (ngSubmit)="valider()">
+        <p style="font-size:13px; color:var(--ink-600); margin:0 0 14px;">
+          Le compte est créé avec le bon rôle et rattaché à cette fiche. Un mot de passe
+          provisoire est tiré au sort et affiché une seule fois, juste après.
+        </p>
+        <div class="form-grid">
+          <div class="field">
+            <label for="acces-prenom">Prénom</label>
+            <input class="input" id="acces-prenom" formControlName="prenom">
+          </div>
+          <div class="field">
+            <label for="acces-nom">Nom</label>
+            <input class="input" id="acces-nom" formControlName="nom">
+            @if (form.controls.nom.touched && form.controls.nom.invalid) {
+              <span class="hint hint-error">Le nom est obligatoire.</span>
+            }
+          </div>
+          <div class="field" style="grid-column:1 / -1;">
+            <label for="acces-email">E-mail de connexion</label>
+            <input class="input" id="acces-email" type="email" formControlName="email"
+                   placeholder="prenom.nom@exemple.sn">
+            @if (form.controls.email.touched && form.controls.email.invalid) {
+              <span class="hint hint-error">Une adresse e-mail valide est obligatoire : c'est l'identifiant.</span>
+            }
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-ghost" (click)="ferme.emit()">Annuler</button>
+          <button type="submit" class="btn-primary" [disabled]="occupe()">
+            {{ occupe() ? 'Création…' : "Créer l'accès" }}
+          </button>
+        </div>
+      </form>
+    }
+  </div>
+</div>

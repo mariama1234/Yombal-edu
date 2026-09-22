@@ -304,11 +304,39 @@ class ClasseSerializer(serializers.ModelSerializer):
         return None
 
 
-class ParentTuteurSerializer(serializers.ModelSerializer):
+class CreationAccesSerializer(serializers.Serializer):
+    """
+    Entrée de « Créer son accès » : le compte de connexion d'une fiche.
+
+    Tout est facultatif : le nom et l'e-mail sont pris sur la fiche quand elle
+    les porte, et le mot de passe est tiré au sort puis affiché une fois à
+    l'écran — la direction le transmet à la famille ou à l'enseignant.
+    """
+    email = serializers.EmailField(max_length=150, required=False, allow_blank=True)
+    nom = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    prenom = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    mot_de_passe = serializers.CharField(min_length=8, required=False, allow_blank=True,
+                                         help_text="Vide : un mot de passe provisoire est tiré au sort.")
+    telephone = serializers.CharField(max_length=30, required=False, allow_blank=True)
+
+
+class AccesFicheMixin(serializers.ModelSerializer):
+    """Expose l'accès de la fiche : l'écran propose de le créer, ou dit qu'il existe."""
+    a_un_acces = serializers.SerializerMethodField()
+    acces_email = serializers.SerializerMethodField()
+
+    def get_a_un_acces(self, obj):
+        return obj.id_utilisateur_id is not None
+
+    def get_acces_email(self, obj):
+        return obj.id_utilisateur.email if obj.id_utilisateur_id else None
+
+
+class ParentTuteurSerializer(AccesFicheMixin):
     class Meta:
         model = models.ParentTuteur
         fields = "__all__"
-        read_only_fields = ["id_ecole"]
+        read_only_fields = ["id_ecole", "id_utilisateur"]
 
 
 class EleveParentSerializer(serializers.ModelSerializer):
@@ -631,14 +659,30 @@ class ReinscriptionSerializer(serializers.Serializer):
 
 # ---------- Module pédagogique ----------
 
-class EnseignantSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
+class EnseignantSerializer(UniciteParEcoleMixin, AccesFicheMixin):
     champ_unique = "matricule"
     message_unicite = "Un enseignant porte déjà ce matricule dans votre école."
+
+    # Un enseignant n'a ni nom ni prénom en propre : ils vivent sur son compte.
+    nom = serializers.SerializerMethodField()
+    prenom = serializers.SerializerMethodField()
+    nom_complet = serializers.SerializerMethodField()
 
     class Meta:
         model = models.Enseignant
         fields = "__all__"
-        read_only_fields = ["id_ecole"]
+        read_only_fields = ["id_ecole", "id_utilisateur"]
+
+    def get_nom(self, obj):
+        return obj.id_utilisateur.nom if obj.id_utilisateur_id else None
+
+    def get_prenom(self, obj):
+        return obj.id_utilisateur.prenom if obj.id_utilisateur_id else None
+
+    def get_nom_complet(self, obj):
+        if not obj.id_utilisateur_id:
+            return obj.matricule
+        return f"{obj.id_utilisateur.prenom} {obj.id_utilisateur.nom}".strip()
 
 
 class MatiereSerializer(serializers.ModelSerializer):

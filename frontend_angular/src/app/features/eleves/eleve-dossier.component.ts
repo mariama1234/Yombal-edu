@@ -7,6 +7,7 @@ import { environment } from '../../../environments/environment';
 import { Classe, DossierEleve, Paginated, PeriodeScolaire } from '../../core/models/models';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { AuthService } from '../../core/services/auth.service';
+import { CreerAccesComponent } from '../../shared/acces/creer-acces.component';
 import { ToastService } from '../../core/services/toast.service';
 import { EleveFinancesComponent } from './eleve-finances.component';
 import { ScolariteService } from './scolarite.service';
@@ -30,7 +31,7 @@ type Onglet = 'scolarite' | 'finances';
 @Component({
   selector: 'app-eleve-dossier',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, EleveFinancesComponent],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, EleveFinancesComponent, CreerAccesComponent],
   templateUrl: './eleve-dossier.component.html',
 })
 export class EleveDossierComponent implements OnInit, OnDestroy {
@@ -66,6 +67,11 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
   peutInscrire = computed(() => this.auth.peutEcrire('inscriptions'));
   voitCaisse = computed(() => this.auth.peutLire('journal_caisse'));
   voitNotes = computed(() => this.auth.peutLire('notes'));
+  /** Créer le compte de connexion de l'élève : gestion des comptes, donc direction. */
+  peutCreerLAcces = computed(() => this.auth.peutEcrire('comptes'));
+
+  /** Fenêtre « Créer son accès » ouverte. */
+  accesOuvert = signal(false);
   /** Photo lue en binaire, affichée par une adresse locale au navigateur. */
   photo = signal<string | null>(null);
   photoEnCours = signal(false);
@@ -149,7 +155,7 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
       });
   }
 
-  private charger(): void {
+  charger(): void {
     this.chargement.set(true);
     this.scolarite.dossier(this.idEleve).subscribe({
       next: (d) => {

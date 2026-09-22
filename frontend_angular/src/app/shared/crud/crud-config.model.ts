@@ -111,6 +111,18 @@ export interface LienLigne {
   champ?: string;
 }
 
+/**
+ * La fiche peut recevoir un compte de connexion (bouton « Créer son accès »).
+ *
+ * `role` n'est là que pour l'annoncer à l'écran : c'est le serveur qui décide
+ * du rôle donné au compte.
+ */
+export interface AccesConfig {
+  role: string;
+  /** Champ de la ligne qui la nomme dans la fenêtre ; `nom_complet` par défaut. */
+  libelle?: string;
+}
+
 export interface EntityConfig {
   key: string;
   endpoint: string;
@@ -122,6 +134,8 @@ export interface EntityConfig {
   fields: FieldConfig[];
   /** Consultation seule : ni ajout, ni modification, ni suppression (ex: journal d'audit). */
   lectureSeule?: boolean;
+  /** Fiches dont on peut créer le compte de connexion (parents, enseignants). */
+  acces?: AccesConfig;
   /** Actions métier proposées sur chaque ligne. */
   actions?: RowAction[];
   /** Listes déroulantes de filtrage au-dessus du tableau. */

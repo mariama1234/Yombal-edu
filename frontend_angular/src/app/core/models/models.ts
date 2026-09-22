@@ -489,6 +489,9 @@ export interface DossierEleve {
     photo_url: string | null;
     /** Une photo est enregistrée : elle se lit par GET /eleves/{id}/photo/. */
     a_photo: boolean;
+    /** L'élève a un compte de connexion rattaché à sa fiche. */
+    a_un_acces: boolean;
+    acces_email: string | null;
     date_premiere_inscription: string | null;
     statut: 'actif' | 'radie' | 'transfere' | 'diplome';
     statut_libelle: string;

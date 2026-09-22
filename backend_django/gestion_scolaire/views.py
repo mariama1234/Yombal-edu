@@ -12,6 +12,7 @@ from django.db.models import Model as DjangoModel
 from django.db.models.deletion import ProtectedError, RestrictedError
 from django.http import FileResponse, HttpResponse
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 from datetime import date as date_type
 
 from django.utils.dateparse import parse_date
@@ -321,6 +322,92 @@ def _classe_de_lenseignant_ou_refus(utilisateur, classe):
         raise PermissionDenied("Cette classe ne fait pas partie des vôtres.")
 
 
+class CreationAccesMixin:
+    """
+    « Créer son accès » : le compte de connexion d'une fiche.
+
+    Un compte parent, élève ou enseignant ne sert à rien tant qu'il n'est pas
+    rattaché à sa fiche — sans ce lien, un parent ne voit aucun enfant et un
+    enseignant aucune classe. Créer le compte et le rattacher sont donc une
+    seule opération, réservée à la direction comme la gestion des comptes.
+
+    La vue déclare le rôle donné au compte (`role_acces`).
+    """
+    role_acces = None
+
+    def identite_pour_acces(self, fiche):
+        """(nom, prénom, e-mail, téléphone) portés par la fiche, à défaut vides."""
+        return (getattr(fiche, "nom", "") or "", getattr(fiche, "prenom", "") or "",
+                getattr(fiche, "email", "") or "", getattr(fiche, "telephone", "") or "")
+
+    def fiche_pour_acces(self, request, pk):
+        return self.get_object()
+
+    def libelle_de_la_fiche(self, fiche):
+        return str(fiche)
+
+    @extend_schema(request=serializers.CreationAccesSerializer, responses=dict)
+    @action(detail=True, methods=["post"], url_path="creer-acces")
+    def creer_acces(self, request, pk=None):
+        """
+        Compte de connexion d'une fiche : POST /api/<fiches>/{id}/creer-acces/
+
+        Renvoie le mot de passe provisoire — c'est la seule fois où il est
+        lisible, ensuite il n'est plus stocké qu'en empreinte.
+        """
+        fiche = self.fiche_pour_acces(request, pk)
+        if fiche is None:
+            return Response({"detail": "Fiche introuvable."}, status=status.HTTP_404_NOT_FOUND)
+        if fiche.id_utilisateur_id is not None:
+            raise ValidationError({
+                "detail": f"Cette fiche a déjà un accès : {fiche.id_utilisateur.email}."})
+
+        entree = serializers.CreationAccesSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        donnees = entree.validated_data
+        nom_fiche, prenom_fiche, email_fiche, telephone_fiche = self.identite_pour_acces(fiche)
+
+        email = (donnees.get("email") or email_fiche).strip().lower()
+        nom = (donnees.get("nom") or nom_fiche).strip()
+        prenom = (donnees.get("prenom") or prenom_fiche).strip()
+        if not email:
+            raise ValidationError({"email": "Indiquez l'adresse e-mail de connexion."})
+        if not nom:
+            raise ValidationError({"nom": "Indiquez le nom de la personne."})
+        if Utilisateur.objects.filter(email__iexact=email).exists():
+            raise ValidationError({"email": "Un compte utilise déjà cette adresse e-mail."})
+
+        # Tiré au sort sans les caractères qu'on confond en le recopiant (0/O, 1/l).
+        mot_de_passe = donnees.get("mot_de_passe") or get_random_string(
+            10, "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+
+        with transaction.atomic():
+            compte = Utilisateur.objects.create_user(
+                email=email, id_ecole=request.user.id_ecole, nom=nom, prenom=prenom,
+                role=self.role_acces, password=mot_de_passe,
+                telephone=(donnees.get("telephone") or telephone_fiche or None),
+            )
+            fiche.id_utilisateur = compte
+            fiche.save(update_fields=["id_utilisateur"])
+
+        libelle = self.libelle_de_la_fiche(fiche)
+        journaliser(request, models.JournalActivite.Action.CREATION, entite="utilisateur",
+                    id_entite=compte.pk,
+                    description=f"Création de l'accès {compte.get_role_display().lower()} "
+                                f"de {libelle} ({email})")
+        return Response({
+            "id_utilisateur": compte.pk,
+            "email": compte.email,
+            "role": compte.role,
+            "role_libelle": compte.get_role_display(),
+            "nom_complet": f"{prenom} {nom}".strip(),
+            # Affiché une seule fois : à transmettre, puis à changer.
+            "mot_de_passe_provisoire": mot_de_passe,
+            "detail": f"Accès créé pour {libelle}. Identifiant : {email} — "
+                      f"mot de passe provisoire : {mot_de_passe}",
+        }, status=status.HTTP_201_CREATED)
+
+
 class CorbeilleMixin:
     """
     Toute suppression passe par la corbeille.
@@ -437,15 +524,17 @@ class ClasseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fi
     search_fields = ["nom", "id_niveau__libelle"]
 
 
-class ParentTuteurViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
+class ParentTuteurViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.ParentTuteur.objects.all()
     serializer_class = serializers.ParentTuteurSerializer
     permission_classes = [AccesModule]
     module = "parents"
     perimetre_famille = "liens_eleves__id_eleve"
+    role_acces = "parent"
+    modules_par_action = {"creer_acces": "comptes"}
 
 
-class EleveViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
+class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                    EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Eleve.objects.all()
     serializer_class = serializers.EleveSerializer
@@ -473,8 +562,10 @@ class EleveViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, Journali
         "ajouter_frais": "encaissement",
         "releve": "notes",
         "exporter_releve": "notes",
+        "creer_acces": "comptes",
     }
     actions_personnel = ("par_matricule",)
+    role_acces = "eleve"
     filterset_fields = ["statut"]
     search_fields = ["nom", "prenom", "matricule"]
     # Un élève n'appartient pas à une année : ce sont ses inscriptions qui la
@@ -1129,6 +1220,10 @@ class EleveViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, Journali
         except (models.Eleve.DoesNotExist, ValueError, TypeError):
             return None
 
+    def fiche_pour_acces(self, request, pk):
+        # Pas `get_object()` : il filtrerait sur l'année affichée.
+        return self._eleve_de_lecole(request, pk)
+
     def _eleves_accessibles(self, request):
         """
         Les élèves de l'école que le compte peut ouvrir, sans le filtre de liste.
@@ -1321,11 +1416,16 @@ class HistoriqueScolaireViewSet(PerimetreMixin, EcoleFiltreeMixin, viewsets.Read
 
 # ---------- Module pédagogique ----------
 
-class EnseignantViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
+class EnseignantViewSet(CreationAccesMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Enseignant.objects.all()
     serializer_class = serializers.EnseignantSerializer
     permission_classes = [AccesModule]
     module = "personnel"
+    role_acces = "enseignant"
+    modules_par_action = {"creer_acces": "comptes"}
+
+    def libelle_de_la_fiche(self, fiche):
+        return f"l'enseignant {fiche.matricule}"
 
 
 class MatiereViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
