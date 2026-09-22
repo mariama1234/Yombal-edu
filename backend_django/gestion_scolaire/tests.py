@@ -5756,3 +5756,46 @@ class TestMonProfil(BaseAPI):
         self.assertEqual(self.parent_user.role, "parent")
         self.assertEqual(self.parent_user.email, "parent@a.sn")
         self.assertEqual(self.parent_user.statut, "actif")
+
+
+class TestListeDesElevesPourUneSaisie(BaseAPI):
+    """Ce que propose la liste déroulante « Élève » d'un formulaire d'absence."""
+
+    def setUp(self):
+        super().setUp()
+        self.autre_classe = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=self.niveau,
+            nom="6ème B", capacite_max=40)
+        # Deux homonymes : le nom seul ne dit pas de qui il s'agit.
+        self.awa = self._inscrire("MIC-0001", "Ba", "Awa", self.classe)
+        self.aminata = self._inscrire("MIC-0002", "Ba", "Aminata", self.classe)
+        self.dautre_classe = self._inscrire("MIC-0003", "Ba", "Ousmane", self.autre_classe)
+
+    def _inscrire(self, matricule, nom, prenom, classe):
+        eleve = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule=matricule, nom=nom, prenom=prenom)
+        models.Inscription.objects.create(
+            id_eleve=eleve, id_classe=classe, id_annee_scolaire=self.annee,
+            date_inscription=date(2026, 10, 1))
+        return eleve
+
+    def test_la_liste_se_restreint_a_la_classe_choisie(self):
+        lignes = self.resultats(self.client.get("/api/eleves/", {"classe": self.classe.pk}))
+        self.assertEqual({l["id"] for l in lignes}, {self.awa.pk, self.aminata.pk})
+
+    def test_chaque_eleve_porte_son_nom_complet_et_son_matricule(self):
+        lignes = self.resultats(self.client.get("/api/eleves/", {"classe": self.classe.pk}))
+        par_id = {l["id"]: l for l in lignes}
+        self.assertEqual(par_id[self.awa.pk]["nom_complet"], "Awa Ba")
+        self.assertEqual(par_id[self.aminata.pk]["nom_complet"], "Aminata Ba")
+        self.assertEqual(par_id[self.awa.pk]["matricule"], "MIC-0001")
+
+    def test_une_classe_dune_autre_ecole_est_refusee(self):
+        classe_b = models.Classe.objects.create(
+            id_ecole=self.autre,
+            id_annee_scolaire=models.AnneeScolaire.objects.create(
+                id_ecole=self.autre, libelle="2026-2027",
+                date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31)),
+            nom="6ème A", capacite_max=40)
+        r = self.client.get("/api/eleves/", {"classe": classe_b.pk})
+        self.assertEqual(r.status_code, 400)

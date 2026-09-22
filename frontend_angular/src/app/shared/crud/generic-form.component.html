@@ -21,7 +21,11 @@
             @switch (field.type) {
               @case ('select') {
                 <select class="input" [id]="field.key" [formControlName]="field.key">
-                  <option value="" disabled>Sélectionner…</option>
+                  @if (attendSonChampSource(field)) {
+                    <option value="" disabled>Choisir d'abord {{ libelleChampSource(field) }}…</option>
+                  } @else {
+                    <option value="" disabled>Sélectionner…</option>
+                  }
                   @if (field.options) {
                     @for (opt of field.options; track opt.value) {
                       <option [value]="opt.value">{{ opt.label }}</option>

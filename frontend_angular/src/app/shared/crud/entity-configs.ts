@@ -199,8 +199,14 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'motif', label: 'Motif' },
     ],
     fields: [
-      { key: 'id_eleve', label: 'Élève', type: 'select', required: true, optionsEndpoint: 'eleves', optionsLabelKey: 'nom' },
+      // La classe se choisit d'abord : elle restreint la liste des élèves.
       { key: 'id_classe', label: 'Classe', type: 'select', required: true, optionsEndpoint: 'classes', optionsLabelKey: 'nom' },
+      {
+        key: 'id_eleve', label: 'Élève', type: 'select', required: true,
+        optionsEndpoint: 'eleves', optionsLabelKey: 'nom_complet', optionsSecondaireKey: 'matricule',
+        optionsFiltrePar: { champ: 'id_classe', param: 'classe' },
+        aide: 'Les élèves inscrits dans la classe choisie.',
+      },
       {
         key: 'statut', label: 'Type', type: 'select', required: true,
         options: [{ value: 'absent', label: 'Absent' }, { value: 'retard', label: 'Retard' }],
@@ -268,7 +274,10 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'date_saisie', label: 'Saisie le', type: 'date' },
     ],
     fields: [
-      { key: 'id_eleve', label: 'Élève', type: 'select', required: true, optionsEndpoint: 'eleves', optionsLabelKey: 'nom' },
+      {
+        key: 'id_eleve', label: 'Élève', type: 'select', required: true,
+        optionsEndpoint: 'eleves', optionsLabelKey: 'nom_complet', optionsSecondaireKey: 'matricule',
+      },
       { key: 'id_evaluation', label: 'Évaluation', type: 'select', required: true, optionsEndpoint: 'evaluations', optionsLabelKey: 'type' },
       // Le barème appartient à l'évaluation : la note se saisit telle qu'elle
       // est portée sur la copie, la conversion sur 20 est faite au calcul.
@@ -554,7 +563,10 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
         ],
       },
       { key: 'fichier_url', label: 'Lien du fichier', type: 'text', required: true, span2: true, placeholder: '/media/reglement-interieur.pdf' },
-      { key: 'id_eleve', label: 'Rattacher au dossier d’un élève', type: 'select', optionsEndpoint: 'eleves', optionsLabelKey: 'nom' },
+      {
+        key: 'id_eleve', label: 'Rattacher au dossier d’un élève', type: 'select',
+        optionsEndpoint: 'eleves', optionsLabelKey: 'nom_complet', optionsSecondaireKey: 'matricule',
+      },
     ],
   },
 

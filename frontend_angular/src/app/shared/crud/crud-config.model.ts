@@ -59,6 +59,19 @@ export interface FieldConfig {
   /** Options chargées dynamiquement depuis un autre endpoint (ex: liste des classes) */
   optionsEndpoint?: string;
   optionsLabelKey?: string;
+  /**
+   * Seconde clé, affichée entre parenthèses après le libellé (un matricule,
+   * par exemple) : deux élèves peuvent porter le même nom complet.
+   */
+  optionsSecondaireKey?: string;
+  /**
+   * Liste dépendante d'un autre champ : le choix fait dans `champ` est envoyé
+   * à l'API comme paramètre `param` pour restreindre les options.
+   *
+   * Tant que le champ source est vide, la liste reste vide : proposer les
+   * 500 élèves de l'école quand on cherche ceux d'une classe n'aide personne.
+   */
+  optionsFiltrePar?: { champ: string; param: string };
   placeholder?: string;
   span2?: boolean;
 }

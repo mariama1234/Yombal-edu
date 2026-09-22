@@ -26,6 +26,8 @@ export class GenericFormComponent implements OnInit {
    * ailleurs (un budget, par exemple) et ne doit pas être décompté deux fois.
    */
   private valeursInitiales: Record<string, any> = {};
+  /** Vrai le temps de remplir le formulaire depuis l'API, en modification. */
+  private remplissageEnCours = false;
   enregistrement = signal(false);
   private toast = inject(ToastService);
   private annees = inject(AnneeScolaireService);
@@ -43,13 +45,20 @@ export class GenericFormComponent implements OnInit {
       this.construireFormulaire();
       this.chargerOptions();
 
+      this.suivreLesChampsSources();
+
       const id = this.route.snapshot.paramMap.get('id');
       if (id && id !== 'nouveau') {
         this.modeEdition = true;
         this.idEnCours = +id;
         this.crud.get(this.config.endpoint, +id).subscribe((item) => {
           this.valeursInitiales = item;
+          // Le remplissage ne doit pas être pris pour un choix de l'utilisateur :
+          // sinon poser la classe effacerait l'élève qu'on vient de charger.
+          this.remplissageEnCours = true;
           this.form.patchValue(item);
+          this.remplissageEnCours = false;
+          this.rechargerListesDependantes();
         });
       }
     });
@@ -71,7 +80,8 @@ export class GenericFormComponent implements OnInit {
   }
 
   private chargerOptions(): void {
-    const champsAvecEndpoint = this.config.fields.filter((f) => f.optionsEndpoint);
+    const champsAvecEndpoint = this.config.fields.filter(
+      (f) => f.optionsEndpoint && !f.optionsFiltrePar);
     if (champsAvecEndpoint.length === 0) return;
 
     const requetes = champsAvecEndpoint.reduce((acc, f) => {
@@ -87,20 +97,81 @@ export class GenericFormComponent implements OnInit {
   }
 
   /**
+   * Une liste dépendante suit le champ qui la restreint : choisir une classe
+   * recharge ses élèves, et en changer efface l'élève déjà choisi — il
+   * n'appartient plus à la classe affichée.
+   */
+  private suivreLesChampsSources(): void {
+    for (const field of this.config.fields) {
+      const lien = field.optionsFiltrePar;
+      if (!lien) continue;
+      this.form.get(lien.champ)?.valueChanges.subscribe(() => {
+        if (this.remplissageEnCours) return;
+        this.form.get(field.key)?.setValue('');
+        this.chargerListeDependante(field);
+      });
+    }
+  }
+
+  private rechargerListesDependantes(): void {
+    for (const field of this.config.fields) {
+      if (field.optionsFiltrePar) this.chargerListeDependante(field);
+    }
+  }
+
+  private chargerListeDependante(field: FieldConfig): void {
+    const lien = field.optionsFiltrePar!;
+    const valeur = this.form.get(lien.champ)?.value;
+    if (!valeur) {
+      this.optionsParChamp[field.key] = [];
+      return;
+    }
+    this.crud
+      .list(field.optionsEndpoint!, {
+        ...this.parametresOptions(field.optionsEndpoint!),
+        [lien.param]: String(valeur),
+      })
+      .subscribe({
+        next: (r) => (this.optionsParChamp[field.key] = r.results),
+        error: () => (this.optionsParChamp[field.key] = []),
+      });
+  }
+
+  /** Vrai quand la liste attend qu'on choisisse d'abord son champ source. */
+  attendSonChampSource(field: FieldConfig): boolean {
+    const lien = field.optionsFiltrePar;
+    return !!lien && !this.form.get(lien.champ)?.value;
+  }
+
+  libelleChampSource(field: FieldConfig): string {
+    const lien = field.optionsFiltrePar;
+    const source = this.config.fields.find((f) => f.key === lien?.champ);
+    return (source?.label ?? '').toLowerCase();
+  }
+
+  /**
    * Une liste d'options qui se compte par année suit l'année du bandeau haut,
    * comme sa propre page. Sans ça, le budget annoncé ici serait celui de
    * l'année active pendant qu'on consulte un autre exercice.
+   *
+   * `page_size` est large à dessein : une liste déroulante doit tout
+   * proposer. Sans lui, elle s'arrêtait à la première page de l'API — vingt
+   * élèves sur cinq cents, sans que rien ne le dise.
    */
   private parametresOptions(endpoint: string): Record<string, string> {
     const id = this.annees.idAnnee();
-    return ENTITY_CONFIGS[endpoint]?.filtreParAnnee && id !== null
-      ? { id_annee_scolaire: String(id) }
-      : {};
+    const params: Record<string, string> = { page_size: '200' };
+    if (ENTITY_CONFIGS[endpoint]?.filtreParAnnee && id !== null) {
+      params['id_annee_scolaire'] = String(id);
+    }
+    return params;
   }
 
   libelleOption(field: FieldConfig, option: any): string {
     const cle = field.optionsLabelKey || 'nom';
-    return option[cle] ?? `#${option.id}`;
+    const libelle = option[cle] ?? `#${option.id}`;
+    const precision = field.optionsSecondaireKey ? option[field.optionsSecondaireKey] : null;
+    return precision ? `${libelle} (${precision})` : String(libelle);
   }
 
   /** Valeur brute d'un champ `lecture`, lue sur l'option choisie dans son champ source. */

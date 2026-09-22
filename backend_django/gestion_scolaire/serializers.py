@@ -458,11 +458,18 @@ class EleveSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
     inscription_libelle = serializers.SerializerMethodField()
     inscription_autorise_en_classe = serializers.SerializerMethodField()
     classe = serializers.SerializerMethodField()
+    # « Ba » ne désigne personne dans une école qui en compte quinze : les
+    # listes déroulantes affichent le nom complet, et le matricule tranche
+    # entre deux homonymes.
+    nom_complet = serializers.SerializerMethodField()
 
     class Meta:
         model = models.Eleve
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+
+    def get_nom_complet(self, obj):
+        return f"{obj.prenom} {obj.nom}".strip()
 
     def _inscription(self, obj):
         """
