@@ -2439,6 +2439,15 @@ class MoiView(APIView):
     # APIView n'expose pas de serializer : sans l'indication ci-dessus, la
     # documentation ne saurait pas décrire la réponse.
 
+    def patch(self, request):
+        """Correction de son propre nom ou de son téléphone."""
+        entree = serializers.MonProfilSerializer(request.user, data=request.data, partial=True)
+        entree.is_valid(raise_exception=True)
+        entree.save()
+        journaliser(request, models.JournalActivite.Action.MODIFICATION, entite="utilisateur",
+                    id_entite=request.user.pk, description="Mise à jour de son profil")
+        return self.get(request)
+
     def get(self, request):
         donnees = serializers.UtilisateurSerializer(request.user).data
         # Les modules ouverts au compte, lus sur la matrice du serveur : le
@@ -2447,6 +2456,29 @@ class MoiView(APIView):
         donnees["profil"] = profil_de(request.user)
         donnees["acces"] = acces_du_compte(request.user)
         return Response(donnees)
+
+
+@extend_schema(request=serializers.ChangementMotDePasseSerializer, responses=dict,
+               summary="Changer son mot de passe", tags=["auth"])
+class ChangementMotDePasseView(APIView):
+    """
+    POST /api/auth/mot-de-passe/ — chacun change le sien.
+
+    Le compte reste connecté : les jetons déjà émis ne portent pas le mot de
+    passe. C'est à la direction de désactiver un compte dont on veut couper
+    l'accès tout de suite.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        entree = serializers.ChangementMotDePasseSerializer(
+            data=request.data, context={"utilisateur": request.user})
+        entree.is_valid(raise_exception=True)
+        request.user.set_password(entree.validated_data["nouveau_mot_de_passe"])
+        request.user.save(update_fields=["password"])
+        journaliser(request, models.JournalActivite.Action.MODIFICATION, entite="utilisateur",
+                    id_entite=request.user.pk, description="Changement de son mot de passe")
+        return Response({"detail": "Votre mot de passe a été changé."})
 
 
 class ConnexionView(TokenObtainPairView):

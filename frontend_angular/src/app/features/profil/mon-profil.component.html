@@ -1,0 +1,122 @@
+<p class="module-eyebrow">Mon compte</p>
+<div class="page-head">
+  <div>
+    <h1>Mon profil</h1>
+    <p>Votre mot de passe, votre nom et votre téléphone. Le rôle et l'adresse de
+       connexion sont tenus par l'administration de l'école.</p>
+  </div>
+</div>
+
+@if (utilisateur(); as u) {
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">{{ u.prenom }} {{ u.nom }}</div></div>
+    <div class="tile-grid-generic">
+      <div class="tile-generic">
+        <div class="tile-generic-label">Adresse de connexion</div>
+        <div class="tile-generic-meta mono" style="font-size:13px;">{{ u.email }}</div>
+      </div>
+      <div class="tile-generic">
+        <div class="tile-generic-label">Rôle</div>
+        <div class="tile-generic-meta" style="font-size:13px;">{{ u.role_libelle ?? u.role }}</div>
+      </div>
+      <div class="tile-generic">
+        <div class="tile-generic-label">Statut</div>
+        <div class="tile-generic-meta" style="font-size:13px;">{{ u.statut === 'actif' ? 'Actif' : 'Inactif' }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Changer son mot de passe : en premier, c'est ce pour quoi on vient. -->
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Changer mon mot de passe</div></div>
+
+    @if (erreurMotDePasse()) { <div class="form-error">{{ erreurMotDePasse() }}</div> }
+    @if (motDePasseChange()) {
+      <div class="form-success">
+        Votre mot de passe a été changé. Il vous servira à votre prochaine connexion.
+      </div>
+    }
+
+    <form [formGroup]="formMotDePasse" (ngSubmit)="changerMotDePasse()">
+      <div class="form-grid">
+        <div class="field" style="grid-column:1 / -1;">
+          <label for="actuel">Mot de passe actuel</label>
+          <input class="input" id="actuel" type="password" autocomplete="current-password"
+                 formControlName="mot_de_passe_actuel">
+          @if (formMotDePasse.controls.mot_de_passe_actuel.touched && formMotDePasse.controls.mot_de_passe_actuel.invalid) {
+            <span class="hint hint-error">Saisissez votre mot de passe actuel.</span>
+          }
+        </div>
+        <div class="field">
+          <label for="nouveau">Nouveau mot de passe</label>
+          <input class="input" id="nouveau" type="password" autocomplete="new-password"
+                 formControlName="nouveau_mot_de_passe">
+          <span class="hint">8 caractères au minimum, et pas un mot de passe trop courant.</span>
+          @if (formMotDePasse.controls.nouveau_mot_de_passe.touched && formMotDePasse.controls.nouveau_mot_de_passe.invalid) {
+            <span class="hint hint-error">8 caractères au minimum.</span>
+          }
+        </div>
+        <div class="field">
+          <label for="confirmation">Confirmer le nouveau mot de passe</label>
+          <input class="input" id="confirmation" type="password" autocomplete="new-password"
+                 formControlName="confirmation">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary" [disabled]="occupeMotDePasse()">
+          {{ occupeMotDePasse() ? 'Changement…' : 'Changer mon mot de passe' }}
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Mes informations</div></div>
+
+    @if (erreurProfil()) { <div class="form-error">{{ erreurProfil() }}</div> }
+
+    <form [formGroup]="formProfil" (ngSubmit)="enregistrerProfil()">
+      <div class="form-grid">
+        <div class="field">
+          <label for="prenom">Prénom</label>
+          <input class="input" id="prenom" formControlName="prenom">
+        </div>
+        <div class="field">
+          <label for="nom">Nom</label>
+          <input class="input" id="nom" formControlName="nom">
+        </div>
+        <div class="field">
+          <label for="telephone">Téléphone</label>
+          <input class="input" id="telephone" type="tel" formControlName="telephone"
+                 placeholder="+221 77 000 00 00">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary" [disabled]="occupeProfil()">
+          {{ occupeProfil() ? 'Enregistrement…' : 'Enregistrer' }}
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Ce que mon profil ouvre</div></div>
+    <p class="hint" style="margin:0 0 10px;">
+      Les modules auxquels votre rôle donne accès. « Lecture » : vous consultez.
+      « Écriture » : vous pouvez aussi créer, modifier et supprimer.
+    </p>
+    <table class="simple">
+      <thead><tr><th>Module</th><th>Accès</th></tr></thead>
+      <tbody>
+        @for (ligne of acces(); track ligne.module) {
+          <tr>
+            <td style="text-transform:capitalize;">{{ ligne.module }}</td>
+            <td><span class="pill" [class]="ligne.niveau">{{ ligne.niveau === 'ecriture' ? 'Lecture / écriture' : 'Lecture' }}</span></td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+} @else {
+  <div class="panel"><p class="hint" style="margin:0;">Chargement de votre profil…</p></div>
+}

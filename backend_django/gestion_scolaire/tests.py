@@ -5696,3 +5696,63 @@ class TestCreationDAcces(BaseAPI):
         self.assertTrue(models.JournalActivite.objects.filter(
             action="creation", entite="utilisateur",
             description__contains="Création de l'accès parent").exists())
+
+
+class TestMonProfil(BaseAPI):
+    """Ce que chacun fait sur son propre compte : son mot de passe, son nom."""
+
+    NOUVEAU = "TorpilleVerte7"
+
+    def _changer(self, client, actuel, nouveau):
+        return client.post("/api/auth/mot-de-passe/",
+                           {"mot_de_passe_actuel": actuel, "nouveau_mot_de_passe": nouveau},
+                           format="json")
+
+    def test_chacun_change_son_mot_de_passe_et_se_reconnecte_avec(self):
+        parent = self._client(self.parent_user.email)
+        r = self._changer(parent, MDP, self.NOUVEAU)
+        self.assertEqual(r.status_code, 200, r.content)
+
+        connexion = APIClient()
+        self.assertEqual(connexion.post("/api/auth/token/",
+                                        {"email": self.parent_user.email, "password": MDP},
+                                        format="json").status_code, 401)
+        self.assertEqual(connexion.post("/api/auth/token/",
+                                        {"email": self.parent_user.email, "password": self.NOUVEAU},
+                                        format="json").status_code, 200)
+        self.assertTrue(models.JournalActivite.objects.filter(
+            action="modification", entite="utilisateur",
+            description="Changement de son mot de passe").exists())
+
+    def test_le_mot_de_passe_actuel_est_exige_et_le_nouveau_verifie(self):
+        parent = self._client(self.parent_user.email)
+        self.assertEqual(self._changer(parent, "mauvais mot de passe", self.NOUVEAU).status_code, 400)
+        # Trop court, trop courant, ou identique à l'actuel : refusés.
+        for nouveau in ("court", "password", MDP):
+            with self.subTest(nouveau=nouveau):
+                self.assertEqual(self._changer(parent, MDP, nouveau).status_code, 400)
+        self.parent_user.refresh_from_db()
+        self.assertTrue(self.parent_user.check_password(MDP))
+
+    def test_un_compte_non_connecte_ne_change_rien(self):
+        self.assertEqual(self._changer(APIClient(), MDP, self.NOUVEAU).status_code, 401)
+
+    def test_chacun_corrige_son_nom_et_son_telephone(self):
+        parent = self._client(self.parent_user.email)
+        r = parent.patch("/api/auth/moi/",
+                         {"prenom": "Modou", "telephone": "+221770001122"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.data["prenom"], "Modou")
+        self.parent_user.refresh_from_db()
+        self.assertEqual(self.parent_user.telephone, "+221770001122")
+
+    def test_on_ne_se_donne_ni_role_ni_adresse_de_connexion(self):
+        parent = self._client(self.parent_user.email)
+        r = parent.patch("/api/auth/moi/",
+                         {"role": "admin", "email": "pirate@a.sn", "statut": "inactif"},
+                         format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.parent_user.refresh_from_db()
+        self.assertEqual(self.parent_user.role, "parent")
+        self.assertEqual(self.parent_user.email, "parent@a.sn")
+        self.assertEqual(self.parent_user.statut, "actif")

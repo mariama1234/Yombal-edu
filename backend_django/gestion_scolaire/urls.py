@@ -50,6 +50,7 @@ urlpatterns = [
     path("auth/token/", views.ConnexionView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/moi/", views.MoiView.as_view(), name="moi"),
+    path("auth/mot-de-passe/", views.ChangementMotDePasseView.as_view(), name="mot-de-passe"),
     path("finances/bilan/", views.BilanFinancierView.as_view(), name="finances-bilan"),
     path("tarifs/grille/", views.GrilleTarifsView.as_view(), name="tarifs-grille"),
     path("caisse/historique/", views.HistoriqueCaisseView.as_view(), name="caisse-historique"),

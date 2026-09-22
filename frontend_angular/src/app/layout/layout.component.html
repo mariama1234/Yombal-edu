@@ -292,13 +292,16 @@
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
           <span class="dot"></span>
         </button>
-        <div class="profile" (click)="logout()" title="Se déconnecter">
+        <a class="profile" routerLink="/mon-profil" title="Mon profil">
           <div class="avatar">{{ initiales() }}</div>
           <div>
             <div class="profile-name">{{ auth.currentUser()?.prenom }} {{ auth.currentUser()?.nom }}</div>
             <div class="profile-role">{{ auth.currentUser()?.role_libelle ?? auth.currentUser()?.role }}</div>
           </div>
-        </div>
+        </a>
+        <button class="icon-btn" title="Se déconnecter" aria-label="Se déconnecter" (click)="logout()">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 17l5-5-5-5"/><path d="M20 12H9"/><path d="M12 19H6a2 2 0 01-2-2V7a2 2 0 012-2h6"/></svg>
+        </button>
       </div>
     </div>
 

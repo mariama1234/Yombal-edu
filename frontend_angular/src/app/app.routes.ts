@@ -126,6 +126,12 @@ export const routes: Routes = [
         loadComponent: () => import('./features/finances/bilan-financier.component').then((m) => m.BilanFinancierComponent),
       },
 
+      {
+        path: 'mon-profil',
+        data: { module: null },
+        loadComponent: () => import('./features/profil/mon-profil.component').then((m) => m.MonProfilComponent),
+      },
+
       // Éléments supprimés, depuis n'importe quel module (`?module=classes`).
       {
         path: 'corbeille',

@@ -3,7 +3,8 @@ from decimal import Decimal
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ObjectDoesNotExist
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
 from . import finances, models
 from .permissions import ROLES_DIRECTION
@@ -62,6 +63,51 @@ class UtilisateurSerializer(serializers.ModelSerializer):
         model = Utilisateur
         fields = ["id", "id_ecole", "nom", "prenom", "email", "role", "telephone", "statut", "date_creation"]
         read_only_fields = ["id", "date_creation"]
+
+
+class MonProfilSerializer(serializers.ModelSerializer):
+    """
+    Ce que chacun corrige sur son propre compte.
+
+    Ni l'e-mail, ni le rôle, ni le statut : l'identifiant de connexion et les
+    droits restent entre les mains de la direction — sinon n'importe quel
+    compte se donnerait les siens.
+    """
+
+    class Meta:
+        model = Utilisateur
+        fields = ["nom", "prenom", "telephone"]
+
+
+class ChangementMotDePasseSerializer(serializers.Serializer):
+    """
+    Changement de son propre mot de passe.
+
+    L'actuel est redemandé : un écran resté ouvert ne doit pas suffire à
+    changer le mot de passe de quelqu'un. Le nouveau passe par les
+    validateurs de Django (longueur, mot de passe courant, tout en chiffres).
+    """
+    mot_de_passe_actuel = serializers.CharField()
+    nouveau_mot_de_passe = serializers.CharField()
+
+    def validate_mot_de_passe_actuel(self, valeur):
+        if not self.context["utilisateur"].check_password(valeur):
+            raise serializers.ValidationError("Mot de passe actuel incorrect.")
+        return valeur
+
+    def validate_nouveau_mot_de_passe(self, valeur):
+        utilisateur = self.context["utilisateur"]
+        try:
+            validate_password(valeur, utilisateur)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return valeur
+
+    def validate(self, attrs):
+        if attrs["mot_de_passe_actuel"] == attrs["nouveau_mot_de_passe"]:
+            raise serializers.ValidationError({
+                "nouveau_mot_de_passe": "Choisissez un mot de passe différent de l'actuel."})
+        return attrs
 
 
 class UtilisateurCreateSerializer(serializers.ModelSerializer):
