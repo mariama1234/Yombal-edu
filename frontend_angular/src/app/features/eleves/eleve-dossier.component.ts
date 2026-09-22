@@ -61,7 +61,11 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
   private auth = inject(AuthService);
   private toast = inject(ToastService);
   /** Seul un administrateur ajoute, change ou retire la photo. */
-  estAdmin = computed(() => this.auth.currentUser()?.role === 'admin');
+  // Ce que le profil peut faire depuis le dossier (matrice des autorisations).
+  peutModifierEleve = computed(() => this.auth.peutEcrire('eleves'));
+  peutInscrire = computed(() => this.auth.peutEcrire('inscriptions'));
+  voitCaisse = computed(() => this.auth.peutLire('journal_caisse'));
+  voitNotes = computed(() => this.auth.peutLire('notes'));
   /** Photo lue en binaire, affichée par une adresse locale au navigateur. */
   photo = signal<string | null>(null);
   photoEnCours = signal(false);

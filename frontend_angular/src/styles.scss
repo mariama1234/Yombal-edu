@@ -98,6 +98,18 @@ h1,h2,h3{font-family:var(--font-display);margin:0;}
 .barre-etat{color:var(--ink-400);font-size:11.5px;text-align:right;font-variant-numeric:tabular-nums;}
 .pill-sature{background:var(--serie-2-fond);color:var(--serie-2);padding:2px 7px;border-radius:20px;font-size:10.5px;font-weight:600;}
 
+/* Jauge sous un champ de lecture (budget d'une dépense) : la part déjà
+   consommée, puis la part engagée par la saisie en cours, qui s'allonge à
+   chaque chiffre tapé. La transition rend le décompte lisible au lieu de le
+   faire sauter d'un coup. */
+.jauge-saisie{display:flex;background:var(--bg);border:1px solid var(--line);border-radius:5px;height:9px;overflow:hidden;margin-top:7px;}
+.jauge-saisie > span{display:block;height:100%;transition:width .18s ease;}
+.jauge-consomme{background:var(--serie-1);}
+.jauge-engagee{background:var(--orange-500);}
+/* Enveloppe dépassée : la jauge le dit par la couleur, le message sous le
+   champ le dit en toutes lettres. */
+.jauge-saisie.depasse > span{background:var(--serie-2);}
+
 .sous-titre{font-family:var(--font-display);font-size:11px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:var(--ink-400);margin-bottom:10px;}
 .bloc-resultats{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:26px;}
 .evolution{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;}

@@ -5,10 +5,14 @@
     <p>Frais dus, encaissements et recouvrement.</p>
   </div>
   <div style="display:flex; gap:8px; flex-wrap:wrap;">
-    <a class="btn-ghost" routerLink="/finances/bilan">Bilan financier</a>
+    @if (auth.peutLire('budget')) {
+      <a class="btn-ghost" routerLink="/finances/bilan">Bilan financier</a>
+    }
     <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
-    <a class="btn-ghost" routerLink="/finances/relances">Relances</a>
-    @if (estAdmin()) {
+    @if (peutRelancer()) {
+      <a class="btn-ghost" routerLink="/finances/relances">Relances</a>
+    }
+    @if (peutFacturer()) {
       <a class="btn-primary" routerLink="/finances/generer">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
         Générer les frais
@@ -199,7 +203,9 @@
             <td><span class="pill" [class]="f.statut">{{ f.statut }}</span></td>
             <td style="text-align:right;">
               @if (f.statut !== 'paye') {
-                <a class="btn-primary" style="padding:6px 12px; font-size:12px;" [routerLink]="['/finances/encaisser', f.id]">Encaisser</a>
+                @if (peutEncaisser()) {
+                  <a class="btn-primary" style="padding:6px 12px; font-size:12px;" [routerLink]="['/finances/encaisser', f.id]">Encaisser</a>
+                }
               }
             </td>
           </tr>

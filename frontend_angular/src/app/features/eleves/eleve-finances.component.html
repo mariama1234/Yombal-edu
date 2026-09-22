@@ -26,17 +26,19 @@
             }
           </select>
         }
-        @if (s.scolarite) {
+        @if (s.scolarite && droitEncaisser()) {
           <button type="button" class="btn-ghost" (click)="ouvrirAjout()">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4L12 22l-9-9V3h10z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>
             Ajouter des frais
           </button>
         }
-        <button type="button" class="btn-primary" (click)="ouvrirSaisie()"
-                [disabled]="!peutEncaisser()">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-          Enregistrer un paiement
-        </button>
+        @if (droitEncaisser()) {
+          <button type="button" class="btn-primary" (click)="ouvrirSaisie()"
+                  [disabled]="!peutEncaisser()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            Enregistrer un paiement
+          </button>
+        }
       </div>
     </div>
 
@@ -58,7 +60,9 @@
         <div class="form-error" style="margin:10px 0 0;">
           Pas encore à jour : {{ s.resume.frais_manquants!.join(', ') }} non émis pour {{ s.annee.libelle }}.
           Un élève n'est à jour qu'une fois réglés tous les frais qui lui reviennent.
-          <a class="panel-link" routerLink="/finances/generer">Générer les frais →</a>
+          @if (droitFacturer()) {
+            <a class="panel-link" routerLink="/finances/generer">Générer les frais →</a>
+          }
         </div>
       }
     }
@@ -352,7 +356,9 @@
             <td class="mono">{{ f.reste | number:'1.0-0' }}</td>
             <td><span class="pill" [class]="f.statut">{{ f.statut_libelle }}</span></td>
             <td style="text-align:right;">
-              <button type="button" class="panel-link" (click)="ouvrirRemise(f)">Remise</button>
+              @if (droitFacturer()) {
+                <button type="button" class="panel-link" (click)="ouvrirRemise(f)">Remise</button>
+              }
             </td>
           </tr>
           @if (remiseOuverte() === f.id) {

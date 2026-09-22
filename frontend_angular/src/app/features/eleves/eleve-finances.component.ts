@@ -10,6 +10,7 @@ import {
 } from '../../core/models/models';
 import { FinanceService } from '../finances/finance.service';
 import { ToastService } from '../../core/services/toast.service';
+import { AuthService } from '../../core/services/auth.service';
 import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
 
 /**
@@ -41,6 +42,12 @@ export class EleveFinancesComponent implements OnInit {
   private fb = inject(FormBuilder);
   private finance = inject(FinanceService);
   private toast = inject(ToastService);
+  private auth = inject(AuthService);
+
+  // Matrice des autorisations : encaisser et ajouter des frais au guichet
+  // relèvent de l'encaissement ; accorder une remise ou facturer, des frais.
+  droitEncaisser = computed(() => this.auth.peutEcrire('encaissement'));
+  droitFacturer = computed(() => this.auth.peutEcrire('frais'));
 
   situation = signal<SituationFinanciereEleve | null>(null);
   chargement = signal(true);

@@ -100,10 +100,16 @@ export class DashboardComponent implements OnInit {
     ).toString();
     const suffixe = requete ? `?${requete}` : '';
 
+    // Contenu personnalisé par profil : on ne demande que ce que la matrice
+    // ouvre au compte, plutôt que de laisser le serveur refuser panneau par
+    // panneau. Les vues sur toute l'école sont fermées aux familles.
+    const auth = this.auth;
+    const equipe = !auth.estFamille();
+
     this.http
       .get<Paginated<unknown>>(`${environment.apiUrl}/eleves/${suffixe}`)
       .subscribe((r) => this.nbEleves.set(r.count));
-    this.http
+    if (auth.peutLire('classes')) this.http
       .get<Paginated<Classe>>(`${environment.apiUrl}/classes/${suffixe}`)
       .subscribe((r) => {
         this.nbClasses.set(r.count);
@@ -112,31 +118,29 @@ export class DashboardComponent implements OnInit {
 
     // Le bilan porte déjà les chiffres financiers de l'année : une seule
     // requête remplace le comptage des impayés et le solde de caisse.
-    this.finance.bilan(params).subscribe({
+    if (auth.peutLire('budget')) this.finance.bilan(params).subscribe({
       next: (b) => this.bilan.set(b),
       error: () => this.bilan.set(null),
     });
 
     // Sans période précisée, le serveur retient celle en cours : le directeur
     // ouvre son tableau de bord sur le trimestre du moment.
-    this.http
+    if (equipe && auth.peutLire('bulletins')) this.http
       .get<SyntheseEcole>(`${environment.apiUrl}/bulletins/synthese/${suffixe}`)
       .subscribe({
         next: (s) => this.synthese.set(s),
         error: () => this.synthese.set(null),
       });
 
-    this.http
+    if (equipe && auth.peutLire('frais')) this.http
       .get<ImpayesParClasse>(
         `${environment.apiUrl}/frais-eleves/impayes/par-classe/${suffixe}`)
       .subscribe({
         next: (i) => this.impayes.set(i),
-        // Le caissier n'est pas seul à ouvrir cet écran : un enseignant n'a
-        // pas accès aux finances, et le panneau disparaît simplement.
         error: () => this.impayes.set(null),
       });
 
-    this.http
+    if (equipe && auth.peutLire('presences')) this.http
       .get<SyntheseAssiduite>(`${environment.apiUrl}/absences/synthese/${suffixe}`)
       .subscribe({
         next: (a) => this.assiduite.set(a),

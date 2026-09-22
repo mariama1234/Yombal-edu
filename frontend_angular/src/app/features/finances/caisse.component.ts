@@ -97,7 +97,10 @@ export class CaisseComponent implements OnInit {
   clotureOuverte = signal(false);
   commentaireCloture = '';
 
-  estAdmin = computed(() => this.auth.currentUser()?.role === 'admin');
+  /** Un caissier ne voit que sa caisse ; les autres profils peuvent filtrer par caissier. */
+  voitToutesLesCaisses = computed(() => this.auth.currentUser()?.role !== 'caissier');
+  peutEncaisser = computed(() => this.auth.peutEcrire('encaissement'));
+  peutSaisirDepense = computed(() => this.auth.peutEcrire('depenses'));
   estAujourdhui = computed(() => this.jour() >= this.aujourdhui);
   cloture = computed(() => this.journee()?.cloture ?? null);
   /** Des opérations ont été saisies après l'arrêté : la caisse ne tombe plus juste. */
@@ -116,7 +119,7 @@ export class CaisseComponent implements OnInit {
 
     // Depuis l'inscription : la caisse s'ouvre sur l'élève à encaisser.
     const matricule = params.get('matricule');
-    if (matricule) {
+    if (matricule && this.peutEncaisser()) {
       this.matricule = matricule;
       this.guichetOuvert.set(true);
       this.rechercher();

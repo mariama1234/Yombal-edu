@@ -67,11 +67,18 @@ class UtilisateurManager(BaseUserManager):
 
 class Utilisateur(AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
+        # Les droits de chaque rôle sont dans permissions.py (matrice par profil).
         ADMIN = "admin", "Administrateur"
+        DIRECTEUR = "directeur", "Directeur"
+        RESPONSABLE_ADMINISTRATIF = "responsable_administratif", "Responsable administratif"
+        SURVEILLANT = "surveillant", "Surveillant"
+        SECRETAIRE = "secretaire", "Secrétaire administratif"
+        CAISSIER = "caissier", "Caissier"
+        COMPTABLE = "comptable", "Comptable"
+        RESPONSABLE_FINANCIER = "responsable_financier", "Responsable financier"
         ENSEIGNANT = "enseignant", "Enseignant"
         PARENT = "parent", "Parent"
         ELEVE = "eleve", "Élève"
-        CAISSIER = "caissier", "Caissier"
 
     class Statut(models.TextChoices):
         ACTIF = "actif", "Actif"
@@ -81,7 +88,7 @@ class Utilisateur(AbstractBaseUser, PermissionsMixin):
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
     email = models.EmailField(max_length=150, unique=True)
-    role = models.CharField(max_length=20, choices=Role.choices)
+    role = models.CharField(max_length=30, choices=Role.choices)
     telephone = models.CharField(max_length=30, blank=True, null=True)
     date_creation = models.DateTimeField(auto_now_add=True)
     statut = models.CharField(max_length=20, choices=Statut.choices, default=Statut.ACTIF)
@@ -751,16 +758,15 @@ class Relance(models.Model):
 
 class TypeDepense(models.Model):
     """
-    Poste de charge de l'école, et l'enveloppe qu'elle lui accorde.
+    Poste de charge de l'école : loyer, salaires, fournitures…
 
-    Le budget alloué se saisit ici ; ce qui en reste ne se stocke pas, il se
-    déduit des dépenses de l'année (voir `finances.annoter_consommation`).
-    Stocker le disponible reviendrait à le laisser dériver dès la première
-    dépense corrigée ou supprimée — même raison qu'`imputer_au_budget`.
+    Le poste ne porte pas son budget : une enveloppe vaut pour une année, et
+    celle de l'an dernier n'est pas celle en cours. Le montant vit donc dans
+    `Budget`, une ligne par poste et par année, même si l'écran des catégories
+    est le seul endroit où on la saisit (voir `TypeDepenseSerializer`).
     """
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="types_depenses", db_column="id_ecole")
     libelle = models.CharField(max_length=100)
-    budget_alloue = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     class Meta:
         db_table = "type_depense"
@@ -894,7 +900,7 @@ class Communication(models.Model):
     # Renseignés selon la cible : une classe précise, ou un rôle (parents, enseignants...).
     id_classe = models.ForeignKey(Classe, on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="communications", db_column="id_classe")
-    role_cible = models.CharField(max_length=20, choices=Utilisateur.Role.choices, blank=True, null=True)
+    role_cible = models.CharField(max_length=30, choices=Utilisateur.Role.choices, blank=True, null=True)
     objet = models.CharField(max_length=255)
     contenu = models.TextField()
     statut = models.CharField(max_length=15, choices=Statut.choices, default=Statut.BROUILLON)

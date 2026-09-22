@@ -4,6 +4,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { EleveService } from './eleve.service';
+import { AuthService } from '../../core/services/auth.service';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import {
   Classe,
@@ -39,6 +40,10 @@ export class ElevesListComponent {
   private router = inject(Router);
   private http = inject(HttpClient);
   annees = inject(AnneeScolaireService);
+  private auth = inject(AuthService);
+
+  /** Inscrire, importer, réinscrire : l'écriture sur les inscriptions. */
+  peutInscrire = computed(() => this.auth.peutEcrire('inscriptions'));
 
   eleves = signal<Eleve[]>([]);
   aReinscrire = signal<EleveAReinscrire[]>([]);
@@ -110,7 +115,8 @@ export class ElevesListComponent {
       this.recherche.set(params.get('recherche') ?? '');
       // Revenir de l'écran de réinscription doit rouvrir la bonne vue.
       const vue = params.get('vue');
-      if (vue && VUES.includes(vue as Vue)) this.vue.set(vue as Vue);
+      if (vue && VUES.includes(vue as Vue)
+          && (vue !== 'a_reinscrire' || this.peutInscrire())) this.vue.set(vue as Vue);
       // Depuis la liste des classes : « Élèves » ouvre la liste sur cette classe.
       const classe = params.get('classe');
       if (classe) this.filtreClasse.set(classe);

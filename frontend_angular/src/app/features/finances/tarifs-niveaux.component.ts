@@ -4,6 +4,7 @@ import { RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { ToastService } from '../../core/services/toast.service';
+import { AuthService } from '../../core/services/auth.service';
 
 /** Réponse de GET /api/tarifs/grille/. */
 interface GrilleTarifs {
@@ -153,6 +154,10 @@ type Mode = 'niveau' | 'frais';
 export class TarifsNiveauxComponent implements OnInit {
   private http = inject(HttpClient);
   private toast = inject(ToastService);
+  private auth = inject(AuthService);
+
+  /** Direction, vie scolaire et responsable financier fixent les tarifs ; les autres les consultent. */
+  peutModifier = computed(() => this.auth.peutEcrire('types_frais'));
   private readonly url = `${environment.apiUrl}/tarifs/grille/`;
 
   grille = signal<GrilleTarifs | null>(null);

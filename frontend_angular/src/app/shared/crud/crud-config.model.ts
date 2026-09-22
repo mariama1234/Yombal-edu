@@ -27,8 +27,18 @@ export interface SourceLecture {
   cle: string;
   /** Unité ajoutée après la valeur, ex: « F CFA ». */
   suffixe?: string;
-  /** Champ de saisie comparé à la valeur : au-delà, le formulaire avertit. */
+  /**
+   * Champ de saisie retranché à la valeur au fil de la frappe : l'affichage
+   * montre ce qui resterait une fois la saisie enregistrée, et le formulaire
+   * avertit dès que ça passe en dessous de zéro.
+   */
   compare?: string;
+  /**
+   * Clé de l'enveloppe totale sur l'option choisie, ex: `budget_alloue`.
+   * Présente, elle fait tracer une jauge sous le champ ; absente, il n'y a
+   * rien à quoi rapporter la consommation et le champ reste seul.
+   */
+  total?: string;
 }
 
 export interface FieldConfig {

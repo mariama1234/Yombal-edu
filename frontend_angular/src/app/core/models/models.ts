@@ -15,11 +15,32 @@ export interface Utilisateur {
   nom: string;
   prenom: string;
   email: string;
-  role: 'admin' | 'enseignant' | 'parent' | 'eleve' | 'caissier';
+  role: Role;
   telephone?: string;
   statut: 'actif' | 'inactif';
   date_creation: string;
+  /** Renseignés par /auth/moi/ seulement. */
+  role_libelle?: string;
+  profil?: string;
+  /** Modules ouverts au compte et niveau d'accès, lus sur la matrice du serveur. */
+  acces?: Partial<Record<Module, NiveauAcces>>;
 }
+
+export type Role =
+  | 'admin' | 'directeur' | 'responsable_administratif'
+  | 'surveillant' | 'secretaire'
+  | 'caissier' | 'comptable' | 'responsable_financier'
+  | 'enseignant' | 'parent' | 'eleve';
+
+export type NiveauAcces = 'lecture' | 'ecriture';
+
+/** Les modules de la matrice des autorisations (backend : permissions.py). */
+export type Module =
+  | 'tableau_de_bord' | 'eleves' | 'inscriptions' | 'parents' | 'classes'
+  | 'matieres' | 'emploi_du_temps' | 'presences' | 'notes' | 'bulletins'
+  | 'personnel' | 'frais' | 'encaissement' | 'relances' | 'journal_caisse'
+  | 'depenses' | 'budget' | 'types_frais' | 'parametres'
+  | 'annees_scolaires' | 'comptes' | 'communications';
 
 export interface Ecole {
   id: number;
@@ -496,7 +517,7 @@ export interface DossierEleve {
     telephone: string | null;
     email: string | null;
     contact_principal: boolean;
-  }[];
+  }[] | null;
   inscriptions: {
     id: number;
     annee: string;
@@ -519,8 +540,11 @@ export interface DossierEleve {
     moyenne_generale: number | null;
     rang_classe: number | null;
     appreciation: string | null;
-  }[];
+  }[] | null;
   /**
+   * Les sections parents, finances, résultats et assiduité valent `null` quand
+   * le profil n'a pas le droit de lire le module dont elles relèvent.
+   *
    * Résumé de l'année en cours, et d'elle seule : le détail complet vit dans
    * `SituationFinanciereEleve`, servi par l'onglet Finances.
    */
@@ -537,8 +561,8 @@ export interface DossierEleve {
     frais_impayes: number;
     frais_en_retard: number;
     prochaine_echeance: string | null;
-  };
-  assiduite: { absences: number; retards: number; non_justifiees: number };
+  } | null;
+  assiduite: { absences: number; retards: number; non_justifiees: number } | null;
 }
 
 /** Réponse de POST /inscriptions/reinscrire/. */

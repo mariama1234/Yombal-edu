@@ -4,10 +4,12 @@
     <h1>Caisse &amp; trésorerie</h1>
     <p>Encaissements, dépenses et solde de trésorerie.</p>
   </div>
-  <button type="button" class="btn-accent" (click)="ouvrirGuichet()">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
-    Nouvel encaissement
-  </button>
+  @if (peutEncaisser()) {
+    <button type="button" class="btn-accent" (click)="ouvrirGuichet()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+      Nouvel encaissement
+    </button>
+  }
 </div>
 
 <!-- Le jour consulté : aujourd'hui par défaut, les jours passés à un clic. -->
@@ -21,7 +23,7 @@
     <button type="button" class="chip" (click)="choisirJour(aujourdhui)">Aujourd'hui</button>
   }
 
-  @if (estAdmin()) {
+  @if (voitToutesLesCaisses()) {
     <select class="input" style="width:auto;" aria-label="Filtrer par caissier"
             [value]="caissier()" (change)="choisirCaissier($any($event.target).value)">
       <option value="">Tous les caissiers</option>
@@ -76,9 +78,11 @@
     <div class="panel">
       <div class="panel-head">
         <div class="panel-title">Encaissements</div>
-        <button type="button" class="btn-accent petit" (click)="ouvrirGuichet()">
-          + Nouvel encaissement
-        </button>
+        @if (peutEncaisser()) {
+          <button type="button" class="btn-accent petit" (click)="ouvrirGuichet()">
+            + Nouvel encaissement
+          </button>
+        }
       </div>
 
       @if (j.paiements.length === 0) {
@@ -124,7 +128,7 @@
     <div class="panel">
       <div class="panel-head">
         <div class="panel-title">Dépenses</div>
-        @if (estAdmin()) {
+        @if (peutSaisirDepense()) {
           <a class="btn-ghost petit" routerLink="/depenses/nouveau">− Nouvelle dépense</a>
         }
       </div>
@@ -163,7 +167,7 @@
         Clôture de caisse du jour ({{ j.date | date:'dd/MM' }})
         @if (cloture()) { <span class="pill a_jour" style="margin-left:8px;">Clôturée</span> }
       </div>
-      @if (!cloture() && !clotureOuverte()) {
+      @if (peutEncaisser() && !cloture() && !clotureOuverte()) {
         <button type="button" class="btn-accent" (click)="clotureOuverte.set(true)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
           Clôturer la journée

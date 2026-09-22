@@ -6,6 +6,8 @@ import { ENTITY_CONFIGS } from './entity-configs';
 import { EntityConfig, FiltreConfig, LienLigne, RowAction } from './crud-config.model';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { ToastService } from '../../core/services/toast.service';
+import { AuthService } from '../../core/services/auth.service';
+import { MODULE_DE_L_ENTITE } from '../../core/guards/acces.guard';
 
 @Component({
   selector: 'app-generic-list',
@@ -32,6 +34,17 @@ export class GenericListComponent implements OnInit {
 
   annees = inject(AnneeScolaireService);
   private toast = inject(ToastService);
+  private auth = inject(AuthService);
+
+  /**
+   * Ajout, modification, suppression et actions de ligne : seulement si
+   * l'entité n'est pas en consultation seule *et* que le profil peut écrire
+   * dans son module. Un comptable voit les classes, il ne les modifie pas.
+   */
+  modifiable(): boolean {
+    if (!this.config || this.config.lectureSeule) return false;
+    return this.auth.peutEcrire(MODULE_DE_L_ENTITE[this.config.key]);
+  }
 
   constructor(private route: ActivatedRoute, private router: Router, private crud: GenericCrudService<any>) {
     // Changer d'année dans le bandeau haut recharge la liste courante, sans

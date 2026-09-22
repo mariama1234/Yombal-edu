@@ -1,6 +1,6 @@
 from rest_framework import mixins, viewsets, permissions, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,7 +20,9 @@ from drf_spectacular.utils import extend_schema
 from . import (corbeille, finances, finances_documents, imports_eleves, models, pedagogie,
                pedagogie_documents, photos, scolarite, serializers)
 from .audit import JournalisationMixin, journaliser
-from .permissions import EstAdmin, EstAdminOuCaissier, EstAdminOuEnseignant, LectureSeuleOuAdmin
+from .permissions import (ECRITURE, AccesModule, EstAdmin, Profil, acces_du_compte,
+                          classes_de_lenseignant, eleves_de_la_famille, est_direction,
+                          peut_lire, profil_de)
 
 Utilisateur = get_user_model()
 
@@ -258,6 +260,67 @@ class FiltreParAnneeMixin:
         return qs.distinct() if "__" in self.chemin_annee else qs
 
 
+class PerimetreMixin:
+    """
+    Ce qu'un compte voit dans un module qu'il a le droit d'ouvrir.
+
+    La matrice dit « un parent lit les notes » ; reste à dire lesquelles. Un
+    parent ne voit que ses enfants, un élève que lui-même : `perimetre_famille`
+    nomme le chemin de la ligne vers l'élève. `famille_exclue` ferme la liste
+    aux familles quand elle ne porte pas sur un élève en particulier (un
+    conseil de classe). Un enseignant ne voit et ne saisit que dans ses
+    classes : `perimetre_enseignant` nomme le chemin vers la classe.
+
+    Placé en tête des bases : ses `perform_*` vérifient avant tous les autres.
+    """
+    perimetre_famille = None
+    famille_exclue = False
+    perimetre_enseignant = None
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        utilisateur = self.request.user
+        if getattr(self, "swagger_fake_view", False) or not utilisateur.is_authenticated:
+            return qs
+        eleves = eleves_de_la_famille(utilisateur)
+        if eleves is not None:
+            if self.famille_exclue:
+                return qs.none()
+            if self.perimetre_famille:
+                qs = qs.filter(**{f"{self.perimetre_famille}__in": eleves.values("pk")}).distinct()
+        classes = classes_de_lenseignant(utilisateur)
+        if classes is not None and self.perimetre_enseignant:
+            qs = qs.filter(**{f"{self.perimetre_enseignant}__in": classes.values("pk")}).distinct()
+        return qs
+
+    def _verifier_perimetre(self, serializer):
+        """Un enseignant n'écrit que dans ses classes."""
+        classes = classes_de_lenseignant(self.request.user)
+        if classes is None or not self.perimetre_enseignant:
+            return
+        donnees = serializer.validated_data
+        classe = donnees.get("id_classe")
+        if classe is None and donnees.get("id_evaluation") is not None:
+            classe = donnees["id_evaluation"].id_classe
+        if classe is not None and not classes.filter(pk=classe.pk).exists():
+            raise PermissionDenied("Cette classe ne fait pas partie des vôtres.")
+
+    def perform_create(self, serializer):
+        self._verifier_perimetre(serializer)
+        super().perform_create(serializer)
+
+    def perform_update(self, serializer):
+        self._verifier_perimetre(serializer)
+        super().perform_update(serializer)
+
+
+def _classe_de_lenseignant_ou_refus(utilisateur, classe):
+    """Refuse (403) à un enseignant une classe qui n'est pas la sienne."""
+    classes = classes_de_lenseignant(utilisateur)
+    if classes is not None and not classes.filter(pk=classe.pk).exists():
+        raise PermissionDenied("Cette classe ne fait pas partie des vôtres.")
+
+
 class CorbeilleMixin:
     """
     Toute suppression passe par la corbeille.
@@ -325,7 +388,8 @@ class EcoleViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, mix
     """
     queryset = models.Ecole.objects.all()
     serializer_class = serializers.EcoleSerializer
-    permission_classes = [EstAdmin]
+    permission_classes = [AccesModule]
+    module = "parametres"
 
     def get_queryset(self):
         if not self.request.user.is_authenticated:
@@ -338,14 +402,16 @@ class EcoleViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, mix
 class AnneeScolaireViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.AnneeScolaire.objects.all()
     serializer_class = serializers.AnneeScolaireSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "annees_scolaires"
 
 
 class PeriodeScolaireViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
     """Trimestres ou semestres. Isolés via l'année scolaire, qui porte l'école."""
     queryset = models.PeriodeScolaire.objects.select_related("id_annee_scolaire").all()
     serializer_class = serializers.PeriodeScolaireSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "annees_scolaires"
     filterset_fields = ["id_annee_scolaire"]
 
     def get_queryset(self):
@@ -357,29 +423,58 @@ class PeriodeScolaireViewSet(CoherenceEcoleMixin, CorbeilleMixin, Journalisation
 class NiveauViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Niveau.objects.prefetch_related("tarifs").all()
     serializer_class = serializers.NiveauSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "classes"
 
 
 class ClasseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                     EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Classe.objects.select_related("id_niveau", "id_enseignant_principal").all()
     serializer_class = serializers.ClasseSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "classes"
     filterset_fields = ["id_niveau"]
     search_fields = ["nom", "id_niveau__libelle"]
 
 
-class ParentTuteurViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
+class ParentTuteurViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.ParentTuteur.objects.all()
     serializer_class = serializers.ParentTuteurSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [AccesModule]
+    module = "parents"
+    perimetre_famille = "liens_eleves__id_eleve"
 
 
-class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
+class EleveViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                    EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Eleve.objects.all()
     serializer_class = serializers.EleveSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [AccesModule]
+    module = "eleves"
+    perimetre_famille = "pk"
+    # Les mouvements et la réinscription relèvent des inscriptions ; ce qui
+    # touche à l'argent, des frais ou de l'encaissement. Les écrans qui
+    # préparent une écriture exigent déjà le droit d'écrire.
+    modules_par_action = {
+        "a_reinscrire": ("inscriptions", ECRITURE),
+        "contexte_reinscription": ("inscriptions", ECRITURE),
+        "reinscrire": "inscriptions",
+        "inscrire": "inscriptions",
+        "importer": "inscriptions",
+        "changer_classe": "inscriptions",
+        "radier": "inscriptions",
+        "transferer": "inscriptions",
+        "autoriser_en_classe": "inscriptions",
+        "retirer_autorisation": "inscriptions",
+        "finances": "frais",
+        "facture": "frais",
+        "par_matricule": "frais",
+        "frais_disponibles": ("encaissement", ECRITURE),
+        "ajouter_frais": "encaissement",
+        "releve": "notes",
+        "exporter_releve": "notes",
+    }
+    actions_personnel = ("par_matricule",)
     filterset_fields = ["statut"]
     search_fields = ["nom", "prenom", "matricule"]
     # Un élève n'appartient pas à une année : ce sont ses inscriptions qui la
@@ -492,8 +587,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         })
 
     @extend_schema(responses=dict)
-    @action(detail=True, methods=["get"], url_path="reinscription",
-            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    @action(detail=True, methods=["get"], url_path="reinscription")
     def contexte_reinscription(self, request, pk=None):
         """
         De quoi pré-remplir l'écran de réinscription d'un élève :
@@ -505,7 +599,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         """
         ecole = request.user.id_ecole
         try:
-            eleve = models.Eleve.objects.get(pk=pk, id_ecole=ecole)
+            eleve = self._eleves_accessibles(request).get(pk=pk)
         except (models.Eleve.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Élève introuvable."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -592,8 +686,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         })
 
     @extend_schema(request=serializers.ReinscriptionEleveSerializer, responses=dict)
-    @action(detail=True, methods=["post"],
-            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    @action(detail=True, methods=["post"])
     def reinscrire(self, request, pk=None):
         """
         Réinscription d'un élève seul : POST /api/eleves/{id}/reinscrire/
@@ -606,7 +699,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         # Comme pour l'onglet Finances : `get_object()` filtrerait sur l'année
         # affichée, et l'élève à réinscrire n'y est justement pas inscrit.
         try:
-            eleve = models.Eleve.objects.get(pk=pk, id_ecole=ecole)
+            eleve = self._eleves_accessibles(request).get(pk=pk)
         except (models.Eleve.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Élève introuvable."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -681,8 +774,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         responses={200: None, 201: None},
     )
     @action(detail=False, methods=["post"], url_path="importer",
-            parser_classes=[MultiPartParser, FormParser],
-            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+            parser_classes=[MultiPartParser, FormParser])
     def importer(self, request):
         """
         Import d'une liste d'élèves : POST /api/eleves/importer/
@@ -760,7 +852,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         eleve.refresh_from_db()
         journaliser(request, action_journal, entite="eleve", id_entite=eleve.pk,
                     description=description(eleve, entree.validated_data))
-        return Response(scolarite.dossier(request.user.id_ecole, eleve))
+        return Response(self._dossier(request, eleve))
 
     @extend_schema(responses=dict)
     @action(detail=True, methods=["get"])
@@ -771,11 +863,25 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         Identité, parents, parcours, pièces, résultats, situation financière
         et assiduité en une réponse — l'écran les affiche ensemble.
         """
-        return Response(scolarite.dossier(request.user.id_ecole, self.get_object()))
+        return Response(self._dossier(request, self.get_object()))
+
+    # Section du dossier → module qu'il faut pouvoir lire pour la recevoir.
+    SECTIONS_DU_DOSSIER = {"parents": "parents", "finances": "frais",
+                           "resultats": "bulletins", "assiduite": "presences"}
+
+    def _dossier(self, request, eleve):
+        """
+        Le dossier, amputé des sections que le profil n'a pas le droit de lire :
+        un enseignant ouvre la fiche d'un élève sans voir ce que doit la famille.
+        """
+        donnees = scolarite.dossier(request.user.id_ecole, eleve)
+        for section, module in self.SECTIONS_DU_DOSSIER.items():
+            if not peut_lire(request.user, module):
+                donnees[section] = None
+        return donnees
 
     @extend_schema(responses=dict)
-    @action(detail=True, methods=["get"],
-            permission_classes=[permissions.IsAuthenticated, EstAdminOuCaissier])
+    @action(detail=True, methods=["get"])
     def finances(self, request, pk=None):
         """
         Situation financière de l'élève :
@@ -792,7 +898,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         # ancien élève radié en cours d'année répondrait 404. L'école reste,
         # elle, vérifiée — c'est la seule cloison qui compte ici.
         try:
-            eleve = models.Eleve.objects.get(pk=pk, id_ecole=ecole)
+            eleve = self._eleves_accessibles(request).get(pk=pk)
         except (models.Eleve.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Élève introuvable."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -821,10 +927,11 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
 
         Lue par l'API plutôt que servie à une URL publique : c'est la photo d'un
         enfant, elle reste derrière l'authentification et le cloisonnement par
-        école. Tout compte de l'école la voit ; seul un administrateur la modifie.
+        école. Tout compte qui lit l'élève la voit ; le modifier demande le droit
+        d'écrire sur les élèves.
         """
         try:
-            eleve = models.Eleve.objects.get(pk=pk, id_ecole=request.user.id_ecole)
+            eleve = self._eleves_accessibles(request).get(pk=pk)
         except (models.Eleve.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Élève introuvable."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -836,10 +943,6 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
             reponse = FileResponse(open(fichier, "rb"), content_type=photos.type_mime(fichier))
             reponse["Cache-Control"] = "private, no-store"
             return reponse
-
-        if request.user.role != Utilisateur.Role.ADMIN:
-            return Response({"detail": "Seul un administrateur peut modifier la photo."},
-                            status=status.HTTP_403_FORBIDDEN)
 
         if request.method == "DELETE":
             photos.supprimer(eleve)
@@ -861,8 +964,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         return Response({"a_photo": True})
 
     @extend_schema(responses=dict)
-    @action(detail=False, methods=["get"], url_path="par-matricule",
-            permission_classes=[permissions.IsAuthenticated, EstAdminOuCaissier])
+    @action(detail=False, methods=["get"], url_path="par-matricule")
     def par_matricule(self, request):
         """
         Guichet : GET /api/eleves/par-matricule/?matricule=ELV-2026-0001
@@ -874,7 +976,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         matricule = (request.query_params.get("matricule") or "").strip()
         if not matricule:
             raise ValidationError({"matricule": "Saisissez le matricule figurant sur la facture."})
-        eleve = models.Eleve.objects.filter(id_ecole=ecole, matricule__iexact=matricule).first()
+        eleve = self._eleves_accessibles(request).filter(matricule__iexact=matricule).first()
         if eleve is None:
             return Response({"detail": f"Aucun élève ne porte le matricule « {matricule} »."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -885,13 +987,12 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         return Response(finances.facture(eleve, annee))
 
     @extend_schema(responses={200: None})
-    @action(detail=True, methods=["get"],
-            permission_classes=[permissions.IsAuthenticated, EstAdminOuCaissier])
+    @action(detail=True, methods=["get"])
     def facture(self, request, pk=None):
         """Facture remise à l'inscription : GET /api/eleves/{id}/facture/?id_annee_scolaire="""
         ecole = request.user.id_ecole
         try:
-            eleve = models.Eleve.objects.get(pk=pk, id_ecole=ecole)
+            eleve = self._eleves_accessibles(request).get(pk=pk)
         except (models.Eleve.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Élève introuvable."}, status=status.HTTP_404_NOT_FOUND)
         annee = _annee_de_leleve(request, ecole, eleve)
@@ -946,8 +1047,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         )
 
     @extend_schema(request=serializers.ChangementClasseSerializer, responses=dict)
-    @action(detail=True, methods=["post"], url_path="changer-classe",
-            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    @action(detail=True, methods=["post"], url_path="changer-classe")
     def changer_classe(self, request, pk=None):
         """Changement de classe : POST /api/eleves/{id}/changer-classe/"""
         return self._mouvement(
@@ -962,8 +1062,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         )
 
     @extend_schema(request=serializers.RadiationSerializer, responses=dict)
-    @action(detail=True, methods=["post"],
-            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    @action(detail=True, methods=["post"])
     def radier(self, request, pk=None):
         """Radiation : POST /api/eleves/{id}/radier/"""
         return self._mouvement(
@@ -976,8 +1075,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         )
 
     @extend_schema(request=serializers.TransfertSerializer, responses=dict)
-    @action(detail=True, methods=["post"],
-            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    @action(detail=True, methods=["post"])
     def transferer(self, request, pk=None):
         """Transfert vers un autre établissement : POST /api/eleves/{id}/transferer/"""
         return self._mouvement(
@@ -991,8 +1089,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         )
 
     @extend_schema(request=serializers.AutorisationClasseSerializer, responses=dict)
-    @action(detail=True, methods=["post"], url_path="autoriser-en-classe",
-            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    @action(detail=True, methods=["post"], url_path="autoriser-en-classe")
     def autoriser_en_classe(self, request, pk=None):
         """
         Exception : POST /api/eleves/{id}/autoriser-en-classe/
@@ -1009,8 +1106,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         )
 
     @extend_schema(request=serializers.RetraitAutorisationSerializer, responses=dict)
-    @action(detail=True, methods=["post"], url_path="retirer-autorisation",
-            permission_classes=[permissions.IsAuthenticated, EstAdmin])
+    @action(detail=True, methods=["post"], url_path="retirer-autorisation")
     def retirer_autorisation(self, request, pk=None):
         """Retrait de l'exception : POST /api/eleves/{id}/retirer-autorisation/"""
         return self._mouvement(
@@ -1029,13 +1125,24 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         écarterait un inscrit incomplet, précisément celui qu'on veut servir.
         """
         try:
-            return models.Eleve.objects.get(pk=pk, id_ecole=request.user.id_ecole)
+            return self._eleves_accessibles(request).get(pk=pk)
         except (models.Eleve.DoesNotExist, ValueError, TypeError):
             return None
 
+    def _eleves_accessibles(self, request):
+        """
+        Les élèves de l'école que le compte peut ouvrir, sans le filtre de liste.
+
+        Les actions qui ne passent pas par `get_object()` — pour échapper au
+        filtre par année — doivent garder le périmètre famille : sans lui, un
+        parent lirait la situation de n'importe quel élève par son identifiant.
+        """
+        qs = models.Eleve.objects.filter(id_ecole=request.user.id_ecole)
+        famille = eleves_de_la_famille(request.user)
+        return qs if famille is None else qs.filter(pk__in=famille.values("pk"))
+
     @extend_schema(responses=dict)
-    @action(detail=True, methods=["get"], url_path="frais-disponibles",
-            permission_classes=[permissions.IsAuthenticated, EstAdminOuCaissier])
+    @action(detail=True, methods=["get"], url_path="frais-disponibles")
     def frais_disponibles(self, request, pk=None):
         """Frais au choix qu'on peut ajouter : GET /api/eleves/{id}/frais-disponibles/"""
         ecole = request.user.id_ecole
@@ -1050,8 +1157,7 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
             raise ValidationError({"detail": str(exc)})
 
     @extend_schema(request=serializers.AjoutFraisSerializer, responses=dict)
-    @action(detail=True, methods=["post"], url_path="ajouter-frais",
-            permission_classes=[permissions.IsAuthenticated, EstAdminOuCaissier])
+    @action(detail=True, methods=["post"], url_path="ajouter-frais")
     def ajouter_frais(self, request, pk=None):
         """
         Frais au choix souscrits en cours d'année : POST /api/eleves/{id}/ajouter-frais/
@@ -1087,10 +1193,12 @@ class EleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fil
         return Response(resultat, status=status.HTTP_201_CREATED)
 
 
-class InscriptionViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class InscriptionViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
     queryset = models.Inscription.objects.select_related("id_eleve", "id_classe").all()
     serializer_class = serializers.InscriptionSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [AccesModule]
+    module = "inscriptions"
+    perimetre_famille = "id_eleve"
     filterset_fields = ["id_classe", "id_annee_scolaire", "statut"]
 
     def get_queryset(self):
@@ -1127,7 +1235,7 @@ class InscriptionViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixi
         scolarite.recaler_effectif(classe)
 
     @extend_schema(request=serializers.ReinscriptionSerializer, responses=dict)
-    @action(detail=False, methods=["post"], permission_classes=[EstAdmin])
+    @action(detail=False, methods=["post"])
     def reinscrire(self, request):
         """
         Réinscription d'une promotion : POST /api/inscriptions/reinscrire/
@@ -1166,32 +1274,36 @@ class InscriptionViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixi
         return Response(resultat, status=statut)
 
 
-class EleveParentViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class EleveParentViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
     """Rattache un parent à un élève, en dehors du formulaire d'inscription."""
     queryset = models.EleveParent.objects.select_related("id_eleve", "id_parent").all()
     serializer_class = serializers.EleveParentSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "parents"
+    perimetre_famille = "id_eleve"
     filterset_fields = ["id_eleve", "id_parent", "lien_parente"]
 
     def get_queryset(self):
         return super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
 
 
-class DossierAdministratifViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class DossierAdministratifViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
     """
     Pièces du dossier d'un élève. Distinct de /documents/, qui porte les
     documents de l'établissement.
     """
     queryset = models.DossierAdministratif.objects.select_related("id_eleve").all()
     serializer_class = serializers.DossierAdministratifSerializer
-    permission_classes = [EstAdmin]
+    permission_classes = [AccesModule]
+    module = "eleves"
+    perimetre_famille = "id_eleve"
     filterset_fields = ["id_eleve", "type_piece"]
 
     def get_queryset(self):
         return super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
 
 
-class HistoriqueScolaireViewSet(EcoleFiltreeMixin, viewsets.ReadOnlyModelViewSet):
+class HistoriqueScolaireViewSet(PerimetreMixin, EcoleFiltreeMixin, viewsets.ReadOnlyModelViewSet):
     """
     Parcours d'un élève, en lecture seule : les entrées sont écrites
     automatiquement par les inscriptions, pas saisies à la main.
@@ -1200,7 +1312,9 @@ class HistoriqueScolaireViewSet(EcoleFiltreeMixin, viewsets.ReadOnlyModelViewSet
         "id_eleve", "id_ancienne_classe", "id_nouvelle_classe"
     ).all().order_by("-date_evenement")
     serializer_class = serializers.HistoriqueScolaireSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [AccesModule]
+    module = "eleves"
+    perimetre_famille = "id_eleve"
     ecole_field = "id_eleve__id_ecole_id"
     filterset_fields = ["id_eleve", "type_evenement"]
 
@@ -1210,20 +1324,23 @@ class HistoriqueScolaireViewSet(EcoleFiltreeMixin, viewsets.ReadOnlyModelViewSet
 class EnseignantViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Enseignant.objects.all()
     serializer_class = serializers.EnseignantSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "personnel"
 
 
 class MatiereViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Matiere.objects.all()
     serializer_class = serializers.MatiereSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "matieres"
 
 
 class CoefficientMatiereViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
     """Poids d'une matière dans une classe — base du calcul des moyennes."""
     queryset = models.CoefficientMatiere.objects.select_related("id_matiere", "id_classe").all()
     serializer_class = serializers.CoefficientMatiereSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "matieres"
     filterset_fields = ["id_classe", "id_matiere", "id_annee_scolaire"]
 
     def get_queryset(self):
@@ -1238,7 +1355,8 @@ class AffectationEnseignantViewSet(CoherenceEcoleMixin, CorbeilleMixin, Journali
         "id_enseignant", "id_matiere", "id_classe"
     ).all()
     serializer_class = serializers.AffectationEnseignantSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "matieres"
     filterset_fields = ["id_enseignant", "id_classe", "id_matiere", "id_annee_scolaire"]
 
     def get_queryset(self):
@@ -1269,11 +1387,14 @@ class AffectationEnseignantViewSet(CoherenceEcoleMixin, CorbeilleMixin, Journali
         ])
 
 
-class ConseilClasseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
+class ConseilClasseViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                            viewsets.ModelViewSet):
     queryset = models.ConseilClasse.objects.select_related("id_classe", "id_periode").all()
     serializer_class = serializers.ConseilClasseSerializer
-    permission_classes = [EstAdminOuEnseignant]
+    permission_classes = [AccesModule]
+    module = "bulletins"
+    famille_exclue = True
+    perimetre_enseignant = "id_classe"
     filterset_fields = ["id_classe", "id_periode"]
     chemin_annee = "id_periode__id_annee_scolaire"
 
@@ -1283,12 +1404,15 @@ class ConseilClasseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMi
         )
 
 
-class EvaluationViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
+class EvaluationViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                         viewsets.ModelViewSet):
     queryset = models.Evaluation.objects.select_related(
         "id_matiere", "id_classe", "id_periode").all()
     serializer_class = serializers.EvaluationSerializer
-    permission_classes = [EstAdminOuEnseignant]
+    permission_classes = [AccesModule]
+    module = "notes"
+    perimetre_famille = "id_classe__inscriptions__id_eleve"
+    perimetre_enseignant = "id_classe"
     filterset_fields = ["id_classe", "id_matiere", "id_periode", "type"]
     chemin_annee = "id_periode__id_annee_scolaire"
 
@@ -1338,22 +1462,30 @@ class EvaluationViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin
         return Response(resultat)
 
 
-class NoteViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class NoteViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
     queryset = models.Note.objects.all()
     serializer_class = serializers.NoteSerializer
-    permission_classes = [EstAdminOuEnseignant]
+    permission_classes = [AccesModule]
+    module = "notes"
+    perimetre_famille = "id_eleve"
+    perimetre_enseignant = "id_evaluation__id_classe"
     filterset_fields = ["id_eleve", "id_evaluation"]
 
     def get_queryset(self):
         return super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
 
 
-class BulletinViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
+class BulletinViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                       viewsets.ModelViewSet):
     queryset = models.Bulletin.objects.select_related(
         "id_eleve", "id_classe", "id_periode").all()
     serializer_class = serializers.BulletinSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [AccesModule]
+    module = "bulletins"
+    perimetre_famille = "id_eleve"
+    perimetre_enseignant = "id_classe"
+    actions_personnel = ("generer", "moyennes", "exporter_moyennes", "palmares",
+                         "exporter_palmares", "statistiques", "synthese")
     filterset_fields = ["id_eleve", "id_classe", "id_periode"]
     chemin_annee = "id_periode__id_annee_scolaire"
 
@@ -1376,10 +1508,11 @@ class BulletinViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, 
                 id_annee_scolaire__id_ecole=ecole)
         except (models.PeriodeScolaire.DoesNotExist, ValueError, TypeError):
             raise ValidationError({"id_periode": "Période inconnue pour cette école."})
+        _classe_de_lenseignant_ou_refus(request.user, classe)
         return ecole, classe, periode
 
     @extend_schema(request=serializers.GenerationBulletinsSerializer, responses=dict)
-    @action(detail=False, methods=["post"], permission_classes=[EstAdminOuEnseignant])
+    @action(detail=False, methods=["post"])
     def generer(self, request):
         """
         Génération des bulletins d'une classe : POST /api/bulletins/generer/
@@ -1393,6 +1526,7 @@ class BulletinViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, 
         entree.is_valid(raise_exception=True)
         donnees = entree.validated_data
         valider = donnees["valider"]
+        _classe_de_lenseignant_ou_refus(request.user, donnees["id_classe"])
 
         try:
             resultat = pedagogie.generer_bulletins(
@@ -1556,11 +1690,15 @@ class BulletinViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, 
         )
 
 
-class AbsenceViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
+class AbsenceViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                      viewsets.ModelViewSet):
     queryset = models.Absence.objects.all()
     serializer_class = serializers.AbsenceSerializer
-    permission_classes = [EstAdminOuEnseignant]
+    permission_classes = [AccesModule]
+    module = "presences"
+    perimetre_famille = "id_eleve"
+    perimetre_enseignant = "id_classe"
+    actions_personnel = ("synthese",)
     filterset_fields = ["id_eleve", "id_classe", "statut", "justifiee"]
     chemin_annee = "id_classe__id_annee_scolaire"
 
@@ -1596,14 +1734,16 @@ class AbsenceViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, F
 class SalleViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Salle.objects.all()
     serializer_class = serializers.SalleSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "classes"
 
 
 class EmploiDuTempsViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                            viewsets.ModelViewSet):
     queryset = models.EmploiDuTemps.objects.select_related("id_matiere", "id_enseignant", "id_salle").all()
     serializer_class = serializers.EmploiDuTempsSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [AccesModule]
+    module = "emploi_du_temps"
 
     def get_queryset(self):
         qs = super().get_queryset().filter(id_classe__id_ecole_id=self.request.user.id_ecole_id)
@@ -1618,15 +1758,19 @@ class EmploiDuTempsViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMi
 class TypeFraisViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.TypeFrais.objects.all()
     serializer_class = serializers.TypeFraisSerializer
-    permission_classes = [EstAdmin]
+    permission_classes = [AccesModule]
+    module = "types_frais"
 
 
-class FraisEleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
+class FraisEleveViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                         viewsets.ModelViewSet):
     queryset = models.FraisEleve.objects.select_related(
         "id_eleve", "id_type_frais", "id_annee_scolaire").all()
     serializer_class = serializers.FraisEleveSerializer
-    permission_classes = [EstAdminOuCaissier]
+    permission_classes = [AccesModule]
+    module = "frais"
+    perimetre_famille = "id_eleve"
+    actions_personnel = ("generer", "impayes_par_classe", "situation", "exporter_impayes")
 
     def get_queryset(self):
         qs = super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
@@ -1655,7 +1799,7 @@ class FraisEleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin
         return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
 
     @extend_schema(request=serializers.GenerationFraisSerializer, responses=dict)
-    @action(detail=False, methods=["post"], permission_classes=[EstAdmin])
+    @action(detail=False, methods=["post"])
     def generer(self, request):
         """
         Génération en masse des frais : POST /api/frais-eleves/generer/
@@ -1760,7 +1904,7 @@ class FraisEleveViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin
         )
 
 
-class PaiementViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class PaiementViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
     """
     Cœur du parcours caissier : POST /api/paiements/ encaisse un paiement,
     met à jour le frais concerné, génère le reçu et le mouvement de caisse
@@ -1770,7 +1914,10 @@ class PaiementViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, 
         "id_frais_eleve", "id_frais_eleve__id_eleve", "id_frais_eleve__id_type_frais",
         "id_utilisateur_caissier", "recu").all()
     serializer_class = serializers.PaiementSerializer
-    permission_classes = [EstAdminOuCaissier]
+    permission_classes = [AccesModule]
+    module = "encaissement"
+    perimetre_famille = "id_frais_eleve__id_eleve"
+    actions_personnel = ("exporter",)
 
     def get_queryset(self):
         qs = super().get_queryset().filter(
@@ -1916,12 +2063,14 @@ class PaiementViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, 
         )
 
 
-class RecuViewSet(viewsets.ReadOnlyModelViewSet):
+class RecuViewSet(PerimetreMixin, viewsets.ReadOnlyModelViewSet):
     queryset = models.Recu.objects.select_related(
         "id_paiement", "id_paiement__id_frais_eleve",
         "id_paiement__id_frais_eleve__id_eleve").all()
     serializer_class = serializers.RecuSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [AccesModule]
+    module = "frais"
+    perimetre_famille = "id_paiement__id_frais_eleve__id_eleve"
 
     def get_queryset(self):
         return super().get_queryset().filter(id_paiement__id_frais_eleve__id_eleve__id_ecole_id=self.request.user.id_ecole_id)
@@ -1933,11 +2082,14 @@ class RecuViewSet(viewsets.ReadOnlyModelViewSet):
                         description=f"Édition du reçu {self.get_object().numero_recu}")
 
 
-class RelanceViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
+class RelanceViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, viewsets.ModelViewSet):
     queryset = models.Relance.objects.select_related(
         "id_frais_eleve", "id_frais_eleve__id_eleve", "id_frais_eleve__id_type_frais").all()
     serializer_class = serializers.RelanceSerializer
-    permission_classes = [EstAdminOuCaissier]
+    permission_classes = [AccesModule]
+    module = "relances"
+    perimetre_famille = "id_frais_eleve__id_eleve"
+    actions_personnel = ("generer",)
 
     def get_queryset(self):
         return super().get_queryset().filter(id_frais_eleve__id_eleve__id_ecole_id=self.request.user.id_ecole_id)
@@ -1979,23 +2131,34 @@ class TypeDepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixi
     """
     Catégories de dépenses, chacune avec son budget alloué et son disponible.
 
-    Le disponible est calculé sur l'année consultée — celle du bandeau haut
-    quand l'écran la transmet, l'année active sinon : une enveloppe annuelle
-    qui compterait les dépenses des années passées serait vide d'office.
+    Tout est rapporté à l'année consultée — celle du bandeau haut quand
+    l'écran la transmet, l'année active sinon. C'est elle qui désigne la ligne
+    de budget à lire et à écrire, et la fenêtre sur laquelle compter les
+    dépenses : une enveloppe annuelle qui compterait les dépenses des années
+    passées serait vide d'office.
     """
     queryset = models.TypeDepense.objects.all()
     serializer_class = serializers.TypeDepenseSerializer
-    permission_classes = [EstAdmin]
+    permission_classes = [AccesModule]
+    module = "depenses"
+
+    def _annee(self):
+        if not self.request.user.is_authenticated:
+            return None
+        return _annee_demandee(self.request, self.request.user.id_ecole)
+
+    def get_serializer_context(self):
+        # L'année dit au serializer quelle ligne de budget porte l'enveloppe.
+        return {**super().get_serializer_context(), "annee": self._annee()}
 
     def get_queryset(self):
         qs = super().get_queryset()
         if not self.request.user.is_authenticated:
             return qs
-        annee = _annee_demandee(self.request, self.request.user.id_ecole)
         # L'agrégat pose un GROUP BY, et Django écarte l'ordre par défaut du
         # modèle sur ces requêtes : sans ce tri explicite, la liste des
         # catégories sortirait dans l'ordre que la base veut bien donner.
-        return finances.annoter_consommation(qs, annee).order_by("libelle")
+        return finances.annoter_consommation(qs, self._annee()).order_by("libelle")
 
 
 class DepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
@@ -2006,7 +2169,8 @@ class DepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, E
     """
     queryset = models.Depense.objects.select_related("id_type_depense").all()
     serializer_class = serializers.DepenseSerializer
-    permission_classes = [EstAdmin]
+    permission_classes = [AccesModule]
+    module = "depenses"
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -2061,7 +2225,8 @@ class DepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, E
 class BudgetViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Budget.objects.select_related("id_type_depense", "id_annee_scolaire").all()
     serializer_class = serializers.BudgetSerializer
-    permission_classes = [EstAdmin]
+    permission_classes = [AccesModule]
+    module = "budget"
 
     def perform_create(self, serializer):
         super().perform_create(serializer)
@@ -2076,7 +2241,8 @@ class JournalCaisseViewSet(EcoleFiltreeMixin, viewsets.ReadOnlyModelViewSet):
     queryset = models.JournalCaisse.objects.select_related("id_utilisateur").order_by(
         "-date_mouvement", "-id")
     serializer_class = serializers.JournalCaisseSerializer
-    permission_classes = [EstAdminOuCaissier]
+    permission_classes = [AccesModule]
+    module = "journal_caisse"
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -2127,7 +2293,8 @@ class BilanFinancierView(APIView):
     `fin` permettent de recadrer, et `format_export=xlsx|pdf` de récupérer le
     même contenu en fichier plutôt qu'en JSON.
     """
-    permission_classes = [EstAdminOuCaissier]
+    permission_classes = [AccesModule]
+    module = "budget"
 
     def _contexte(self, request):
         ecole = request.user.id_ecole
@@ -2173,7 +2340,13 @@ class MoiView(APIView):
     # documentation ne saurait pas décrire la réponse.
 
     def get(self, request):
-        return Response(serializers.UtilisateurSerializer(request.user).data)
+        donnees = serializers.UtilisateurSerializer(request.user).data
+        # Les modules ouverts au compte, lus sur la matrice du serveur : le
+        # client n'en garde pas de copie qui pourrait diverger.
+        donnees["role_libelle"] = request.user.get_role_display()
+        donnees["profil"] = profil_de(request.user)
+        donnees["acces"] = acces_du_compte(request.user)
+        return Response(donnees)
 
 
 class ConnexionView(TokenObtainPairView):
@@ -2220,7 +2393,8 @@ class ConnexionView(TokenObtainPairView):
 class CommunicationViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Communication.objects.select_related("id_utilisateur_auteur", "id_classe").all()
     serializer_class = serializers.CommunicationSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    module = "communications"
     filterset_fields = ["statut", "canal", "type_communication"]
     search_fields = ["objet", "contenu"]
 
@@ -2351,8 +2525,8 @@ class CommunicationDestinataireViewSet(CoherenceEcoleMixin, viewsets.ModelViewSe
         qs = super().get_queryset().filter(
             id_communication__id_ecole_id=self.request.user.id_ecole_id
         )
-        # Un non-admin ne voit que ce qui lui est adressé.
-        if self.request.user.role != "admin":
+        # Hors direction, on ne voit que ce qui vous est adressé.
+        if not est_direction(self.request.user):
             qs = qs.filter(id_utilisateur=self.request.user)
         return qs
 
@@ -2379,18 +2553,18 @@ class DocumentViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, 
     filterset_fields = ["categorie", "visibilite"]
     search_fields = ["titre", "description"]
 
-    # Qui a le droit de voir quoi, par niveau de visibilité.
-    VISIBILITE_PAR_ROLE = {
-        "admin": None,  # aucun filtre
-        "enseignant": [models.Document.Visibilite.ENSEIGNANTS, models.Document.Visibilite.TOUS],
-        "caissier": [models.Document.Visibilite.TOUS],
-        "parent": [models.Document.Visibilite.PARENTS, models.Document.Visibilite.TOUS],
-        "eleve": [models.Document.Visibilite.TOUS],
+    # Qui a le droit de voir quoi, par profil. La direction voit tout ; les
+    # autres profils du personnel, les documents ouverts à tous.
+    VISIBILITE_PAR_PROFIL = {
+        Profil.DIRECTION: None,  # aucun filtre
+        Profil.ENSEIGNANT: [models.Document.Visibilite.ENSEIGNANTS, models.Document.Visibilite.TOUS],
+        Profil.PARENT: [models.Document.Visibilite.PARENTS, models.Document.Visibilite.TOUS],
     }
 
     def get_queryset(self):
         qs = super().get_queryset()
-        visibilites = self.VISIBILITE_PAR_ROLE.get(self.request.user.role, [])
+        visibilites = self.VISIBILITE_PAR_PROFIL.get(
+            profil_de(self.request.user), [models.Document.Visibilite.TOUS])
         if visibilites is None:
             return qs
         return qs.filter(visibilite__in=visibilites)
@@ -2411,7 +2585,9 @@ class RapportViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, E
     """
     queryset = models.Rapport.objects.select_related("id_utilisateur").all()
     serializer_class = serializers.RapportSerializer
-    permission_classes = [LectureSeuleOuAdmin]
+    permission_classes = [AccesModule]
+    # Même règle que les communications : la direction écrit, tous lisent.
+    module = "communications"
     filterset_fields = ["type_rapport", "statut", "format_export"]
 
     def perform_create(self, serializer):
@@ -2433,7 +2609,8 @@ class RapportViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, E
 class ParametreEcoleViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.ParametreEcole.objects.all()
     serializer_class = serializers.ParametreEcoleSerializer
-    permission_classes = [EstAdmin]
+    permission_classes = [AccesModule]
+    module = "parametres"
     filterset_fields = ["categorie"]
 
     def perform_create(self, serializer):
@@ -2447,7 +2624,8 @@ class JournalActiviteViewSet(EcoleFiltreeMixin, viewsets.ReadOnlyModelViewSet):
     """Lecture seule et réservé aux admins : un journal d'audit ne se modifie pas."""
     queryset = models.JournalActivite.objects.select_related("id_utilisateur").all()
     serializer_class = serializers.JournalActiviteSerializer
-    permission_classes = [EstAdmin]
+    permission_classes = [AccesModule]
+    module = "comptes"
     filterset_fields = ["action", "entite", "id_utilisateur"]
     search_fields = ["description", "entite"]
 
@@ -2490,7 +2668,7 @@ class CorbeilleViewSet(EcoleFiltreeMixin, mixins.ListModelMixin, mixins.DestroyM
         utilisateur = self.request.user
         if not utilisateur.is_authenticated:
             return qs
-        if utilisateur.role != Utilisateur.Role.ADMIN:
+        if not est_direction(utilisateur):
             qs = qs.filter(id_utilisateur=utilisateur)
         endpoint = self.request.query_params.get("endpoint")
         if endpoint:
@@ -2552,7 +2730,8 @@ class ClotureCaisseView(APIView):
     journée reste consultable et les encaissements restent possibles ensuite,
     l'écart apparaissant dans l'historique.
     """
-    permission_classes = [permissions.IsAuthenticated, EstAdminOuCaissier]
+    permission_classes = [AccesModule]
+    module = "encaissement"
 
     def post(self, request):
         ecole = request.user.id_ecole
@@ -2579,11 +2758,12 @@ class HistoriqueCaisseView(APIView):
     """
     Historique de caisse d'une journée : GET /api/caisse/historique/?date=AAAA-MM-JJ
 
-    Un administrateur voit toute la caisse, et peut isoler un caissier avec
-    `?caissier=<id>` ; un caissier ne voit que ses propres opérations, quoi
-    qu'il demande.
+    La direction et les profils financiers voient toute la caisse, et peuvent
+    isoler un caissier avec `?caissier=<id>` ; un caissier ne voit que ses
+    propres opérations, quoi qu'il demande.
     """
-    permission_classes = [permissions.IsAuthenticated, EstAdminOuCaissier]
+    permission_classes = [AccesModule]
+    module = "journal_caisse"
 
     def get(self, request):
         ecole = request.user.id_ecole
@@ -2608,7 +2788,8 @@ class GrilleTarifsView(APIView):
     Une ligne par niveau, une colonne par type de frais. Une case vide applique
     le montant par défaut du frais ; seules les cases renseignées sont stockées.
     """
-    permission_classes = [EstAdmin]
+    permission_classes = [AccesModule]
+    module = "types_frais"
     ORDRE_NATURES = {"inscription": 0, "mensualite": 1, "autre": 2}
 
     def _grille(self, ecole):

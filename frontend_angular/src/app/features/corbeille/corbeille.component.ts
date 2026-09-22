@@ -55,7 +55,8 @@ export class CorbeilleComponent {
   suivant = signal(false);
 
   module = signal<EntityConfig | null>(null);
-  estAdmin = computed(() => this.auth.currentUser()?.role === 'admin');
+  /** Direction : voit toute la corbeille et peut vider définitivement. */
+  estAdmin = computed(() => this.auth.estDirection());
 
   constructor() {
     this.route.queryParamMap.subscribe((params) => {

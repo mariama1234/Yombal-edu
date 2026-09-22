@@ -38,13 +38,23 @@
               }
               @case ('lecture') {
                 <!-- Pas de contrôle de formulaire : la valeur suit le champ
-                     source, elle ne se saisit pas et ne s'envoie pas. -->
+                     source, elle ne se saisit pas et ne s'envoie pas. Elle
+                     descend à chaque chiffre tapé dans le champ suivi. -->
                 <input
                   class="input" readonly tabindex="-1"
                   style="font-family:var(--font-mono); background:var(--bg);"
                   [id]="field.key"
                   [value]="valeurLecture(field)"
                   [style.color]="lectureEnNegatif(field) ? 'var(--red)' : 'var(--ink-900)'">
+                @if (jaugeLecture(field); as jauge) {
+                  <!-- Deux parts : ce qui était déjà consommé, et ce que la
+                       saisie en cours ajoute — celle-ci s'allonge en direct. -->
+                  <span class="jauge-saisie" [class.depasse]="jauge.depasse"
+                        role="presentation">
+                    <span class="jauge-consomme" [style.width.%]="jauge.consomme"></span>
+                    <span class="jauge-engagee" [style.width.%]="jauge.engage"></span>
+                  </span>
+                }
               }
               @case ('checkbox') {
                 <label class="radio-pill" style="justify-content:flex-start; gap:10px;">
@@ -68,6 +78,8 @@
               <span class="hint" style="color:var(--orange-500);">
                 Le montant saisi dépasse ce qui reste — l'enregistrement reste possible.
               </span>
+            } @else if (detailLecture(field)) {
+              <span class="hint">{{ detailLecture(field) }}</span>
             } @else if (field.aide) {
               <span class="hint">{{ field.aide }}</span>
             }

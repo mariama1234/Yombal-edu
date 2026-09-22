@@ -65,8 +65,10 @@ export class FinancesListComponent implements OnInit {
     { value: 'sans_frais', label: 'Aucun frais' },
   ];
 
-  /** Seul un admin facture l'année ; le caissier encaisse. */
-  estAdmin = computed(() => this.auth.currentUser()?.role === 'admin');
+  /** Facturer l'année demande l'écriture sur les frais ; encaisser, sur l'encaissement. */
+  peutFacturer = computed(() => this.auth.peutEcrire('frais'));
+  peutEncaisser = computed(() => this.auth.peutEcrire('encaissement'));
+  peutRelancer = computed(() => this.auth.peutEcrire('relances'));
 
   lignes = computed(() => {
     const terme = this.recherche().trim().toLowerCase();

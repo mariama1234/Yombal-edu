@@ -25,11 +25,12 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count, DecimalField, F, Q, Sum, Value
+from django.db.models import Count, DecimalField, F, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce, TruncMonth
 from django.utils import timezone
 
 from . import models
+from .permissions import roles_pouvant
 
 ZERO = Decimal("0")
 _SOMME = DecimalField(max_digits=14, decimal_places=2)
@@ -303,21 +304,49 @@ def imputer_au_budget(depense):
         budget.save(update_fields=["montant_realise"])
 
 
+def budget_du_poste(type_depense, annee):
+    """
+    Ligne de budget d'un poste pour une année, ou `None`.
+
+    Rien n'interdit encore plusieurs lignes pour un même poste sur une même
+    année — d'anciennes saisies en ont laissé. L'écran des catégories pilote
+    la première, plutôt que de refuser de fonctionner ou d'en supprimer une.
+    """
+    if annee is None:
+        return None
+    return (models.Budget.objects
+            .filter(id_type_depense=type_depense, id_annee_scolaire=annee)
+            .order_by("id").first())
+
+
 def annoter_consommation(queryset, annee=None):
     """
-    Ajoute à chaque catégorie de dépense ce qu'elle a déjà consommé.
+    Ajoute à chaque catégorie de dépense son enveloppe et ce qu'elle a consommé.
 
-    Le disponible s'en déduit : budget alloué moins `montant_depense`. Le
-    calcul est fait en SQL, sur la fenêtre de l'année scolaire visée, pour que
-    la liste des catégories tienne en une requête quel que soit le nombre de
-    dépenses. Sans année — une école qui démarre n'en a pas encore — tout
-    l'historique compte, faute de fenêtre à appliquer.
+    Le disponible s'en déduit : `budget_alloue` moins `montant_depense`. Rien
+    de tout cela n'est stocké sur le poste — un disponible enregistré
+    dériverait dès la première dépense corrigée ou supprimée, et une enveloppe
+    posée sur le poste vaudrait pour toutes les années à la fois.
+
+    Le calcul est fait en SQL pour que la liste des catégories tienne en une
+    requête quel que soit le nombre de dépenses. Sans année — une école qui
+    démarre n'en a pas encore — il n'y a ni enveloppe ni fenêtre à appliquer,
+    et tout l'historique des dépenses compte.
     """
     fenetre = None
+    alloue = Value(ZERO, output_field=_SOMME)
     if annee is not None:
         fenetre = Q(depenses__date_depense__gte=annee.date_debut,
                     depenses__date_depense__lte=annee.date_fin)
-    return queryset.annotate(montant_depense=_somme("depenses__montant", fenetre))
+        alloue = Coalesce(
+            Subquery(models.Budget.objects
+                     .filter(id_type_depense=OuterRef("pk"), id_annee_scolaire=annee)
+                     .order_by("id")
+                     .values("montant_prevu")[:1]),
+            Value(ZERO), output_field=_SOMME)
+    return queryset.annotate(
+        montant_depense=_somme("depenses__montant", fenetre),
+        budget_alloue=alloue)
 
 
 # ---------------------------------------------------------------------------
@@ -1766,7 +1795,7 @@ def historique_caisse(ecole, jour, caissier=None):
         })
 
     caissiers = (get_user_model().objects
-                 .filter(id_ecole=ecole, role__in=("admin", "caissier"))
+                 .filter(id_ecole=ecole, role__in=roles_pouvant("encaissement"))
                  .order_by("nom", "prenom"))
 
     # L'arrêté du jour, s'il existe. Les écarts n'ont de sens que sur la caisse

@@ -5,6 +5,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { forkJoin } from 'rxjs';
 import { GenericCrudService } from './generic-crud.service';
 import { ToastService } from '../../core/services/toast.service';
+import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { ENTITY_CONFIGS } from './entity-configs';
 import { EntityConfig, FieldConfig } from './crud-config.model';
 
@@ -20,8 +21,14 @@ export class GenericFormComponent implements OnInit {
   modeEdition = false;
   idEnCours: number | null = null;
   optionsParChamp: Record<string, any[]> = {};
+  /**
+   * Valeurs de la ligne ouverte en modification : ce qui est déjà imputé
+   * ailleurs (un budget, par exemple) et ne doit pas être décompté deux fois.
+   */
+  private valeursInitiales: Record<string, any> = {};
   enregistrement = signal(false);
   private toast = inject(ToastService);
+  private annees = inject(AnneeScolaireService);
 
   constructor(
     private route: ActivatedRoute,
@@ -40,7 +47,10 @@ export class GenericFormComponent implements OnInit {
       if (id && id !== 'nouveau') {
         this.modeEdition = true;
         this.idEnCours = +id;
-        this.crud.get(this.config.endpoint, +id).subscribe((item) => this.form.patchValue(item));
+        this.crud.get(this.config.endpoint, +id).subscribe((item) => {
+          this.valeursInitiales = item;
+          this.form.patchValue(item);
+        });
       }
     });
   }
@@ -65,7 +75,7 @@ export class GenericFormComponent implements OnInit {
     if (champsAvecEndpoint.length === 0) return;
 
     const requetes = champsAvecEndpoint.reduce((acc, f) => {
-      acc[f.key] = this.crud.list(f.optionsEndpoint!);
+      acc[f.key] = this.crud.list(f.optionsEndpoint!, this.parametresOptions(f.optionsEndpoint!));
       return acc;
     }, {} as Record<string, any>);
 
@@ -76,37 +86,121 @@ export class GenericFormComponent implements OnInit {
     });
   }
 
+  /**
+   * Une liste d'options qui se compte par année suit l'année du bandeau haut,
+   * comme sa propre page. Sans ça, le budget annoncé ici serait celui de
+   * l'année active pendant qu'on consulte un autre exercice.
+   */
+  private parametresOptions(endpoint: string): Record<string, string> {
+    const id = this.annees.idAnnee();
+    return ENTITY_CONFIGS[endpoint]?.filtreParAnnee && id !== null
+      ? { id_annee_scolaire: String(id) }
+      : {};
+  }
+
   libelleOption(field: FieldConfig, option: any): string {
     const cle = field.optionsLabelKey || 'nom';
     return option[cle] ?? `#${option.id}`;
   }
 
   /** Valeur brute d'un champ `lecture`, lue sur l'option choisie dans son champ source. */
-  private valeurSource(field: FieldConfig): unknown {
+  private valeurSource(field: FieldConfig, cle?: string): unknown {
     const source = field.source;
     if (!source) return null;
     const choisi = this.form.get(source.champ)?.value;
     const option = (this.optionsParChamp[source.champ] ?? [])
       .find((o) => String(o.id) === String(choisi));
-    return option?.[source.cle];
-  }
-
-  /** Affichage d'un champ `lecture`. Tant que rien n'est choisi, il n'y a rien à montrer. */
-  valeurLecture(field: FieldConfig): string {
-    const valeur = this.valeurSource(field);
-    if (valeur === undefined || valeur === null || valeur === '') return '—';
-    const nombre = Number(valeur);
-    const texte = Number.isFinite(nombre) ? nombre.toLocaleString('fr-FR') : String(valeur);
-    return field.source?.suffixe ? `${texte} ${field.source.suffixe}` : texte;
-  }
-
-  /** Vrai quand la valeur affichée est négative — un budget déjà dépassé. */
-  lectureEnNegatif(field: FieldConfig): boolean {
-    return Number(this.valeurSource(field)) < 0;
+    return option?.[cle ?? source.cle];
   }
 
   /**
-   * Vrai quand ce qui est saisi dépasse la valeur affichée.
+   * Ce que la saisie en cours retranche à la valeur affichée.
+   *
+   * En modification, la ligne ouverte est déjà imputée — la dépense a déjà
+   * consommé le budget : seul l'écart avec le montant d'origine se retranche,
+   * sinon rouvrir une dépense la décompterait une seconde fois. Changer de
+   * catégorie en cours de route remet ce compte à zéro : l'enveloppe qui
+   * s'affiche alors est celle d'un autre poste, qui n'a rien vu passer.
+   */
+  private montantEngage(field: FieldConfig): number {
+    const source = field.source;
+    if (!source?.compare) return 0;
+    const saisi = Number(this.form.get(source.compare)?.value);
+    if (!Number.isFinite(saisi)) return 0;
+    const memeSource = String(this.form.get(source.champ)?.value ?? '')
+                    === String(this.valeursInitiales[source.champ] ?? '');
+    const initial = memeSource ? Number(this.valeursInitiales[source.compare] ?? 0) : 0;
+    return saisi - (Number.isFinite(initial) ? initial : 0);
+  }
+
+  /** Ce qui resterait une fois la saisie enregistrée, ou `null` hors des nombres. */
+  private resteApres(field: FieldConfig): number | null {
+    const valeur = Number(this.valeurSource(field));
+    if (!Number.isFinite(valeur)) return null;
+    return valeur - this.montantEngage(field);
+  }
+
+  /**
+   * Affichage d'un champ `lecture` : le reste, saisie en cours déduite, pour
+   * que l'enveloppe descende à mesure que le montant se tape plutôt qu'au
+   * retour de l'API. Tant que rien n'est choisi, il n'y a rien à montrer.
+   */
+  valeurLecture(field: FieldConfig): string {
+    const valeur = this.valeurSource(field);
+    if (valeur === undefined || valeur === null || valeur === '') return '—';
+    const reste = this.resteApres(field);
+    const texte = reste === null ? String(valeur) : reste.toLocaleString('fr-FR');
+    return field.source?.suffixe ? `${texte} ${field.source.suffixe}` : texte;
+  }
+
+  /**
+   * Rappel du décompte tant qu'un montant est saisi : d'où l'on part, ce qui
+   * est engagé, ce qui reste. Le champ n'affiche que le reste — sans ce
+   * rappel, on ne saurait plus de quelle enveloppe il descend.
+   */
+  detailLecture(field: FieldConfig): string | null {
+    const engage = this.montantEngage(field);
+    const depart = Number(this.valeurSource(field));
+    if (engage === 0 || !Number.isFinite(depart)) return null;
+    const nombre = (v: number) => v.toLocaleString('fr-FR');
+    const signe = engage > 0 ? '−' : '+';
+    return `${nombre(depart)} ${signe} ${nombre(Math.abs(engage))} = ${nombre(depart - engage)}`
+         + ` une fois cette ligne enregistrée.`;
+  }
+
+  /** Vrai quand la valeur affichée est négative — une enveloppe dépassée. */
+  lectureEnNegatif(field: FieldConfig): boolean {
+    const reste = this.resteApres(field);
+    return reste !== null && reste < 0;
+  }
+
+  /**
+   * Jauge du champ `lecture` : la part déjà consommée, puis celle qu'ajoute
+   * la saisie en cours, en pourcentage de l'enveloppe. Elle donne à voir le
+   * décompte pendant la frappe, là où un nombre seul demande de comparer.
+   *
+   * Sans enveloppe déclarée — un poste sans budget de l'année — il n'y a
+   * pas de total auquel rapporter la consommation, donc pas de jauge.
+   */
+  jaugeLecture(field: FieldConfig): { consomme: number; engage: number; depasse: boolean } | null {
+    const cleTotal = field.source?.total;
+    const total = cleTotal ? Number(this.valeurSource(field, cleTotal)) : NaN;
+    const reste = this.resteApres(field);
+    if (!Number.isFinite(total) || total <= 0 || reste === null) return null;
+    const part = (montant: number) => Math.max(0, Math.min(100, (montant / total) * 100));
+    const engage = this.montantEngage(field);
+    // Une saisie revue à la baisse rend du budget : elle raccourcit la part
+    // consommée au lieu d'ajouter une part engagée.
+    const consomme = part(total - Number(this.valeurSource(field)) + Math.min(0, engage));
+    return {
+      consomme,
+      engage: Math.min(part(Math.max(0, engage)), 100 - consomme),
+      depasse: reste < 0,
+    };
+  }
+
+  /**
+   * Vrai quand la saisie fait passer l'enveloppe en dessous de zéro.
    *
    * Averti, pas bloqué : une école peut avoir à passer une dépense au-delà de
    * son enveloppe, et un formulaire qui refuse l'enregistrement la laisserait
@@ -116,8 +210,8 @@ export class GenericFormComponent implements OnInit {
     const compare = field.source?.compare;
     if (!compare) return false;
     const saisi = Number(this.form.get(compare)?.value);
-    const reste = Number(this.valeurSource(field));
-    return Number.isFinite(saisi) && saisi > 0 && Number.isFinite(reste) && saisi > reste;
+    const reste = this.resteApres(field);
+    return Number.isFinite(saisi) && saisi > 0 && reste !== null && reste < 0;
   }
 
   submit(): void {

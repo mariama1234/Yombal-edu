@@ -1,18 +1,26 @@
 <div class="page-head">
   <div>
     <h1>Bonjour {{ auth.currentUser()?.prenom }} 👋</h1>
-    <p>Voici la situation de l'école aujourd'hui.</p>
+    <p>
+      @switch (auth.currentUser()?.profil) {
+        @case ('parent') { Voici le suivi scolaire de vos enfants. }
+        @case ('eleve') { Voici votre suivi scolaire. }
+        @default { Voici la situation de l'école aujourd'hui. }
+      }
+    </p>
   </div>
-  <a class="btn-primary" routerLink="/eleves/nouveau">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-    Nouvelle inscription
-  </a>
+  @if (auth.peutEcrire('inscriptions')) {
+    <a class="btn-primary" routerLink="/eleves/nouveau">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      Nouvelle inscription
+    </a>
+  }
 </div>
 
 <div class="kpi-grid">
   <div class="kpi-card">
     <div class="kpi-top">
-      <span class="kpi-label">Élèves inscrits</span>
+      <span class="kpi-label">{{ auth.estFamille() ? (auth.currentUser()?.profil === 'parent' ? 'Mes enfants' : 'Mon inscription') : 'Élèves inscrits' }}</span>
       <div class="kpi-icon" style="background:var(--navy-900);">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 12a4 4 0 100-8 4 4 0 000 8z"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
       </div>
@@ -20,6 +28,7 @@
     <div class="kpi-value">{{ nbEleves() ?? '—' }}</div>
   </div>
 
+  @if (!auth.estFamille()) {
   <div class="kpi-card">
     <div class="kpi-top">
       <span class="kpi-label">Classes actives</span>
@@ -29,6 +38,10 @@
     </div>
     <div class="kpi-value">{{ nbClasses() ?? '—' }}</div>
   </div>
+  }
+
+  <!-- Chiffres financiers : profils qui lisent le budget (bilan financier). -->
+  @if (auth.peutLire('budget')) {
 
   <div class="kpi-card">
     <div class="kpi-top">
@@ -59,18 +72,40 @@
       @if (bilan(); as b) { caisse {{ b.tresorerie.caisse | number:'1.0-0' }} · banque {{ b.tresorerie.banque | number:'1.0-0' }} }
     </div>
   </div>
+  }
 </div>
 
 <div class="panel">
   <div class="panel-head"><div class="panel-title">Accès rapides</div></div>
   <div style="display:flex; gap:10px; flex-wrap:wrap;">
-    <a class="btn-ghost" routerLink="/eleves">Élèves</a>
-    <a class="btn-ghost" routerLink="/finances">Finances</a>
-    <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
-    <a class="btn-ghost" routerLink="/pedagogie/notes">Saisie des notes</a>
-    <a class="btn-ghost" routerLink="/pedagogie/bulletins">Bulletins</a>
-    <a class="btn-ghost" routerLink="/emploi-du-temps">Emploi du temps</a>
-    <a class="btn-ghost" routerLink="/classes">Classes</a>
+    <a class="btn-ghost" routerLink="/eleves">{{ auth.estFamille() ? 'Dossier' : 'Élèves' }}</a>
+    @if (auth.peutLire('frais') && !auth.estFamille()) {
+      <a class="btn-ghost" routerLink="/finances">Finances</a>
+    }
+    @if (auth.peutEcrire('encaissement') && !auth.estFamille()) {
+      <a class="btn-ghost" routerLink="/finances/caisse">Caisse</a>
+    }
+    @if (auth.peutLire('journal_caisse')) {
+      <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
+    }
+    @if (auth.peutLire('depenses')) {
+      <a class="btn-ghost" routerLink="/depenses">Dépenses</a>
+    }
+    @if (auth.peutEcrire('notes')) {
+      <a class="btn-ghost" routerLink="/pedagogie/notes">Saisie des notes</a>
+    }
+    @if (auth.peutLire('notes') && auth.estFamille()) {
+      <a class="btn-ghost" routerLink="/notes">Notes</a>
+    }
+    @if (auth.peutLire('bulletins')) {
+      <a class="btn-ghost" [routerLink]="auth.estFamille() ? '/bulletins' : '/pedagogie/bulletins'">Bulletins</a>
+    }
+    @if (auth.peutLire('emploi_du_temps')) {
+      <a class="btn-ghost" routerLink="/emploi-du-temps">Emploi du temps</a>
+    }
+    @if (auth.peutLire('classes') && !auth.estFamille()) {
+      <a class="btn-ghost" routerLink="/classes">Classes</a>
+    }
   </div>
 </div>
 
@@ -222,7 +257,7 @@
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">Suivi budgétaire</div>
-      <a class="panel-link" routerLink="/budgets">Tous les budgets →</a>
+      <a class="panel-link" routerLink="/types-depenses">Tous les budgets →</a>
     </div>
     <p style="font-size:12.5px; color:var(--ink-600); margin:0 0 14px;">
       {{ totalRealise() | number:'1.0-0' }} F engagés sur

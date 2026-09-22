@@ -889,8 +889,11 @@ class TestParametresEtDocuments(BaseAPI):
                   "fichier_url": "/media/extrait.pdf"}
         self.assertEqual(self.client.post("/api/dossiers/", charge, format="json")
                          .status_code, 201)
-        self.assertEqual(self._client(self.parent_user.email)
-                         .get("/api/dossiers/").status_code, 403)
+        # Le parent lit le module élèves (matrice), mais seulement ses enfants :
+        # la pièce d'un élève qui n'est pas le sien ne lui apparaît pas.
+        reponse = self._client(self.parent_user.email).get("/api/dossiers/")
+        self.assertEqual(reponse.status_code, 200)
+        self.assertEqual(self.resultats(reponse), [])
 
 
 class BasePedagogie(BaseAPI):
@@ -1132,10 +1135,12 @@ class TestFinances(BaseAPI):
         self.assertEqual(r.status_code, 400, r.content)
 
     def test_recus_et_journal_en_lecture_seule(self):
-        for endpoint in ["recus", "journal-caisse"]:
+        # Le journal de caisse est en lecture pour tous les profils : l'écriture
+        # est refusée par la matrice (403) avant même la méthode (405).
+        for endpoint, attendu in [("recus", 405), ("journal-caisse", 403)]:
             with self.subTest(endpoint=endpoint):
                 r = self.client.post(f"/api/{endpoint}/", {}, format="json")
-                self.assertEqual(r.status_code, 405)
+                self.assertEqual(r.status_code, attendu)
 
     def test_recu_consultable_apres_encaissement(self):
         self.client.post("/api/paiements/", {
@@ -1913,12 +1918,28 @@ class TestCaisseEtDepenses(BaseFinances):
         budget.refresh_from_db()
         self.assertEqual(budget.montant_realise, Decimal("30000.00"))
 
-    def _categorie(self):
-        return self.client.get(f"/api/types-depenses/{self.type_depense.pk}/").data
+    def _categorie(self, annee=None):
+        params = {"id_annee_scolaire": annee.pk} if annee else {}
+        return self.client.get(
+            f"/api/types-depenses/{self.type_depense.pk}/", params).data
+
+    def _allouer(self, montant, annee=None):
+        """L'enveloppe se pose depuis l'écran des catégories, pour l'année consultée."""
+        url = f"/api/types-depenses/{self.type_depense.pk}/"
+        if annee:
+            url += f"?id_annee_scolaire={annee.pk}"
+        return self.client.patch(url, {"budget_alloue": montant}, format="json")
+
+    def test_enveloppe_saisie_sur_la_categorie_va_sur_lannee(self):
+        r = self._allouer("50000.00")
+        self.assertEqual(r.status_code, 200, r.content)
+        budget = models.Budget.objects.get(id_type_depense=self.type_depense,
+                                           id_annee_scolaire=self.annee)
+        self.assertEqual(budget.montant_prevu, Decimal("50000.00"))
+        self.assertEqual(r.data["budget_alloue"], "50000.00")
 
     def test_budget_de_la_categorie_diminue_a_chaque_depense(self):
-        self.type_depense.budget_alloue = Decimal("50000.00")
-        self.type_depense.save(update_fields=["budget_alloue"])
+        self._allouer("50000.00")
         self.assertEqual(self._categorie()["budget_disponible"], 50000.0)
         self._depenser("30000.00")
         categorie = self._categorie()
@@ -1928,26 +1949,34 @@ class TestCaisseEtDepenses(BaseFinances):
         self.assertEqual(self._categorie()["budget_disponible"], 15000.0)
 
     def test_depense_supprimee_rend_le_budget(self):
-        self.type_depense.budget_alloue = Decimal("50000.00")
-        self.type_depense.save(update_fields=["budget_alloue"])
+        self._allouer("50000.00")
         depense = self._depenser("30000.00").data
         self.client.delete(f"/api/depenses/{depense['id']}/")
         self.assertEqual(self._categorie()["budget_disponible"], 50000.0,
                          "le disponible se recalcule, il ne se décrémente pas")
 
-    def test_budget_disponible_ne_compte_que_l_annee_consultee(self):
-        self.type_depense.budget_alloue = Decimal("50000.00")
-        self.type_depense.save(update_fields=["budget_alloue"])
+    def test_chaque_annee_a_son_enveloppe(self):
         precedente = models.AnneeScolaire.objects.create(
             id_ecole=self.ecole, libelle="2024-2025",
             date_debut=date(2024, 10, 1), date_fin=date(2025, 7, 31),
             statut=models.AnneeScolaire.Statut.ARCHIVEE)
+        self._allouer("50000.00")
+        self._allouer("20000.00", annee=precedente)
         self._depenser("30000.00", jour=date(2024, 11, 10))
+
+        self.assertEqual(self._categorie()["budget_alloue"], "50000.00")
         self.assertEqual(self._categorie()["budget_disponible"], 50000.0,
                          "une dépense de l'an dernier ne pèse pas sur l'enveloppe en cours")
-        r = self.client.get("/api/types-depenses/",
-                            {"id_annee_scolaire": precedente.pk})
-        self.assertEqual(r.data["results"][0]["budget_disponible"], 20000.0)
+        archive = self._categorie(annee=precedente)
+        self.assertEqual(archive["budget_alloue"], "20000.00")
+        self.assertEqual(archive["budget_disponible"], -10000.0)
+
+    def test_enveloppe_posee_apres_coup_rattrape_le_realise(self):
+        self._depenser("30000.00")
+        self._allouer("50000.00")
+        budget = models.Budget.objects.get(id_type_depense=self.type_depense,
+                                           id_annee_scolaire=self.annee)
+        self.assertEqual(budget.montant_realise, Decimal("30000.00"))
 
     def test_budget_cree_apres_coup_rattrape_les_depenses(self):
         self._depenser("30000.00")
@@ -2500,9 +2529,10 @@ class TestReinscription(BaseScolarite):
         self.assertEqual(r.data["reinscrits"], 3,
                          "signalé, mais pas bloqué : une classe surchargée est une réalité")
 
-    def test_reinscription_interdite_au_caissier(self):
-        caissier = self._compte("caisse@a.sn", self.ecole, "caissier")
-        r = self._client(caissier.email).post("/api/inscriptions/reinscrire/", {
+    def test_reinscription_interdite_a_lenseignant(self):
+        # Matrice : inscriptions en écriture pour caissier et comptable, aucun
+        # accès pour l'enseignant.
+        r = self._client(self.enseignant_user.email).post("/api/inscriptions/reinscrire/", {
             "id_annee_source": self.annee.pk, "id_annee_cible": self.annee_suivante.pk,
             "id_classe_cible": self.classe_suivante.pk, "valider": True,
         }, format="json")
@@ -3325,8 +3355,13 @@ class TestOngletFinancesDuDossier(BaseDossierFinancier):
         reponse = self.client_autre.get(f"/api/eleves/{self.eleve.pk}/finances/")
         self.assertEqual(reponse.status_code, 404)
 
-    def test_un_parent_na_pas_acces(self):
+    def test_un_parent_ne_voit_pas_un_enfant_qui_nest_pas_le_sien(self):
         client = self._client(self.parent_user.email)
+        reponse = client.get(f"/api/eleves/{self.eleve.pk}/finances/")
+        self.assertEqual(reponse.status_code, 404)
+
+    def test_un_enseignant_na_pas_acces(self):
+        client = self._client(self.enseignant_user.email)
         reponse = client.get(f"/api/eleves/{self.eleve.pk}/finances/")
         self.assertEqual(reponse.status_code, 403)
 
@@ -4227,10 +4262,10 @@ class TestAutorisationEnClasse(BaseDossierFinancier):
         self._payer(self.droits, 50000)
         self.assertEqual(self._autoriser(motif="").status_code, 400)
 
-    def test_reservee_a_ladministrateur(self):
+    def test_reservee_aux_profils_qui_inscrivent(self):
         self._payer(self.droits, 50000)
-        caissier = self._compte("caisse@a.sn", self.ecole, "caissier")
-        self.assertEqual(self._autoriser(self._client(caissier.email)).status_code, 403)
+        self.assertEqual(self._autoriser(self._client(self.enseignant_user.email)).status_code, 403)
+        self.assertEqual(self._autoriser(self._client(self.parent_user.email)).status_code, 403)
 
     def test_une_autre_ecole_ne_peut_pas_autoriser(self):
         self._payer(self.droits, 50000)
@@ -4741,6 +4776,10 @@ class TestCorbeille(BaseAPI):
         self.assertTrue(models.Corbeille.objects.filter(pk=entree.pk).exists())
 
     def test_un_enseignant_ne_voit_et_ne_restaure_que_ses_suppressions(self):
+        # Un enseignant ne touche qu'aux notes de ses classes.
+        models.AffectationEnseignant.objects.create(
+            id_enseignant=self.enseignant, id_matiere=self.matiere,
+            id_classe=self.classe, id_annee_scolaire=self.annee)
         prof = self._client(self.enseignant_user.email)
         self._supprimer(prof, f"/api/notes/{self.note.pk}/")
         self._supprimer(self.client, f"/api/salles/{self.salle.pk}/")
@@ -5400,3 +5439,174 @@ class TestGrilleDesTarifs(BaseAPI):
     def test_reservee_aux_administrateurs(self):
         prof = self._client(self.enseignant_user.email)
         self.assertEqual(prof.get("/api/tarifs/grille/").status_code, 403)
+
+
+class TestMatriceAutorisations(BaseAPI):
+    """
+    La matrice des autorisations par profil, cellule par cellule.
+
+    Pour chaque module du fichier et chaque rôle : lire répond 200 ou 403,
+    écrire répond 403 ou autre chose (400 sur un corps vide : la requête a
+    passé le contrôle d'accès et bute sur la validation).
+    """
+    from .permissions import ECRITURE, LECTURE, MATRICE, PROFIL_DU_ROLE
+
+    # Une liste représentative par module.
+    ENDPOINTS = {
+        "eleves": "eleves", "inscriptions": "inscriptions", "parents": "parents",
+        "classes": "classes", "matieres": "matieres", "emploi_du_temps": "emplois-du-temps",
+        "presences": "absences", "notes": "notes", "bulletins": "bulletins",
+        "personnel": "enseignants", "frais": "frais-eleves", "encaissement": "paiements",
+        "relances": "relances", "journal_caisse": "journal-caisse", "depenses": "depenses",
+        "budget": "budgets", "types_frais": "types-frais", "parametres": "parametres",
+    }
+
+    def setUp(self):
+        super().setUp()
+        self.clients = {}
+        for role in self.PROFIL_DU_ROLE:
+            compte = self._compte(f"{role}@matrice.sn", self.ecole, role)
+            self.clients[role] = self._client(compte.email)
+
+    def test_tous_les_roles_ont_un_profil(self):
+        self.assertEqual(set(Utilisateur.Role.values), set(self.PROFIL_DU_ROLE))
+
+    def test_lecture_selon_la_matrice(self):
+        for module, endpoint in self.ENDPOINTS.items():
+            for role, profil in self.PROFIL_DU_ROLE.items():
+                with self.subTest(module=module, role=role):
+                    attendu = 403 if self.MATRICE[module][profil] is None else 200
+                    r = self.clients[role].get(f"/api/{endpoint}/")
+                    self.assertEqual(r.status_code, attendu, r.content[:200])
+
+    def test_ecriture_selon_la_matrice(self):
+        for module, endpoint in self.ENDPOINTS.items():
+            for role, profil in self.PROFIL_DU_ROLE.items():
+                with self.subTest(module=module, role=role):
+                    r = self.clients[role].post(f"/api/{endpoint}/", {}, format="json")
+                    if self.MATRICE[module][profil] == self.ECRITURE:
+                        self.assertNotEqual(r.status_code, 403, r.content[:200])
+                    else:
+                        self.assertEqual(r.status_code, 403)
+
+    def test_quelques_cellules_du_fichier(self):
+        """Relu à la main sur le fichier, pour qu'une faute de frappe dans la matrice se voie."""
+        M, E, L = self.MATRICE, self.ECRITURE, self.LECTURE
+        self.assertEqual(M["depenses"]["caissier"], None)
+        self.assertEqual(M["depenses"]["comptable"], E)
+        self.assertEqual(M["types_frais"]["responsable_financier"], E)
+        self.assertEqual(M["types_frais"]["comptable"], L)
+        self.assertEqual(M["encaissement"]["caissier"], E)
+        self.assertEqual(M["encaissement"]["comptable"], L)
+        self.assertEqual(M["personnel"]["vie_scolaire"], L)
+        self.assertEqual(M["personnel"]["enseignant"], None)
+        self.assertEqual(M["journal_caisse"]["direction"], L)
+        self.assertEqual(M["parametres"]["vie_scolaire"], None)
+        self.assertEqual(M["notes"]["enseignant"], E)
+        self.assertEqual(M["frais"]["eleve"], None)
+        self.assertEqual(M["frais"]["parent"], L)
+
+    def test_moi_renvoie_les_acces(self):
+        r = self.clients["comptable"].get("/api/auth/moi/")
+        self.assertEqual(r.data["profil"], "comptable")
+        self.assertEqual(r.data["role_libelle"], "Comptable")
+        self.assertEqual(r.data["acces"]["depenses"], "ecriture")
+        self.assertEqual(r.data["acces"]["frais"], "lecture")
+        self.assertNotIn("notes", r.data["acces"])
+
+    def test_directeur_gere_les_comptes_et_compte_comme_administrateur(self):
+        directeur = Utilisateur.objects.get(email="directeur@matrice.sn")
+        self.assertEqual(self.clients["directeur"].get("/api/utilisateurs/").status_code, 200)
+        self.assertEqual(self.clients["surveillant"].get("/api/utilisateurs/").status_code, 403)
+        Utilisateur.objects.filter(
+            id_ecole=self.ecole, role__in=("admin", "responsable_administratif"),
+        ).exclude(pk=self.admin.pk).delete()
+        # L'admin peut quitter la direction : le directeur reste à la tête de l'école.
+        r = self.client.patch(f"/api/utilisateurs/{self.admin.pk}/", {"role": "enseignant"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        # Mais le dernier profil de direction ne peut pas s'en retirer.
+        r = self.clients["directeur"].patch(
+            f"/api/utilisateurs/{directeur.pk}/", {"role": "comptable"}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_les_caissiers_listes_sont_ceux_qui_encaissent(self):
+        r = self.clients["comptable"].get("/api/caisse/historique/")
+        self.assertEqual(r.status_code, 200)
+        roles = {c["role"] for c in r.data["caissiers"]}
+        self.assertIn("caissier", roles)
+        self.assertIn("surveillant", roles)
+        self.assertNotIn("comptable", roles)
+
+    def test_bilan_reserve_aux_profils_du_budget(self):
+        self.assertEqual(self.clients["comptable"].get("/api/finances/bilan/").status_code, 200)
+        self.assertEqual(self.clients["caissier"].get("/api/finances/bilan/").status_code, 403)
+
+
+class TestPerimetreFamilleEtEnseignant(BaseAPI):
+    """Un parent ne voit que ses enfants, un élève que lui-même, un enseignant que ses classes."""
+
+    def setUp(self):
+        super().setUp()
+        self.enfant = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="E-101", nom="Diop", prenom="Awa")
+        self.autre_eleve = models.Eleve.objects.create(
+            id_ecole=self.ecole, matricule="E-102", nom="Sy", prenom="Omar")
+        for eleve in (self.enfant, self.autre_eleve):
+            models.Inscription.objects.create(
+                id_eleve=eleve, id_classe=self.classe, id_annee_scolaire=self.annee,
+                date_inscription=date(2026, 10, 1))
+        fiche = models.ParentTuteur.objects.create(
+            id_ecole=self.ecole, nom="Diop", prenom="Modou", telephone="+221770000009",
+            id_utilisateur=self.parent_user)
+        models.EleveParent.objects.create(id_eleve=self.enfant, id_parent=fiche, lien_parente="pere")
+        self.eleve_user = self._compte("eleve@a.sn", self.ecole, "eleve")
+        self.autre_eleve.id_utilisateur = self.eleve_user
+        self.autre_eleve.save()
+        self.parent = self._client(self.parent_user.email)
+        self.eleve = self._client(self.eleve_user.email)
+        self.prof = self._client(self.enseignant_user.email)
+
+    def test_le_parent_ne_voit_que_ses_enfants(self):
+        ids = [e["id"] for e in self.resultats(self.parent.get("/api/eleves/"))]
+        self.assertEqual(ids, [self.enfant.pk])
+        self.assertEqual(self.parent.get(f"/api/eleves/{self.autre_eleve.pk}/dossier/").status_code, 404)
+        self.assertEqual(self.parent.get(f"/api/eleves/{self.autre_eleve.pk}/finances/").status_code, 404)
+        self.assertEqual(self.parent.get(f"/api/eleves/{self.enfant.pk}/dossier/").status_code, 200)
+
+    def test_leleve_ne_voit_que_lui_meme(self):
+        ids = [e["id"] for e in self.resultats(self.eleve.get("/api/eleves/"))]
+        self.assertEqual(ids, [self.autre_eleve.pk])
+        # Pas d'accès aux frais : la section finances du dossier n'est pas envoyée.
+        dossier = self.eleve.get(f"/api/eleves/{self.autre_eleve.pk}/dossier/").data
+        self.assertIsNone(dossier["finances"])
+        self.assertIsNotNone(dossier["resultats"])
+
+    def test_les_vues_sur_toute_lecole_sont_fermees_aux_familles(self):
+        self.assertEqual(self.parent.get("/api/frais-eleves/situation/").status_code, 403)
+        self.assertEqual(self.parent.get("/api/absences/synthese/").status_code, 403)
+        r = self.parent.get("/api/conseils-classe/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.resultats(r), [])
+
+    def test_la_famille_ne_modifie_rien(self):
+        r = self.parent.patch(f"/api/eleves/{self.enfant.pk}/", {"nom": "X"}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_le_dossier_vu_par_un_enseignant_na_ni_finances_ni_parents(self):
+        dossier = self.prof.get(f"/api/eleves/{self.enfant.pk}/dossier/").data
+        self.assertIsNone(dossier["finances"])
+        self.assertIsNone(dossier["parents"])
+        self.assertIsNotNone(dossier["resultats"])
+
+    def test_lenseignant_ne_voit_les_notes_que_de_ses_classes(self):
+        periode = models.PeriodeScolaire.objects.create(
+            id_annee_scolaire=self.annee, libelle="T1",
+            date_debut=date(2026, 10, 1), date_fin=date(2026, 12, 20))
+        models.Evaluation.objects.create(
+            id_matiere=self.matiere, id_classe=self.classe, id_periode=periode,
+            date_evaluation=date(2026, 11, 10))
+        self.assertEqual(self.resultats(self.prof.get("/api/evaluations/")), [])
+        models.AffectationEnseignant.objects.create(
+            id_enseignant=self.enseignant, id_matiere=self.matiere,
+            id_classe=self.classe, id_annee_scolaire=self.annee)
+        self.assertEqual(len(self.resultats(self.prof.get("/api/evaluations/"))), 1)

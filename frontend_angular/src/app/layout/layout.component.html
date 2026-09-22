@@ -10,168 +10,245 @@
     </div>
 
     <nav class="nav">
-      <div class="nav-label">Général</div>
-      <a class="nav-item" routerLink="/tableau-de-bord" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
-        Tableau de bord
-      </a>
-
-      <div class="nav-label">Élèves &amp; familles</div>
-      <a class="nav-item" routerLink="/eleves" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 12a4 4 0 100-8 4 4 0 000 8z"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-        Élèves
-      </a>
-      <a class="nav-item" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }" routerLinkActive="active"
-         [routerLinkActiveOptions]="{ paths: 'exact', queryParams: 'exact', matrixParams: 'ignored', fragment: 'ignored' }">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 3v6h-6"/></svg>
-        Réinscriptions
-      </a>
-      <a class="nav-item" routerLink="/parents" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8.5" cy="8" r="3.2"/><path d="M2.5 20c0-3.4 2.7-6 6-6s6 2.6 6 6"/><circle cx="17.5" cy="8.5" r="2.5"/><path d="M15.3 14.2c2.4.3 4.2 2.4 4.2 5.3"/></svg>
-        Parents &amp; tuteurs
-      </a>
-
-      <div class="nav-label">Organisation scolaire</div>
-      <a class="nav-item" routerLink="/annees-scolaires" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/><path d="M8 15h4"/></svg>
-        Années scolaires
-      </a>
-      <a class="nav-item" routerLink="/periodes" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 11h18M9 5v14"/></svg>
-        Périodes scolaires
-      </a>
-      <a class="nav-item" routerLink="/niveaux" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4v-6H4zM10 20h4V9h-4zM16 20h4V4h-4z"/></svg>
-        Niveaux
-      </a>
-      <a class="nav-item" routerLink="/classes" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V6a2 2 0 012-2h8l6 6v9a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M14 4v6h6"/></svg>
-        Classes
-      </a>
-      <a class="nav-item" routerLink="/salles" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>
-        Salles
-      </a>
-
-      <div class="nav-label">Pédagogie</div>
-      <a class="nav-item" routerLink="/personnel" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-        Enseignants &amp; personnel
-      </a>
-      <a class="nav-item" routerLink="/matieres" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-        Matières
-      </a>
-      <a class="nav-item" routerLink="/affectations" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M3 20v-1.5A4.5 4.5 0 017.5 14h3A4.5 4.5 0 0115 18.5V20"/><path d="M17 8h5M19.5 5.5v5"/></svg>
-        Affectations
-      </a>
-      <a class="nav-item" routerLink="/emploi-du-temps" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
-        Emploi du temps
-      </a>
-      <a class="nav-item" routerLink="/presences" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.3l2.3 2.3 4.7-4.7"/></svg>
-        Présences
-      </a>
-      <a class="nav-item" routerLink="/evaluations" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h4"/></svg>
-        Évaluations
-      </a>
-      <a class="nav-item" routerLink="/coefficients" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h6"/><circle cx="18" cy="16" r="3"/></svg>
-        Coefficients
-      </a>
-      <a class="nav-item" routerLink="/pedagogie/notes" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4"/><path d="M10 12h6M10 15.5h6M10 8.5h2.5"/></svg>
-        Saisie des notes
-      </a>
-      <a class="nav-item" routerLink="/notes" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-        Notes (vue tableau)
-      </a>
-      <a class="nav-item" routerLink="/pedagogie/bulletins" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h12v18l-6-3-6 3z"/><path d="M9 8h6M9 11.5h6"/></svg>
-        Bulletins
-      </a>
-      <a class="nav-item" routerLink="/conseils-classe" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="3"/><circle cx="17" cy="10" r="2.2"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5"/><path d="M16.5 14.5c2.3.4 4 2.2 4 4.5"/></svg>
-        Conseils de classe
-      </a>
-      <a class="nav-item" routerLink="/pedagogie/palmares" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 21h8M12 17v4"/><path d="M7 4h10v5a5 5 0 01-10 0z"/><path d="M17 5h3v2a3 3 0 01-3 3M7 5H4v2a3 3 0 003 3"/></svg>
-        Palmarès &amp; statistiques
-      </a>
-
-      <div class="nav-label">Finances</div>
-      <a class="nav-item" routerLink="/finances/tarifs" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16M15 4v16"/></svg>
-        Tarifs par niveau
-      </a>
-      <a class="nav-item" routerLink="/types-frais" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.6 13.4L12 22l-9-9V3h10z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>
-        Types de frais
-      </a>
-      <a class="nav-item" routerLink="/finances" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 5.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5"/></svg>
-        Frais &amp; encaissements
-      </a>
-      <a class="nav-item" routerLink="/recus" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3h14v18l-2.3-1.6L14.4 21 12 19.4 9.6 21l-2.3-1.6L5 21z"/><path d="M9 8h6M9 12h6"/></svg>
-        Reçus
-      </a>
-      <a class="nav-item" routerLink="/types-depenses" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
-        Catégories de dépenses
-      </a>
-      <a class="nav-item" routerLink="/budgets" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.5 3.5"/></svg>
-        Budgets
-      </a>
-      <a class="nav-item" routerLink="/depenses" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18v12a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M3 7l3-4h12l3 4M9 12h6"/></svg>
-        Dépenses
-      </a>
-      <a class="nav-item" routerLink="/finances/caisse" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M3 12h18"/></svg>
-        Caisse &amp; trésorerie
-      </a>
-      <a class="nav-item" routerLink="/finances/bilan" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16"/><path d="M7 16V9M12 16V5M17 16v-4"/></svg>
-        Bilan financier
-      </a>
-      <a class="nav-item" routerLink="/finances/journal" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M8 14h8"/></svg>
-        Journal caisse &amp; banque
-      </a>
-      <a class="nav-item" routerLink="/finances/relances" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
-        Relances
-      </a>
-
+      @if (auth.peutLire('tableau_de_bord')) {
+        <div class="nav-label">Général</div>
+      }
+      @if (auth.peutLire('tableau_de_bord')) {
+        <a class="nav-item" routerLink="/tableau-de-bord" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+          Tableau de bord
+        </a>
+      }
+      @if (auth.peutLire('eleves') || auth.peutEcrire('inscriptions') || auth.peutLire('parents')) {
+        <div class="nav-label">Élèves &amp; familles</div>
+      }
+      @if (auth.peutLire('eleves')) {
+        <a class="nav-item" routerLink="/eleves" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 12a4 4 0 100-8 4 4 0 000 8z"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+          Élèves
+        </a>
+      }
+      @if (auth.peutEcrire('inscriptions')) {
+        <a class="nav-item" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }" routerLinkActive="active"
+           [routerLinkActiveOptions]="{ paths: 'exact', queryParams: 'exact', matrixParams: 'ignored', fragment: 'ignored' }">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 3v6h-6"/></svg>
+          Réinscriptions
+        </a>
+      }
+      @if (auth.peutLire('parents')) {
+        <a class="nav-item" routerLink="/parents" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8.5" cy="8" r="3.2"/><path d="M2.5 20c0-3.4 2.7-6 6-6s6 2.6 6 6"/><circle cx="17.5" cy="8.5" r="2.5"/><path d="M15.3 14.2c2.4.3 4.2 2.4 4.2 5.3"/></svg>
+          Parents &amp; tuteurs
+        </a>
+      }
+      @if (auth.peutLire('annees_scolaires') || auth.peutLire('classes')) {
+        <div class="nav-label">Organisation scolaire</div>
+      }
+      @if (auth.peutLire('annees_scolaires')) {
+        <a class="nav-item" routerLink="/annees-scolaires" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/><path d="M8 15h4"/></svg>
+          Années scolaires
+        </a>
+      }
+      @if (auth.peutLire('annees_scolaires')) {
+        <a class="nav-item" routerLink="/periodes" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 11h18M9 5v14"/></svg>
+          Périodes scolaires
+        </a>
+      }
+      @if (auth.peutLire('classes')) {
+        <a class="nav-item" routerLink="/niveaux" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4v-6H4zM10 20h4V9h-4zM16 20h4V4h-4z"/></svg>
+          Niveaux
+        </a>
+      }
+      @if (auth.peutLire('classes')) {
+        <a class="nav-item" routerLink="/classes" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V6a2 2 0 012-2h8l6 6v9a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M14 4v6h6"/></svg>
+          Classes
+        </a>
+      }
+      @if (auth.peutLire('classes')) {
+        <a class="nav-item" routerLink="/salles" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg>
+          Salles
+        </a>
+      }
+      @if (auth.peutLire('personnel') || auth.peutLire('matieres') || auth.peutLire('emploi_du_temps') || auth.peutLire('presences') || auth.peutLire('notes') || auth.peutEcrire('notes') || (auth.peutLire('bulletins') && !auth.estFamille())) {
+        <div class="nav-label">Pédagogie</div>
+      }
+      @if (auth.peutLire('personnel')) {
+        <a class="nav-item" routerLink="/personnel" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          Enseignants &amp; personnel
+        </a>
+      }
+      @if (auth.peutLire('matieres')) {
+        <a class="nav-item" routerLink="/matieres" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+          Matières
+        </a>
+      }
+      @if (auth.peutLire('matieres')) {
+        <a class="nav-item" routerLink="/affectations" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M3 20v-1.5A4.5 4.5 0 017.5 14h3A4.5 4.5 0 0115 18.5V20"/><path d="M17 8h5M19.5 5.5v5"/></svg>
+          Affectations
+        </a>
+      }
+      @if (auth.peutLire('emploi_du_temps')) {
+        <a class="nav-item" routerLink="/emploi-du-temps" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+          Emploi du temps
+        </a>
+      }
+      @if (auth.peutLire('presences')) {
+        <a class="nav-item" routerLink="/presences" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.3l2.3 2.3 4.7-4.7"/></svg>
+          Présences
+        </a>
+      }
+      @if (auth.peutLire('notes')) {
+        <a class="nav-item" routerLink="/evaluations" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h4"/></svg>
+          Évaluations
+        </a>
+      }
+      @if (auth.peutLire('matieres')) {
+        <a class="nav-item" routerLink="/coefficients" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h6"/><circle cx="18" cy="16" r="3"/></svg>
+          Coefficients
+        </a>
+      }
+      @if (auth.peutEcrire('notes')) {
+        <a class="nav-item" routerLink="/pedagogie/notes" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4"/><path d="M10 12h6M10 15.5h6M10 8.5h2.5"/></svg>
+          Saisie des notes
+        </a>
+      }
+      @if (auth.peutLire('notes')) {
+        <a class="nav-item" routerLink="/notes" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          Notes (vue tableau)
+        </a>
+      }
+      @if (auth.peutLire('bulletins') && !auth.estFamille()) {
+        <a class="nav-item" routerLink="/pedagogie/bulletins" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h12v18l-6-3-6 3z"/><path d="M9 8h6M9 11.5h6"/></svg>
+          Bulletins
+        </a>
+      }
+      @if (auth.peutLire('bulletins') && auth.estFamille()) {
+        <!-- Les familles consultent leurs bulletins ; le calcul des moyennes est au personnel. -->
+        <a class="nav-item" routerLink="/bulletins" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h12v18l-6-3-6 3z"/><path d="M9 8h6M9 11.5h6"/></svg>
+          Bulletins
+        </a>
+      }
+      @if (auth.peutLire('bulletins') && !auth.estFamille()) {
+        <a class="nav-item" routerLink="/conseils-classe" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="3"/><circle cx="17" cy="10" r="2.2"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5"/><path d="M16.5 14.5c2.3.4 4 2.2 4 4.5"/></svg>
+          Conseils de classe
+        </a>
+      }
+      @if (auth.peutLire('bulletins') && !auth.estFamille()) {
+        <a class="nav-item" routerLink="/pedagogie/palmares" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 21h8M12 17v4"/><path d="M7 4h10v5a5 5 0 01-10 0z"/><path d="M17 5h3v2a3 3 0 01-3 3M7 5H4v2a3 3 0 003 3"/></svg>
+          Palmarès &amp; statistiques
+        </a>
+      }
+      @if (auth.peutLire('types_frais') || (auth.peutLire('frais') && !auth.estFamille()) || auth.peutLire('frais') || auth.peutLire('depenses') || auth.peutLire('journal_caisse') || auth.peutLire('budget') || auth.peutEcrire('relances')) {
+        <div class="nav-label">Finances</div>
+      }
+      @if (auth.peutLire('types_frais')) {
+        <a class="nav-item" routerLink="/finances/tarifs" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16M15 4v16"/></svg>
+          Tarifs par niveau
+        </a>
+      }
+      @if (auth.peutLire('types_frais')) {
+        <a class="nav-item" routerLink="/types-frais" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.6 13.4L12 22l-9-9V3h10z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>
+          Types de frais
+        </a>
+      }
+      @if (auth.peutLire('frais') && !auth.estFamille()) {
+        <a class="nav-item" routerLink="/finances" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 5.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5"/></svg>
+          Frais &amp; encaissements
+        </a>
+      }
+      @if (auth.peutLire('frais')) {
+        <a class="nav-item" routerLink="/recus" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3h14v18l-2.3-1.6L14.4 21 12 19.4 9.6 21l-2.3-1.6L5 21z"/><path d="M9 8h6M9 12h6"/></svg>
+          Reçus
+        </a>
+      }
+      @if (auth.peutLire('depenses')) {
+        <a class="nav-item" routerLink="/types-depenses" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          Catégories de dépenses
+        </a>
+      }
+      @if (auth.peutLire('depenses')) {
+        <a class="nav-item" routerLink="/depenses" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18v12a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M3 7l3-4h12l3 4M9 12h6"/></svg>
+          Dépenses
+        </a>
+      }
+      @if (auth.peutLire('journal_caisse')) {
+        <a class="nav-item" routerLink="/finances/caisse" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M3 12h18"/></svg>
+          Caisse &amp; trésorerie
+        </a>
+      }
+      @if (auth.peutLire('budget')) {
+        <a class="nav-item" routerLink="/finances/bilan" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16"/><path d="M7 16V9M12 16V5M17 16v-4"/></svg>
+          Bilan financier
+        </a>
+      }
+      @if (auth.peutLire('journal_caisse')) {
+        <a class="nav-item" routerLink="/finances/journal" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M8 14h8"/></svg>
+          Journal caisse &amp; banque
+        </a>
+      }
+      @if (auth.peutEcrire('relances')) {
+        <a class="nav-item" routerLink="/finances/relances" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
+          Relances
+        </a>
+      }
       <div class="nav-label">Communication &amp; documents</div>
-      <a class="nav-item" routerLink="/communications" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-        Communications
-      </a>
+      @if (auth.peutLire('communications')) {
+        <a class="nav-item" routerLink="/communications" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          Communications
+        </a>
+      }
       <a class="nav-item" routerLink="/documents" routerLinkActive="active">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
         Documents &amp; rapports
       </a>
-
       <div class="nav-label">Administration</div>
-      <a class="nav-item" routerLink="/utilisateurs" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1"/></svg>
-        Comptes &amp; rôles
-      </a>
-      <a class="nav-item" routerLink="/parametres" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.4 14.5c.1-.5.1-1 0-1.5l1.4-1.1-1.5-2.6-1.7.4a5.6 5.6 0 00-1.3-.8L17 6.4h-3l-.3 1.5a5.6 5.6 0 00-1.3.8l-1.7-.4-1.5 2.6 1.4 1.1c-.1.5-.1 1 0 1.5l-1.4 1.1 1.5 2.6 1.7-.4c.4.3.8.6 1.3.8l.3 1.5h3l.3-1.5c.5-.2.9-.5 1.3-.8l1.7.4 1.5-2.6-1.4-1.1z"/><circle cx="15.5" cy="13.5" r="2"/></svg>
-        Paramètres
-      </a>
-      <a class="nav-item" routerLink="/journal-activite" routerLinkActive="active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>
-        Journal d'activité
-      </a>
+      @if (auth.peutLire('comptes')) {
+        <a class="nav-item" routerLink="/utilisateurs" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1"/></svg>
+          Comptes &amp; rôles
+        </a>
+      }
+      @if (auth.peutLire('parametres')) {
+        <a class="nav-item" routerLink="/parametres" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.4 14.5c.1-.5.1-1 0-1.5l1.4-1.1-1.5-2.6-1.7.4a5.6 5.6 0 00-1.3-.8L17 6.4h-3l-.3 1.5a5.6 5.6 0 00-1.3.8l-1.7-.4-1.5 2.6 1.4 1.1c-.1.5-.1 1 0 1.5l-1.4 1.1 1.5 2.6 1.7-.4c.4.3.8.6 1.3.8l.3 1.5h3l.3-1.5c.5-.2.9-.5 1.3-.8l1.7.4 1.5-2.6-1.4-1.1z"/><circle cx="15.5" cy="13.5" r="2"/></svg>
+          Paramètres
+        </a>
+      }
+      @if (auth.peutLire('comptes')) {
+        <a class="nav-item" routerLink="/journal-activite" routerLinkActive="active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>
+          Journal d'activité
+        </a>
+      }
       <a class="nav-item" routerLink="/corbeille" routerLinkActive="active">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4h8v2M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14"/><path d="M10 11v6M14 11v6"/></svg>
         Corbeille
@@ -219,7 +296,7 @@
           <div class="avatar">{{ initiales() }}</div>
           <div>
             <div class="profile-name">{{ auth.currentUser()?.prenom }} {{ auth.currentUser()?.nom }}</div>
-            <div class="profile-role">{{ auth.currentUser()?.role }}</div>
+            <div class="profile-role">{{ auth.currentUser()?.role_libelle ?? auth.currentUser()?.role }}</div>
           </div>
         </div>
       </div>

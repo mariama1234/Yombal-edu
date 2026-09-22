@@ -119,11 +119,11 @@
                 </div>
                 <div class="ligne-defaut">Défaut : {{ t.montant_defaut | number: '1.0-0' }} F</div>
                 <input class="input mono saisie" type="number" min="0" step="500"
-                       [value]="valeur(n.id, t.id)" (input)="changer(n.id, t.id, $event)"
+                       [value]="valeur(n.id, t.id)" (input)="changer(n.id, t.id, $event)" [readonly]="!peutModifier()"
                        [placeholder]="(t.montant_defaut | number: '1.0-0') ?? ''"
                        [attr.aria-label]="t.libelle + ' en ' + n.libelle"
                        [style.border-color]="estModifiee(n.id, t.id) ? 'var(--orange-500)' : null">
-                @if (aTarifPropre(n.id, t.id)) {
+                @if (peutModifier() && aTarifPropre(n.id, t.id)) {
                   <button type="button" class="retour" title="Revenir au montant par défaut"
                           [attr.aria-label]="'Revenir au montant par défaut pour ' + t.libelle"
                           (click)="revenirAuDefaut(n.id, t.id)">↺</button>
@@ -145,6 +145,7 @@
                 · {{ nombreNiveauxTarifes(t.id) }}/{{ g.niveaux.length }} niveau(x) tarifé(s)
               </div>
             </div>
+            @if (peutModifier()) {
             <div class="outils">
               <input class="input mono" type="number" min="0" step="500"
                      style="width:130px; padding:7px 10px; font-size:12.5px; text-align:right;"
@@ -161,6 +162,7 @@
                 </button>
               }
             </div>
+            }
           </div>
 
           @for (n of g.niveaux; track n.id) {
@@ -177,11 +179,11 @@
               </div>
               <div class="ligne-defaut">Appliqué : {{ montantApplique(n.id, t) | number: '1.0-0' }} F</div>
               <input class="input mono saisie" type="number" min="0" step="500"
-                     [value]="valeur(n.id, t.id)" (input)="changer(n.id, t.id, $event)"
+                     [value]="valeur(n.id, t.id)" (input)="changer(n.id, t.id, $event)" [readonly]="!peutModifier()"
                      [placeholder]="(t.montant_defaut | number: '1.0-0') ?? ''"
                      [attr.aria-label]="t.libelle + ' en ' + n.libelle"
                      [style.border-color]="estModifiee(n.id, t.id) ? 'var(--orange-500)' : null">
-              @if (aTarifPropre(n.id, t.id)) {
+              @if (peutModifier() && aTarifPropre(n.id, t.id)) {
                 <button type="button" class="retour" title="Revenir au montant par défaut"
                         [attr.aria-label]="'Revenir au montant par défaut en ' + n.libelle"
                         (click)="revenirAuDefaut(n.id, t.id)">↺</button>
@@ -201,6 +203,7 @@
     </div>
 
     <!-- Toujours visible : on parcourt plusieurs niveaux avant d'enregistrer. -->
+    @if (peutModifier()) {
     <div class="barre">
       <span style="font-size:12.5px; color:var(--ink-600);">
         @if (modifiees().length) {
@@ -219,6 +222,9 @@
         </button>
       </div>
     </div>
+    } @else {
+      <p class="hint">Consultation seule : votre profil ne modifie pas les tarifs.</p>
+    }
   }
 }
 }

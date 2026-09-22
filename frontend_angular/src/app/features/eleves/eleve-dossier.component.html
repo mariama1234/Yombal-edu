@@ -12,7 +12,7 @@
     }
   </div>
   <div style="display:flex; gap:10px; flex-wrap:wrap;">
-    @if (dossier(); as d) {
+    @if (voitCaisse() && dossier(); as d) {
       <a class="btn-ghost" routerLink="/finances/caisse" [queryParams]="{ matricule: d.eleve.matricule }">Caisse</a>
     }
     <a class="btn-ghost" routerLink="/eleves">← Retour à la liste</a>
@@ -29,7 +29,7 @@
 
   <!-- Un ancien élève ouvert à la rentrée : le dossier affichait la classe de
        l'an dernier sans dire qu'elle était périmée. -->
-  @if (aReinscrire()) {
+  @if (aReinscrire() && peutInscrire()) {
     <div class="panel" style="border-color:var(--orange-500);">
       <div class="panel-head">
         <div class="panel-title" style="color:var(--orange-500);">
@@ -52,17 +52,20 @@
   <div class="tabs">
     <button class="tab" [class.active]="onglet() === 'scolarite'"
             (click)="onglet.set('scolarite')">Dossier scolaire</button>
-    <button class="tab" [class.active]="onglet() === 'finances'"
-            (click)="onglet.set('finances')">
-      Finances
-      @if (d.finances.solde > 0) {
-        <span class="pill" [class]="d.finances.statut"
-              style="margin-left:6px;">{{ d.finances.solde | number:'1.0-0' }} F</span>
-      }
-    </button>
+    <!-- Sans droit de lecture sur les frais, le serveur n'envoie pas la section. -->
+    @if (d.finances; as f) {
+      <button class="tab" [class.active]="onglet() === 'finances'"
+              (click)="onglet.set('finances')">
+        Finances
+        @if (f.solde > 0) {
+          <span class="pill" [class]="f.statut"
+                style="margin-left:6px;">{{ f.solde | number:'1.0-0' }} F</span>
+        }
+      </button>
+    }
   </div>
 
-  @if (onglet() === 'finances') {
+  @if (onglet() === 'finances' && d.finances) {
     <app-eleve-finances [idEleve]="idEleve"></app-eleve-finances>
   } @else {
 
@@ -77,7 +80,7 @@
     </div>
     <div style="display:flex; gap:22px; align-items:flex-start; flex-wrap:wrap;">
       <div style="display:flex; flex-direction:column; align-items:center; gap:8px; width:150px;">
-        @if (estAdmin()) {
+        @if (peutModifierEleve()) {
           <!-- La photo elle-même est la zone d'envoi : un clic ou un glisser-déposer suffit. -->
           <label style="cursor:pointer; display:block;"
                  [title]="photo() ? 'Cliquer pour changer la photo' : 'Cliquer pour ajouter une photo'"
@@ -157,7 +160,7 @@
               <span class="pill non_paye">Pas encore en classe</span>
             }
           </div>
-          @if (estAdmin()) {
+          @if (peutInscrire()) {
             @if (sc.autorise_en_classe) {
               <button type="button" class="btn-ghost" [disabled]="occupe()" (click)="retirerAutorisation()">
                 Retirer l'autorisation
@@ -215,33 +218,40 @@
 
   <!-- Chiffres clés -->
   <div class="tile-grid-generic">
-    <div class="tile-generic">
-      <div class="tile-generic-label">Solde à payer</div>
-      <div class="tile-generic-value">{{ d.finances.solde | number:'1.0-0' }}</div>
-      <div class="tile-generic-meta">
-        {{ d.finances.total_paye | number:'1.0-0' }} payés sur
-        {{ d.finances.total_du | number:'1.0-0' }} F CFA
-        @if (d.finances.annee) { en {{ d.finances.annee }} }
+    @if (d.finances; as f) {
+      <div class="tile-generic">
+        <div class="tile-generic-label">Solde à payer</div>
+        <div class="tile-generic-value">{{ f.solde | number:'1.0-0' }}</div>
+        <div class="tile-generic-meta">
+          {{ f.total_paye | number:'1.0-0' }} payés sur
+          {{ f.total_du | number:'1.0-0' }} F CFA
+          @if (f.annee) { en {{ f.annee }} }
+        </div>
       </div>
-    </div>
-    <div class="tile-generic">
-      <div class="tile-generic-label">Frais impayés</div>
-      <div class="tile-generic-value">{{ d.finances.frais_impayes }}</div>
-      <div class="tile-generic-meta">échéances non soldées</div>
-    </div>
-    <div class="tile-generic">
-      <div class="tile-generic-label">Absences</div>
-      <div class="tile-generic-value">{{ d.assiduite.absences }}</div>
-      <div class="tile-generic-meta">{{ d.assiduite.retards }} retard(s), {{ d.assiduite.non_justifiees }} non justifiée(s)</div>
-    </div>
-    <div class="tile-generic">
-      <div class="tile-generic-label">Bulletins</div>
-      <div class="tile-generic-value">{{ d.resultats.length }}</div>
-      <div class="tile-generic-meta">périodes évaluées</div>
-    </div>
+      <div class="tile-generic">
+        <div class="tile-generic-label">Frais impayés</div>
+        <div class="tile-generic-value">{{ f.frais_impayes }}</div>
+        <div class="tile-generic-meta">échéances non soldées</div>
+      </div>
+    }
+    @if (d.assiduite; as a) {
+      <div class="tile-generic">
+        <div class="tile-generic-label">Absences</div>
+        <div class="tile-generic-value">{{ a.absences }}</div>
+        <div class="tile-generic-meta">{{ a.retards }} retard(s), {{ a.non_justifiees }} non justifiée(s)</div>
+      </div>
+    }
+    @if (d.resultats; as resultats) {
+      <div class="tile-generic">
+        <div class="tile-generic-label">Bulletins</div>
+        <div class="tile-generic-value">{{ resultats.length }}</div>
+        <div class="tile-generic-meta">périodes évaluées</div>
+      </div>
+    }
   </div>
 
   <!-- Mouvements -->
+  @if (peutInscrire()) {
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">Mouvements</div>
@@ -355,17 +365,19 @@
       }
     }
   </div>
+  }
 
   <!-- Parents -->
+  @if (d.parents; as parents) {
   <div class="panel">
     <div class="panel-head"><div class="panel-title">Parents &amp; tuteurs</div></div>
-    @if (d.parents.length === 0) {
+    @if (parents.length === 0) {
       <p class="hint">Aucun parent rattaché.</p>
     } @else {
       <table class="simple">
         <thead><tr><th>Nom</th><th>Lien</th><th>Téléphone</th><th>Email</th><th>Contact principal</th></tr></thead>
         <tbody>
-          @for (p of d.parents; track p.id) {
+          @for (p of parents; track p.id) {
             <tr>
               <td>{{ p.nom_complet }}</td>
               <td>{{ p.lien }}</td>
@@ -378,6 +390,7 @@
       </table>
     }
   </div>
+  }
 
   <!-- Parcours -->
   <div class="panel">
@@ -401,6 +414,7 @@
   </div>
 
   <!-- Résultats -->
+  @if (d.resultats; as resultatsEleve) {
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">Résultats</div>
@@ -408,7 +422,7 @@
     <table class="simple">
       <thead><tr><th>Période</th><th>Classe</th><th>Moyenne</th><th>Rang</th><th>Appréciation</th></tr></thead>
       <tbody>
-        @for (r of d.resultats; track $index) {
+        @for (r of resultatsEleve; track $index) {
           <tr>
             <td>{{ r.periode }}</td>
             <td>{{ r.classe }}</td>
@@ -422,6 +436,7 @@
       </tbody>
     </table>
 
+    @if (voitNotes()) {
     <form class="form-actions" [formGroup]="formReleve" style="justify-content:flex-start;">
       <select class="input" formControlName="id_periode" style="max-width:220px;">
         <option [ngValue]="null">— période —</option>
@@ -431,7 +446,9 @@
         Télécharger le relevé de notes (PDF)
       </button>
     </form>
+    }
   </div>
+  }
 
   <!-- Pièces -->
   <div class="panel">

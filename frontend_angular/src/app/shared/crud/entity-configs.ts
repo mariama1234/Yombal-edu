@@ -388,7 +388,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     key: 'types-depenses',
     suite: [
       { label: 'Dépenses', chemin: '/depenses' },
-      { label: 'Budgets', chemin: '/budgets' },
+      { label: 'Bilan financier', chemin: '/finances/bilan' },
     ],
     endpoint: 'types-depenses',
     // Le budget disponible se compte sur l'année du bandeau haut : la liste
@@ -397,46 +397,23 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     titre: 'Catégories de dépenses',
     titreSingulier: 'une catégorie',
     eyebrow: 'Gestion financière',
-    description: 'Postes de charge de l’école : loyer, salaires, fournitures, transport… Chacun porte son budget, '
-      + 'que les dépenses de l’année consomment au fur et à mesure.',
+    description: 'Postes de charge de l’école : loyer, salaires, fournitures, transport… Chacun porte '
+      + 'l’enveloppe de l’année affichée en haut de l’écran, que les dépenses consomment au fur et à mesure. '
+      + 'Changez d’année pour voir ou fixer celle d’un autre exercice.',
+    // Deux colonnes et rien d'autre : la catégorie et son enveloppe. Le
+    // dépensé et le disponible restent calculés par l'API — le formulaire de
+    // dépense s'en sert pour annoncer ce qui reste au moment d'engager.
     columns: [
       { key: 'libelle', label: 'Catégorie' },
       { key: 'budget_alloue', label: 'Budget alloué', type: 'number' },
-      { key: 'montant_depense', label: 'Dépensé', type: 'number' },
-      { key: 'budget_disponible', label: 'Budget disponible', type: 'number' },
     ],
     fields: [
       { key: 'libelle', label: 'Libellé', type: 'text', required: true, placeholder: 'Loyer' },
       {
         key: 'budget_alloue', label: 'Budget alloué (F CFA)', type: 'number',
-        aide: 'Enveloppe de l’année pour ce poste. Le disponible ne se saisit pas : '
-            + 'il se déduit des dépenses déjà enregistrées sur l’année consultée.',
+        aide: 'Enveloppe de ce poste pour l’année affichée en haut de l’écran — une autre année '
+            + 'a la sienne. Le disponible ne se saisit pas : il se déduit des dépenses enregistrées.',
       },
-    ],
-  },
-
-  budgets: {
-    key: 'budgets',
-    suite: [
-      { label: 'Bilan financier', chemin: '/finances/bilan' },
-    ],
-    endpoint: 'budgets',
-    titre: 'Budgets',
-    titreSingulier: 'un budget',
-    eyebrow: 'Gestion financière',
-    description: 'Enveloppe prévue par poste de charge et par année. Le réalisé ne se saisit pas : il se constate à partir des dépenses.',
-    columns: [
-      { key: 'categorie', label: 'Intitulé' },
-      { key: 'categorie_depense', label: 'Poste de charge' },
-      { key: 'montant_prevu', label: 'Prévu', type: 'number' },
-      { key: 'montant_realise', label: 'Réalisé', type: 'number' },
-      { key: 'ecart', label: 'Écart', type: 'number' },
-    ],
-    fields: [
-      { key: 'categorie', label: 'Intitulé du budget', type: 'text', required: true, span2: true, placeholder: 'Charges fixes' },
-      { key: 'id_type_depense', label: 'Poste de charge', type: 'select', required: true, optionsEndpoint: 'types-depenses', optionsLabelKey: 'libelle' },
-      { key: 'id_annee_scolaire', label: 'Année scolaire', type: 'select', required: true, optionsEndpoint: 'annees-scolaires', optionsLabelKey: 'libelle' },
-      { key: 'montant_prevu', label: 'Montant prévu (F CFA)', type: 'number', required: true, aide: 'Le montant réalisé est mis à jour automatiquement par les dépenses.' },
     ],
   },
 
@@ -458,17 +435,22 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'saisi_par', label: 'Saisie par' },
     ],
     fields: [
-      // La catégorie passe avant le motif : c'est elle qui décide du budget,
-      // et le disponible s'affiche à côté avant qu'un montant soit saisi.
+      // La catégorie ouvre la saisie : c'est elle qui décide du budget, et le
+      // disponible s'affiche à côté avant même qu'un montant soit saisi. Le
+      // motif vient après les chiffres, une fois la dépense arrêtée.
       { key: 'id_type_depense', label: 'Catégorie', type: 'select', required: true, optionsEndpoint: 'types-depenses', optionsLabelKey: 'libelle' },
       {
-        key: 'budget_disponible', label: 'Budget disponible', type: 'lecture',
-        source: { champ: 'id_type_depense', cle: 'budget_disponible', suffixe: 'F CFA', compare: 'montant' },
-        aide: 'Ce qui reste sur le budget de la catégorie. Chaque dépense enregistrée le diminue d’autant.',
+        key: 'budget_disponible', label: 'Budget restant', type: 'lecture',
+        source: {
+          champ: 'id_type_depense', cle: 'budget_disponible', suffixe: 'F CFA',
+          compare: 'montant', total: 'budget_alloue',
+        },
+        aide: 'Ce qui reste sur le budget de la catégorie pour l’année affichée en haut. '
+            + 'Le montant saisi s’en retranche au fur et à mesure de la frappe.',
       },
-      { key: 'motif', label: 'Motif', type: 'text', required: true, span2: true },
       { key: 'montant', label: 'Montant (F CFA)', type: 'number', required: true },
       { key: 'date_depense', label: 'Date', type: 'date', required: true },
+      { key: 'motif', label: 'Motif', type: 'text', required: true, span2: true },
       { key: 'justificatif_url', label: 'Justificatif (lien)', type: 'text', span2: true, aide: 'Lien vers la facture ou le reçu numérisé.' },
     ],
   },
@@ -525,9 +507,13 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       {
         key: 'role_cible', label: 'Rôle (si cible = un rôle)', type: 'select',
         options: [
-          { value: 'admin', label: 'Administrateurs' }, { value: 'enseignant', label: 'Enseignants' },
+          { value: 'admin', label: 'Administrateurs' }, { value: 'directeur', label: 'Directeurs' },
+          { value: 'responsable_administratif', label: 'Responsables administratifs' },
+          { value: 'surveillant', label: 'Surveillants' }, { value: 'secretaire', label: 'Secrétaires administratifs' },
+          { value: 'caissier', label: 'Caissiers' }, { value: 'comptable', label: 'Comptables' },
+          { value: 'responsable_financier', label: 'Responsables financiers' },
+          { value: 'enseignant', label: 'Enseignants' },
           { value: 'parent', label: 'Parents' }, { value: 'eleve', label: 'Élèves' },
-          { value: 'caissier', label: 'Caissiers' },
         ],
       },
     ],
@@ -633,10 +619,16 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'email', label: 'E-mail', type: 'email', required: true, span2: true },
       {
         key: 'role', label: 'Rôle', type: 'select', required: true,
+        aide: 'Administrateur, directeur et responsable administratif ont les mêmes droits ; '
+            + 'surveillant et secrétaire administratif aussi.',
         options: [
-          { value: 'admin', label: 'Administrateur' }, { value: 'enseignant', label: 'Enseignant' },
-          { value: 'caissier', label: 'Caissier' }, { value: 'parent', label: 'Parent' },
-          { value: 'eleve', label: 'Élève' },
+          { value: 'admin', label: 'Administrateur' }, { value: 'directeur', label: 'Directeur' },
+          { value: 'responsable_administratif', label: 'Responsable administratif' },
+          { value: 'surveillant', label: 'Surveillant' }, { value: 'secretaire', label: 'Secrétaire administratif' },
+          { value: 'caissier', label: 'Caissier' }, { value: 'comptable', label: 'Comptable' },
+          { value: 'responsable_financier', label: 'Responsable financier' },
+          { value: 'enseignant', label: 'Enseignant' },
+          { value: 'parent', label: 'Parent' }, { value: 'eleve', label: 'Élève' },
         ],
       },
       { key: 'telephone', label: 'Téléphone', type: 'tel' },

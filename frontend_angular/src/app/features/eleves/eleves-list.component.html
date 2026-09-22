@@ -10,21 +10,25 @@
     </p>
   </div>
   <div style="display:flex; gap:10px;">
-    <a class="btn-ghost" routerLink="/eleves/importer">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
-      Importer une liste
-    </a>
-    <a class="btn-primary" routerLink="nouveau">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-      Inscrire un élève
-    </a>
+    @if (peutInscrire()) {
+      <a class="btn-ghost" routerLink="/eleves/importer">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+        Importer une liste
+      </a>
+      <a class="btn-primary" routerLink="nouveau">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        Inscrire un élève
+      </a>
+    }
   </div>
 </div>
 
 <div class="tabs">
   <button class="tab" [class.active]="vue() === 'inscrits'" (click)="changerVue('inscrits')">Inscrits</button>
   <button class="tab" [class.active]="vue() === 'attente'" (click)="changerVue('attente')">Inscrits incomplets</button>
-  <button class="tab" [class.active]="vue() === 'a_reinscrire'" (click)="changerVue('a_reinscrire')">À réinscrire</button>
+  @if (peutInscrire()) {
+    <button class="tab" [class.active]="vue() === 'a_reinscrire'" (click)="changerVue('a_reinscrire')">À réinscrire</button>
+  }
 </div>
 
 @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }

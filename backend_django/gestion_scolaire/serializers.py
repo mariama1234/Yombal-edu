@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from . import finances, models
+from .permissions import ROLES_DIRECTION
 
 Utilisateur = get_user_model()
 
@@ -104,20 +105,22 @@ class UtilisateurAdminSerializer(serializers.ModelSerializer):
         plus personne ne peut gérer les comptes et l'école est verrouillée.
         Le cas se produit quand l'unique admin se rétrograde ou se désactive.
         """
-        if not self.instance or self.instance.role != Utilisateur.Role.ADMIN:
+        # Un directeur ou un responsable administratif a les mêmes droits : il
+        # compte comme administrateur.
+        if not self.instance or self.instance.role not in ROLES_DIRECTION:
             return attrs
 
         role = attrs.get("role", self.instance.role)
         statut = attrs.get("statut", self.instance.statut)
         reste_admin_actif = (
-            role == Utilisateur.Role.ADMIN and statut == Utilisateur.Statut.ACTIF
+            role in ROLES_DIRECTION and statut == Utilisateur.Statut.ACTIF
         )
         if reste_admin_actif:
             return attrs
 
         autres = Utilisateur.objects.filter(
             id_ecole_id=self.instance.id_ecole_id,
-            role=Utilisateur.Role.ADMIN,
+            role__in=ROLES_DIRECTION,
             statut=Utilisateur.Statut.ACTIF,
         ).exclude(pk=self.instance.pk)
         if not autres.exists():
@@ -1102,19 +1105,32 @@ class GenerationRelancesSerializer(serializers.Serializer):
 
 class TypeDepenseSerializer(serializers.ModelSerializer):
     """
-    Poste de charge, avec son enveloppe et ce qu'il en reste.
+    Poste de charge, avec son enveloppe de l'année et ce qu'il en reste.
 
-    Le dépensé vient de l'annotation posée par la vue (`annoter_consommation`)
-    et vaut 0 en son absence — après une création, par exemple, où l'instance
-    renvoyée sort de l'écriture et non de la liste annotée.
+    `budget_alloue` se saisit ici mais ne vit pas sur le poste : il est écrit
+    dans la ligne `Budget` du poste pour l'année consultée. C'est le seul
+    écran qui la touche — une enveloppe se déclarait autrefois à deux endroits
+    sans que rien ne les relie, et on ne savait plus laquelle faisait foi.
+
+    En lecture, l'enveloppe et le dépensé viennent de l'annotation posée par
+    la vue (`finances.annoter_consommation`) et valent 0 en son absence :
+    après une écriture, l'instance renvoyée sort de la sauvegarde et non de la
+    liste annotée.
     """
+    budget_alloue = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
     montant_depense = serializers.SerializerMethodField()
     budget_disponible = serializers.SerializerMethodField()
 
     class Meta:
         model = models.TypeDepense
-        fields = "__all__"
+        fields = ["id", "id_ecole", "libelle", "budget_alloue",
+                  "montant_depense", "budget_disponible"]
         read_only_fields = ["id_ecole"]
+
+    # ---------- lecture ----------
+
+    def _alloue(self, obj) -> Decimal:
+        return Decimal(getattr(obj, "budget_alloue", 0) or 0)
 
     def _consomme(self, obj) -> Decimal:
         return Decimal(getattr(obj, "montant_depense", 0) or 0)
@@ -1123,7 +1139,45 @@ class TypeDepenseSerializer(serializers.ModelSerializer):
         return float(self._consomme(obj))
 
     def get_budget_disponible(self, obj) -> float:
-        return float((obj.budget_alloue or 0) - self._consomme(obj))
+        return float(self._alloue(obj) - self._consomme(obj))
+
+    # ---------- écriture ----------
+
+    def create(self, validated_data):
+        montant = validated_data.pop("budget_alloue", None)
+        return self._avec_budget(super().create(validated_data), montant)
+
+    def update(self, instance, validated_data):
+        montant = validated_data.pop("budget_alloue", None)
+        return self._avec_budget(super().update(instance, validated_data), montant)
+
+    def _avec_budget(self, instance, montant):
+        """
+        Reporte l'enveloppe saisie sur la ligne de budget de l'année.
+
+        Sans année active — une école qui n'en a pas encore ouvert — il n'y a
+        pas d'exercice à qui attribuer le montant : le poste se crée quand
+        même, sans enveloppe, plutôt que d'échouer sur un écran de
+        paramétrage.
+        """
+        annee = self.context.get("annee")
+        budget = finances.budget_du_poste(instance, annee)
+        if montant is not None and annee is not None:
+            if budget is None:
+                budget = models.Budget(
+                    id_ecole=instance.id_ecole, id_type_depense=instance,
+                    id_annee_scolaire=annee, categorie=instance.libelle)
+            budget.montant_prevu = montant
+            budget.save()
+            # Une enveloppe posée après coup doit refléter les dépenses déjà
+            # engagées, sinon le réalisé resterait à zéro jusqu'à la suivante.
+            finances.imputer_au_budget(models.Depense(
+                id_ecole=instance.id_ecole, id_type_depense=instance,
+                date_depense=annee.date_debut))
+        # L'instance renvoyée au client n'est pas annotée : on lui pose les
+        # valeurs que la liste aurait calculées.
+        instance.budget_alloue = budget.montant_prevu if budget else Decimal(0)
+        return instance
 
 
 class DepenseSerializer(serializers.ModelSerializer):
