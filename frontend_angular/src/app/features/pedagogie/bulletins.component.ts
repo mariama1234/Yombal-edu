@@ -12,6 +12,7 @@ import {
   ResultatBulletins,
 } from '../../core/models/models';
 import { PedagogieService } from './pedagogie.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /**
  * Génération des bulletins d'une classe (2.2 de la priorisation).
@@ -26,7 +27,7 @@ import { PedagogieService } from './pedagogie.service';
 @Component({
   selector: 'app-bulletins',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, SiAccesDirective],
   templateUrl: './bulletins.component.html',
 })
 export class BulletinsComponent implements OnInit {

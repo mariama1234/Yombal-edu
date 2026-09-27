@@ -19,6 +19,7 @@ import {
   TypeFrais,
 } from '../../core/models/models';
 import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /** Les montants arrivent de l'API en chaînes décimales (« 30000.00 ») ou vides. */
 function nombre(valeur: unknown): number | null {
@@ -40,7 +41,7 @@ function nombre(valeur: unknown): number | null {
 @Component({
   selector: 'app-eleve-form',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent, SiAccesDirective],
   templateUrl: './eleve-form.component.html',
 })
 export class EleveFormComponent implements OnInit {

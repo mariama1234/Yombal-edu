@@ -4,11 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { JournalCaisse, Soldes } from '../../core/models/models';
 import { FinanceService } from './finance.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 @Component({
   selector: 'app-journal-caisse',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective],
   templateUrl: './journal-caisse.component.html',
 })
 export class JournalCaisseComponent implements OnInit {

@@ -5,6 +5,7 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { ToastService } from '../../core/services/toast.service';
 import { AuthService } from '../../core/services/auth.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /** Réponse de GET /api/tarifs/grille/. */
 interface GrilleTarifs {
@@ -41,7 +42,7 @@ type Mode = 'niveau' | 'frais';
 @Component({
   selector: 'app-tarifs-niveaux',
   standalone: true,
-  imports: [CommonModule, RouterLink],
+  imports: [CommonModule, RouterLink, SiAccesDirective],
   templateUrl: './tarifs-niveaux.component.html',
   styles: [`
     .disposition {

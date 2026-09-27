@@ -67,23 +67,28 @@ E, L, _ = ECRITURE, LECTURE, None
 _MATRICE = {
     #                        Dir Vie Cai Cpt RFi Ens Par Élè
     "tableau_de_bord":      (E,  E,  L,  L,  L,  L,  L,  L),
-    "eleves":               (E,  E,  E,  E,  E,  L,  L,  L),
-    "inscriptions":         (E,  E,  E,  E,  E,  _,  L,  L),
-    "parents":              (E,  E,  E,  E,  E,  _,  L,  L),
-    "classes":              (E,  E,  L,  L,  L,  L,  L,  L),
+    "eleves":               (E,  E,  L,  L,  L,  L,  L,  L),
+    "inscriptions":         (E,  E,  _,  L,  L,  _,  L,  L),
+    # Un parent tient à jour ses propres coordonnées.
+    "parents":              (E,  E,  _,  L,  L,  L,  E,  L),
+    "classes":              (E,  E,  _,  L,  L,  L,  L,  L),
     "matieres":             (E,  E,  _,  L,  L,  L,  L,  L),
     "emploi_du_temps":      (E,  E,  _,  L,  L,  L,  L,  L),
     "presences":            (E,  E,  _,  _,  _,  E,  L,  L),
     "notes":                (E,  E,  _,  _,  _,  E,  L,  L),
     "bulletins":            (E,  E,  _,  _,  _,  E,  L,  L),
-    "personnel":            (E,  L,  L,  L,  L,  _,  _,  _),
-    "frais":                (E,  E,  L,  L,  L,  _,  L,  _),
-    "encaissement":         (E,  E,  E,  L,  L,  _,  L,  _),
-    "relances":             (E,  E,  E,  L,  L,  _,  L,  _),
-    "journal_caisse":       (L,  L,  L,  L,  L,  _,  _,  _),
-    "depenses":             (E,  E,  _,  E,  E,  _,  _,  _),
-    "budget":               (E,  E,  _,  E,  E,  _,  _,  _),
-    "types_frais":          (E,  E,  L,  L,  E,  _,  L,  _),
+    "personnel":            (E,  L,  _,  L,  E,  _,  _,  _),
+    "frais":                (E,  E,  L,  E,  E,  _,  L,  _),
+    "encaissement":         (E,  L,  E,  E,  E,  _,  L,  _),
+    "relances":             (E,  E,  E,  E,  E,  _,  L,  _),
+    "journal_caisse":       (L,  _,  L,  L,  L,  _,  _,  _),
+    # Le décaissement (la dépense elle-même) et le catalogue des postes de
+    # charge sont deux lignes distinctes du fichier : un caissier sort de
+    # l'argent, il ne décide pas des catégories ni de leur enveloppe.
+    "depenses":             (E,  _,  E,  E,  E,  _,  _,  _),
+    "types_depenses":       (E,  _,  _,  E,  E,  _,  _,  _),
+    "budget":               (E,  _,  _,  E,  E,  _,  _,  _),
+    "types_frais":          (E,  E,  L,  E,  E,  _,  L,  _),
     "parametres":           (E,  _,  _,  _,  _,  _,  _,  _),
 
     # Hors fichier : ce qui existait déjà, rapporté aux nouveaux profils.
@@ -184,6 +189,10 @@ class AccesModule(permissions.BasePermission):
     `"action": "module"` ou `"action": ("module", ECRITURE)` quand une simple
     lecture prépare une écriture (l'écran de réinscription, par exemple).
 
+    `module_lecture` ouvre la consultation à un module plus large que
+    l'écriture : le catalogue des postes de charge se gère depuis « Types de
+    dépenses », mais il faut bien le lire pour imputer un décaissement.
+
     Les actions nommées dans `actions_personnel` portent sur toute l'école
     (palmarès, synthèses, états d'impayés) : elles sont fermées aux comptes
     famille, même quand ceux-ci lisent le module pour leurs enfants.
@@ -197,6 +206,9 @@ class AccesModule(permissions.BasePermission):
 
         action = getattr(view, "action", None)
         module = getattr(view, "module", None)
+        lecture_seule = request.method in permissions.SAFE_METHODS
+        if lecture_seule and getattr(view, "module_lecture", None):
+            module = view.module_lecture
         exige = None
         regle = getattr(view, "modules_par_action", {}).get(action)
         if isinstance(regle, tuple):
@@ -209,7 +221,7 @@ class AccesModule(permissions.BasePermission):
             return False
         if est_famille(utilisateur) and action in getattr(view, "actions_personnel", ()):
             return False
-        if exige == ECRITURE or request.method not in permissions.SAFE_METHODS:
+        if exige == ECRITURE or not lecture_seule:
             return niveau == ECRITURE
         return True
 

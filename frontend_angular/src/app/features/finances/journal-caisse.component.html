@@ -7,7 +7,7 @@
   <div style="display:flex; gap:8px; flex-wrap:wrap;">
     <button class="btn-ghost" (click)="exporter('xlsx')" [disabled]="telechargement()">Export Excel</button>
     <button class="btn-ghost" (click)="exporter('pdf')" [disabled]="telechargement()">Export PDF</button>
-    <a class="btn-ghost" routerLink="/finances">← Finances</a>
+    <a *siAcces="'frais'" class="btn-ghost" routerLink="/finances">← Finances</a>
   </div>
 </div>
 

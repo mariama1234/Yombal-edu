@@ -29,7 +29,7 @@ from django.db.models import Count, DecimalField, F, OuterRef, Q, Subquery, Sum,
 from django.db.models.functions import Coalesce, TruncMonth
 from django.utils import timezone
 
-from . import models
+from . import justificatifs, models
 from .permissions import roles_pouvant
 
 ZERO = Decimal("0")
@@ -1792,6 +1792,8 @@ def historique_caisse(ecole, jour, caissier=None):
             "montant": montant_json(d.montant),
             "id_caissier": d.id_utilisateur_id,
             "caissier": nom(d.id_utilisateur),
+            # La caisse propose de joindre la facture, ou de la relire.
+            "a_justificatif": justificatifs.chemin(d) is not None,
         })
 
     caissiers = (get_user_model().objects

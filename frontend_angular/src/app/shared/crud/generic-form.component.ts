@@ -7,7 +7,9 @@ import { GenericCrudService } from './generic-crud.service';
 import { ToastService } from '../../core/services/toast.service';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { ENTITY_CONFIGS } from './entity-configs';
-import { EntityConfig, FieldConfig } from './crud-config.model';
+import { EntityConfig, EtapeSuivante, FieldConfig } from './crud-config.model';
+import { AuthService } from '../../core/services/auth.service';
+import { Module } from '../../core/models/models';
 
 @Component({
   selector: 'app-generic-form',
@@ -31,6 +33,7 @@ export class GenericFormComponent implements OnInit {
   enregistrement = signal(false);
   private toast = inject(ToastService);
   private annees = inject(AnneeScolaireService);
+  private auth = inject(AuthService);
 
   constructor(
     private route: ActivatedRoute,
@@ -325,4 +328,21 @@ export class GenericFormComponent implements OnInit {
       error: () => this.enregistrement.set(false),
     });
   }
+
+  /**
+   * Les étapes suivantes ouvertes au profil : une suite vers un écran qu'il
+   * ne peut pas ouvrir ne lui est pas proposée.
+   */
+  etapesVisibles(): EtapeSuivante[] {
+    return (this.config?.suite ?? []).filter((e) => this.accesOuvert(e.module));
+  }
+
+  accesOuvert(regle?: string): boolean {
+    if (!regle) return true;
+    const [module, niveau] = regle.split(':');
+    return niveau === 'ecriture'
+      ? this.auth.peutEcrire(module as Module)
+      : this.auth.peutLire(module as Module);
+  }
+
 }

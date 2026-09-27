@@ -7,6 +7,7 @@ import { ContexteReinscription } from '../../core/models/models';
 import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
 import { EleveService } from './eleve.service';
 import { ToastService } from '../../core/services/toast.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /**
  * Réinscription d'un élève, en une page pré-remplie.
@@ -28,7 +29,7 @@ import { ToastService } from '../../core/services/toast.service';
 @Component({
   selector: 'app-eleve-reinscription',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent, SiAccesDirective],
   templateUrl: './eleve-reinscription.component.html',
 })
 export class EleveReinscriptionComponent implements OnInit {

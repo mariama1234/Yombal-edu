@@ -35,7 +35,7 @@
     }
     <div class="form-actions">
       <button type="button" class="btn-ghost" (click)="recommencer()">Réinscrire une autre classe</button>
-      <a class="btn-ghost" routerLink="/finances/caisse">Aller à la caisse</a>
+      <a *siAcces="'journal_caisse'" class="btn-ghost" routerLink="/finances/caisse">Aller à la caisse</a>
     </div>
   </div>
 } @else {

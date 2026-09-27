@@ -17,6 +17,7 @@ import {
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { AuthService } from '../../core/services/auth.service';
 import { FinanceService } from './finance.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /**
  * Trois lectures du même argent : les échéances ouvertes, toutes les
@@ -28,7 +29,7 @@ type Onglet = 'impayes' | 'tous' | 'eleves';
 @Component({
   selector: 'app-finances-list',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective],
   templateUrl: './finances-list.component.html',
 })
 export class FinancesListComponent implements OnInit {

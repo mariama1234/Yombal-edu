@@ -36,8 +36,8 @@
   }
 
   <span style="margin-left:auto; display:flex; gap:14px; flex-wrap:wrap;">
-    <a class="panel-link" routerLink="/finances">Frais &amp; encaissements →</a>
-    <a class="panel-link" routerLink="/finances/journal">Journal caisse &amp; banque →</a>
+    <a *siAcces="'frais'" class="panel-link" routerLink="/finances">Frais &amp; encaissements →</a>
+    <a *siAcces="'journal_caisse'" class="panel-link" routerLink="/finances/journal">Journal caisse &amp; banque →</a>
   </span>
 </div>
 
@@ -73,74 +73,73 @@
     </div>
   </div>
 
-  <!-- Ce qui entre, ce qui sort -->
-  <div class="deux-colonnes">
-    <div class="panel">
-      <div class="panel-head">
-        <div class="panel-title">Encaissements</div>
+  <!-- Ce qui entre, ce qui sort : une seule liste, dans l'ordre de la journée,
+       et son total en pied. Deux tableaux séparés obligeaient à faire la
+       soustraction de tête pour savoir ce qui restait en caisse. -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Mouvements du jour</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
         @if (peutEncaisser()) {
           <button type="button" class="btn-accent petit" (click)="ouvrirGuichet()">
             + Nouvel encaissement
           </button>
         }
+        <a *siAcces="'depenses:ecriture'" class="btn-ghost petit" routerLink="/depenses/nouveau">− Nouvelle dépense</a>
       </div>
-
-      @if (j.paiements.length === 0) {
-        <p class="hint">Aucun encaissement ce jour-là.</p>
-      } @else {
-        <table class="simple">
-          <thead>
-            <tr><th>Libellé</th><th style="text-align:right;">Montant</th><th>Moyen</th><th>Date</th></tr>
-          </thead>
-          <tbody>
-            @for (p of j.paiements; track p.id) {
-              <tr>
-                <td>
-                  <a class="panel-link" [routerLink]="['/eleves', p.id_eleve, 'dossier']">
-                    {{ p.eleve }}
-                  </a>
-                  <div class="hint">{{ p.frais }} · <span class="mono">{{ p.matricule }}</span></div>
-                </td>
-                <td class="mono montant-credit" style="text-align:right; white-space:nowrap;">
-                  + {{ p.montant | number:'1.0-0' }} F
-                </td>
-                <td>
-                  {{ p.methode_libelle }}
-                  @if (p.reference) { <div class="hint mono">{{ p.reference }}</div> }
-                </td>
-                <td class="mono" style="white-space:nowrap;">
-                  {{ j.date | date:'dd/MM' }}
-                  <div class="hint mono">
-                    {{ p.heure }}
-                    @if (p.id_recu) {
-                      · <button type="button" class="panel-link mono" style="font-size:11px;"
-                                (click)="telechargerRecuDuJour(p.id_recu)">reçu</button>
-                    }
-                  </div>
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      }
     </div>
 
-    <div class="panel">
-      <div class="panel-head">
-        <div class="panel-title">Dépenses</div>
-        @if (peutSaisirDepense()) {
-          <a class="btn-ghost petit" routerLink="/depenses/nouveau">− Nouvelle dépense</a>
-        }
-      </div>
+    @if (erreurJustificatif()) { <div class="form-error">{{ erreurJustificatif() }}</div> }
 
-      @if (j.depenses.length === 0) {
-        <p class="hint">Aucune dépense ce jour-là.</p>
-      } @else {
-        <table class="simple">
-          <thead>
-            <tr><th>Libellé</th><th style="text-align:right;">Montant</th><th>Saisie par</th><th>Date</th></tr>
-          </thead>
-          <tbody>
+    @if (j.paiements.length === 0 && j.depenses.length === 0) {
+      <p class="hint">Aucun mouvement ce jour-là.</p>
+    } @else {
+      <table class="simple">
+        <thead>
+          <tr>
+            <th>Libellé</th>
+            <th style="text-align:right;">Montant</th>
+            <th>Détail</th>
+            <th>Pièce</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Les encaissements -->
+          @for (p of j.paiements; track p.id) {
+            <tr>
+              <td>
+                <a class="panel-link" [routerLink]="['/eleves', p.id_eleve, 'dossier']">
+                  {{ p.eleve }}
+                </a>
+                <div class="hint">{{ p.frais }} · <span class="mono">{{ p.matricule }}</span></div>
+              </td>
+              <td class="mono montant-credit" style="text-align:right; white-space:nowrap;">
+                + {{ p.montant | number:'1.0-0' }} F
+              </td>
+              <td>
+                {{ p.methode_libelle }}
+                <div class="hint">
+                  {{ p.heure }}@if (p.reference) { · <span class="mono">{{ p.reference }}</span> }
+                </div>
+              </td>
+              <td style="white-space:nowrap;">
+                @if (p.id_recu) {
+                  <button type="button" class="panel-link" style="font-size:12px;"
+                          (click)="telechargerRecuDuJour(p.id_recu)">Reçu</button>
+                } @else {
+                  <span class="hint">—</span>
+                }
+              </td>
+            </tr>
+          }
+
+          <!-- Les dépenses du jour, à la suite : la caisse se lit de haut en bas. -->
+          @if (j.depenses.length) {
+            <tr>
+              <td colspan="4" style="background:var(--surface-2, #F7F8FA); font-size:12px; font-weight:600; color:var(--ink-600);">
+                Dépenses du jour
+              </td>
+            </tr>
             @for (d of j.depenses; track d.id) {
               <tr>
                 <td>
@@ -150,14 +149,44 @@
                 <td class="mono montant-debit" style="text-align:right; white-space:nowrap;">
                   − {{ d.montant | number:'1.0-0' }} F
                 </td>
-                <td>{{ d.caissier }}</td>
-                <td class="mono" style="white-space:nowrap;">{{ j.date | date:'dd/MM' }}</td>
+                <td>
+                  Dépense
+                  <div class="hint">{{ d.caissier }}</div>
+                </td>
+                <td style="white-space:nowrap;">
+                  @if (d.a_justificatif) {
+                    <button type="button" class="panel-link" style="font-size:12px;"
+                            (click)="ouvrirJustificatif(d.id)">Justificatif</button>
+                  }
+                  @if (peutSaisirDepense()) {
+                    <label class="panel-link" style="font-size:12px; cursor:pointer; display:inline-block;">
+                      {{ d.a_justificatif ? 'Remplacer' : 'Joindre' }}
+                      <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp"
+                             style="display:none;" [disabled]="envoiJustificatif() === d.id"
+                             (change)="joindreJustificatif(d.id, $event)">
+                    </label>
+                  } @else if (!d.a_justificatif) {
+                    <span class="hint">—</span>
+                  }
+                </td>
               </tr>
             }
-          </tbody>
-        </table>
-      }
-    </div>
+          }
+        </tbody>
+        <tfoot>
+          <tr>
+            <td><strong>Total de la journée</strong></td>
+            <td class="mono" style="text-align:right; white-space:nowrap;">
+              <strong>{{ j.totaux.solde | number:'1.0-0' }} F</strong>
+            </td>
+            <td colspan="2" class="hint">
+              {{ j.totaux.encaisse | number:'1.0-0' }} F encaissés −
+              {{ j.totaux.depense | number:'1.0-0' }} F dépensés
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    }
   </div>
 
   <!-- L'arrêté du soir -->

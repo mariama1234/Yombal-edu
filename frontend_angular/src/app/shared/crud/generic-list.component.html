@@ -4,10 +4,10 @@
       <p class="module-eyebrow">{{ config.eyebrow }}</p>
       <h1>{{ config.titre }}</h1>
       <p>{{ config.description }}</p>
-      @if (config.suite?.length) {
+      @if (etapesVisibles().length) {
         <p style="margin-top:6px; font-size:12.5px; color:var(--ink-400);">
           Étape suivante :
-          @for (etape of config.suite ?? []; track etape.chemin; let dernier = $last) {
+          @for (etape of etapesVisibles(); track etape.chemin; let dernier = $last) {
             <a class="panel-link" [routerLink]="etape.chemin">{{ etape.label }} →</a>@if (!dernier) { <span> · </span> }
           }
         </p>
@@ -37,7 +37,7 @@
     <div class="panel" style="font-size:13px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
       <span>
         ✅ {{ e.libelle ? '« ' + e.libelle + ' » : ' : '' }}enregistrement effectué.
-        @if (config.suite?.length) { <span style="color:var(--ink-400);">Et ensuite ?</span> }
+        @if (etapesVisibles().length) { <span style="color:var(--ink-400);">Et ensuite ?</span> }
       </span>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         @if (e.creation) {
@@ -45,7 +45,7 @@
             Ajouter {{ config.titreSingulier }}
           </a>
         }
-        @for (etape of config.suite ?? []; track etape.chemin) {
+        @for (etape of etapesVisibles(); track etape.chemin) {
           <a class="btn-primary" [routerLink]="etape.chemin" style="padding:6px 12px; font-size:12.5px;">
             {{ etape.label }} →
           </a>
@@ -139,8 +139,10 @@
                   &nbsp;·&nbsp;
                 }
                 @for (lien of config.liens ?? []; track lien.chemin) {
-                  <a class="panel-link" [routerLink]="lien.chemin" [queryParams]="parametresLien(lien, item)">{{ lien.label }}</a>
-                  &nbsp;·&nbsp;
+                  @if (accesOuvert(lien.module)) {
+                    <a class="panel-link" [routerLink]="lien.chemin" [queryParams]="parametresLien(lien, item)">{{ lien.label }}</a>
+                    &nbsp;·&nbsp;
+                  }
                 }
                 @if (modifiable()) {
                   <a class="panel-link" [routerLink]="[item.id]">Modifier</a>

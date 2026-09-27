@@ -30,7 +30,7 @@
         <a class="btn-ghost" [routerLink]="['/eleves', c.eleve.id, 'dossier']">
           Ouvrir son dossier
         </a>
-        <a class="btn-ghost" routerLink="/finances/caisse" [queryParams]="{ matricule: c.eleve.matricule }">
+        <a *siAcces="'journal_caisse'" class="btn-ghost" routerLink="/finances/caisse" [queryParams]="{ matricule: c.eleve.matricule }">
           Aller à la caisse
         </a>
       </div>

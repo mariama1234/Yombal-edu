@@ -27,7 +27,7 @@ export const MODULE_DE_L_ENTITE: Record<string, Module | null> = {
   notes: 'notes',
   personnel: 'personnel',
   'types-frais': 'types_frais',
-  'types-depenses': 'depenses',
+  'types-depenses': 'types_depenses',
   depenses: 'depenses',
   utilisateurs: 'comptes',
   bulletins: 'bulletins',

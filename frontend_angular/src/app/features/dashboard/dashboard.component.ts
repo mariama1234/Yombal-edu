@@ -14,6 +14,7 @@ import {
   SyntheseEcole,
 } from '../../core/models/models';
 import { FinanceService } from '../finances/finance.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /** Une barre prête à dessiner, en coordonnées du viewBox. */
 interface Barre {
@@ -54,7 +55,7 @@ const G = { largeur: 720, hauteur: 240, gauche: 62, droite: 14, haut: 18, bas: 3
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, RouterLink],
+  imports: [CommonModule, RouterLink, SiAccesDirective],
   templateUrl: './dashboard.component.html',
 })
 export class DashboardComponent implements OnInit {

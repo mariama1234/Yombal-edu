@@ -4,7 +4,7 @@
     <h1>Relances</h1>
     <p>Contacte les familles dont l'échéance est dépassée et le frais non soldé.</p>
   </div>
-  <a class="btn-ghost" routerLink="/finances">← Retour aux finances</a>
+  <a *siAcces="'frais'" class="btn-ghost" routerLink="/finances">← Retour aux finances</a>
 </div>
 
 @if (resultat()) {

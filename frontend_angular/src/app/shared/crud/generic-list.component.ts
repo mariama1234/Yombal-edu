@@ -3,11 +3,12 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { GenericCrudService } from './generic-crud.service';
 import { ENTITY_CONFIGS } from './entity-configs';
-import { EntityConfig, FiltreConfig, LienLigne, RowAction } from './crud-config.model';
+import { EntityConfig, EtapeSuivante, FiltreConfig, LienLigne, RowAction } from './crud-config.model';
 import { CreerAccesComponent } from '../acces/creer-acces.component';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { ToastService } from '../../core/services/toast.service';
 import { AuthService } from '../../core/services/auth.service';
+import { Module } from '../../core/models/models';
 import { MODULE_DE_L_ENTITE } from '../../core/guards/acces.guard';
 
 @Component({
@@ -205,4 +206,21 @@ export class GenericListComponent implements OnInit {
       error: (e) => this.erreur.set(e?.error?.detail ?? "L'action a échoué."),
     });
   }
+
+  /**
+   * Les étapes suivantes ouvertes au profil : une suite vers un écran qu'il
+   * ne peut pas ouvrir ne lui est pas proposée.
+   */
+  etapesVisibles(): EtapeSuivante[] {
+    return (this.config?.suite ?? []).filter((e) => this.accesOuvert(e.module));
+  }
+
+  accesOuvert(regle?: string): boolean {
+    if (!regle) return true;
+    const [module, niveau] = regle.split(':');
+    return niveau === 'ecriture'
+      ? this.auth.peutEcrire(module as Module)
+      : this.auth.peutLire(module as Module);
+  }
+
 }

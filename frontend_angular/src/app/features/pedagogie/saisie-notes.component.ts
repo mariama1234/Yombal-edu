@@ -13,6 +13,7 @@ import {
   PeriodeScolaire,
 } from '../../core/models/models';
 import { PedagogieService } from './pedagogie.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /** Une ligne de la grille, avec la note en cours d'édition. */
 interface LigneSaisie {
@@ -37,7 +38,7 @@ interface LigneSaisie {
 @Component({
   selector: 'app-saisie-notes',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective],
   templateUrl: './saisie-notes.component.html',
 })
 export class SaisieNotesComponent implements OnInit {

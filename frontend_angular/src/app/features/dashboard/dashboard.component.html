@@ -86,13 +86,13 @@
       <a class="btn-ghost" routerLink="/finances/caisse">Caisse</a>
     }
     @if (auth.peutLire('journal_caisse')) {
-      <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
+      <a *siAcces="'journal_caisse'" class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
     }
     @if (auth.peutLire('depenses')) {
       <a class="btn-ghost" routerLink="/depenses">Dépenses</a>
     }
     @if (auth.peutEcrire('notes')) {
-      <a class="btn-ghost" routerLink="/pedagogie/notes">Saisie des notes</a>
+      <a *siAcces="'notes:ecriture'" class="btn-ghost" routerLink="/pedagogie/notes">Saisie des notes</a>
     }
     @if (auth.peutLire('notes') && auth.estFamille()) {
       <a class="btn-ghost" routerLink="/notes">Notes</a>
@@ -104,7 +104,7 @@
       <a class="btn-ghost" routerLink="/emploi-du-temps">Emploi du temps</a>
     }
     @if (auth.peutLire('classes') && !auth.estFamille()) {
-      <a class="btn-ghost" routerLink="/classes">Classes</a>
+      <a *siAcces="'classes'" class="btn-ghost" routerLink="/classes">Classes</a>
     }
   </div>
 </div>
@@ -113,7 +113,7 @@
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">Recouvrement {{ b.periode.annee ? '— ' + b.periode.annee : '' }}</div>
-      <a class="panel-link" routerLink="/finances/bilan">Bilan complet →</a>
+      <a *siAcces="'budget'" class="panel-link" routerLink="/finances/bilan">Bilan complet →</a>
     </div>
     <div style="display:flex; align-items:center; gap:16px;">
       <div style="flex:1; background:var(--bg); border-radius:20px; height:10px; overflow:hidden;">
@@ -152,7 +152,7 @@
     <div class="panel">
       <div class="panel-head">
         <div class="panel-title">Derniers paiements</div>
-        <a class="panel-link" routerLink="/finances/journal">Journal de caisse →</a>
+        <a *siAcces="'journal_caisse'" class="panel-link" routerLink="/finances/journal">Journal de caisse →</a>
       </div>
       <table class="simple">
         <thead>
@@ -257,7 +257,7 @@
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">Suivi budgétaire</div>
-      <a class="panel-link" routerLink="/types-depenses">Tous les budgets →</a>
+      <a *siAcces="'types_depenses'" class="panel-link" routerLink="/types-depenses">Tous les budgets →</a>
     </div>
     <p style="font-size:12.5px; color:var(--ink-600); margin:0 0 14px;">
       {{ totalRealise() | number:'1.0-0' }} F engagés sur
@@ -338,7 +338,7 @@
       <div class="panel-title">
         Assiduité @if (a.jours) { — {{ a.jours }} derniers jours }
       </div>
-      <a class="panel-link" routerLink="/presences">Toutes les absences →</a>
+      <a *siAcces="'presences'" class="panel-link" routerLink="/presences">Toutes les absences →</a>
     </div>
 
     @if (!aDeLAssiduite()) {
@@ -417,14 +417,14 @@
       <div class="panel-title">
         Résultats @if (s.periode) { — {{ s.periode }} }
       </div>
-      <a class="panel-link" routerLink="/pedagogie/palmares">Palmarès &amp; statistiques →</a>
+      <a *siAcces="'bulletins'" class="panel-link" routerLink="/pedagogie/palmares">Palmarès &amp; statistiques →</a>
     </div>
 
     @if (!aDesResultats()) {
       <p style="color:var(--ink-400); font-size:13px;">
         @if (s.detail) { {{ s.detail }} }
         @else { Aucune note saisie sur cette période. }
-        <a class="panel-link" routerLink="/pedagogie/notes">Saisir des notes →</a>
+        <a *siAcces="'notes:ecriture'" class="panel-link" routerLink="/pedagogie/notes">Saisir des notes →</a>
       </p>
     } @else {
       <div class="tile-grid-generic" style="margin-bottom:18px;">
@@ -539,7 +539,7 @@
 <div class="panel">
   <div class="panel-head">
     <div class="panel-title">Effectifs par classe</div>
-    <a class="panel-link" routerLink="/classes">Toutes les classes →</a>
+    <a *siAcces="'classes'" class="panel-link" routerLink="/classes">Toutes les classes →</a>
   </div>
 
   @if (effectifs().length === 0) {

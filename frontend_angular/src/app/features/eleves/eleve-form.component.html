@@ -55,7 +55,7 @@
     <div class="form-actions">
       <button type="button" class="btn-ghost" (click)="nouvelleInscription()">Inscrire un autre élève</button>
       <a class="btn-ghost" [routerLink]="['/eleves', f.id_eleve, 'dossier']">Ouvrir le dossier</a>
-      <a class="btn-ghost" routerLink="/finances/caisse" [queryParams]="{ matricule: f.matricule }">Aller à la caisse</a>
+      <a *siAcces="'journal_caisse'" class="btn-ghost" routerLink="/finances/caisse" [queryParams]="{ matricule: f.matricule }">Aller à la caisse</a>
       <button type="button" class="btn-primary" (click)="telechargerFacture()">Télécharger la facture (PDF)</button>
     </div>
   </div>

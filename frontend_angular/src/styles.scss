@@ -230,15 +230,13 @@ table.simple tr:hover td{background:var(--bg);}
 /* La photo d'arrière-plan couvre tout l'écran de connexion ; les deux
    panneaux la voilent chacun à leur manière, sinon ni le texte blanc de
    gauche ni le formulaire de droite ne resteraient lisibles dessus. */
-.login-screen{display:grid;grid-template-columns:1fr 1fr;min-height:100vh;background:var(--navy-950) url('/assets/arriereplan.jpg') center/cover no-repeat;}
-@media (max-width:860px){.login-screen{grid-template-columns:1fr;} .login-side{display:none;}}
-.login-side{background:linear-gradient(165deg, rgba(11,29,51,0.94), rgba(18,42,72,0.82) 55%, rgba(27,58,99,0.60));color:#fff;padding:56px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;}
-.login-side-top{display:flex;align-items:center;gap:10px;}
-.login-side-quote{max-width:400px;}
-.login-side-quote p{font-family:var(--font-display);font-size:26px;line-height:1.35;font-weight:600;margin:0 0 14px;}
-.login-side-quote span{font-size:13px;color:#9FB4D6;}
-.login-orbit{position:absolute;right:-60px;bottom:-60px;width:280px;height:280px;border-radius:50%;border:1.5px solid rgba(255,255,255,0.08);}
-.login-form-wrap{display:flex;align-items:center;justify-content:center;padding:40px 24px;background:rgba(255,255,255,0.94);backdrop-filter:blur(10px);}
+.login-screen{display:grid;grid-template-columns:1fr 1fr;min-height:100vh;background:#fff;}
+@media (max-width:860px){.login-screen{grid-template-columns:1fr;} .login-visuel{display:none;}}
+/* L'image occupe sa moitié sans être rognée ni déformée : `contain` la montre
+   entière, quelle que soit la forme de l'écran. */
+.login-visuel{display:flex;align-items:center;justify-content:center;padding:32px;background:#fff;}
+.login-visuel img{max-width:100%;max-height:calc(100vh - 64px);width:auto;height:auto;object-fit:contain;border-radius:var(--radius);image-rendering:auto;}
+.login-form-wrap{display:flex;align-items:center;justify-content:center;padding:40px 24px;background:#fff;}
 .login-card{width:100%;max-width:380px;}
 /* Sur mobile le panneau de gauche disparaît : la photo resterait cachée
    derrière un aplat blanc. Le formulaire redevient une carte posée dessus. */
@@ -250,6 +248,9 @@ table.simple tr:hover td{background:var(--bg);}
 .login-card h1{font-size:23px;font-weight:600;margin:0 0 6px;}
 .login-card p.lead{color:var(--ink-600);font-size:13.5px;margin:0 0 28px;}
 .login-foot{text-align:center;margin-top:26px;font-size:12.5px;color:var(--ink-400);}
+.login-editeur{margin-top:22px;padding-top:18px;border-top:1px solid var(--line);text-align:center;}
+.login-editeur-nom{font-family:var(--font-display);font-size:14px;font-weight:600;color:var(--ink-900);text-decoration:none;}
+.login-editeur-nom:hover{color:var(--navy-900);text-decoration:underline;}
 
 /* ---------- Tuiles génériques (modules placeholder) ---------- */
 .tile-grid-generic{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}

@@ -123,6 +123,23 @@ export class FinanceService {
     return this.http.post<ResultatAjoutFrais>(`${this.base}/eleves/${idEleve}/ajouter-frais/`, corps);
   }
 
+  /**
+   * Justificatif d'une dépense : la facture ou le reçu numérisé.
+   *
+   * Il ne passe pas par une URL publique — une facture nomme des fournisseurs
+   * et des montants : c'est l'API qui le rend, derrière l'authentification.
+   */
+  deposerJustificatif(idDepense: number, fichier: File): Observable<unknown> {
+    const corps = new FormData();
+    corps.append('fichier', fichier);
+    return this.http.post(`${this.base}/depenses/${idDepense}/justificatif/`, corps);
+  }
+
+  telechargerJustificatif(idDepense: number): Observable<Blob> {
+    return this.http.get(`${this.base}/depenses/${idDepense}/justificatif/`,
+                         { responseType: 'blob' });
+  }
+
   /** Paiements et dépenses d'une journée, avec leur caissier. */
   historiqueCaisse(filtres: Filtres = {}): Observable<HistoriqueCaisse> {
     return this.http.get<HistoriqueCaisse>(`${this.base}/caisse/historique/`, {

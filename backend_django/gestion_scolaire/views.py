@@ -18,8 +18,8 @@ from datetime import date as date_type
 from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
 
-from . import (corbeille, finances, finances_documents, imports_eleves, models, pedagogie,
-               pedagogie_documents, photos, scolarite, serializers)
+from . import (corbeille, finances, finances_documents, imports_eleves, justificatifs, models,
+               pedagogie, pedagogie_documents, photos, scolarite, serializers)
 from .audit import JournalisationMixin, journaliser
 from .permissions import (ECRITURE, AccesModule, EstAdmin, Profil, acces_du_compte,
                           classes_de_lenseignant, eleves_de_la_famille, est_direction,
@@ -2240,7 +2240,10 @@ class TypeDepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixi
     queryset = models.TypeDepense.objects.all()
     serializer_class = serializers.TypeDepenseSerializer
     permission_classes = [AccesModule]
-    module = "depenses"
+    module = "types_depenses"
+    # Imputer une dépense demande de choisir sa catégorie : un caissier lit
+    # donc le catalogue sans pouvoir le modifier ni voir les enveloppes.
+    module_lecture = "depenses"
 
     def _annee(self):
         if not self.request.user.is_authenticated:
@@ -2310,6 +2313,59 @@ class DepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, E
         models.JournalCaisse.objects.filter(id_depense=instance).delete()
         super().perform_destroy(instance)
         finances.imputer_au_budget(temoin)
+
+    @extend_schema(
+        request={"multipart/form-data": {
+            "type": "object",
+            "properties": {"fichier": {"type": "string", "format": "binary",
+                                       "description": "Facture ou reçu : PDF, JPEG, PNG ou WebP, 5 Mo au plus."}},
+        }},
+        responses={200: None, 204: None},
+    )
+    @action(detail=True, methods=["get", "post", "delete"],
+            parser_classes=[MultiPartParser, FormParser])
+    def justificatif(self, request, pk=None):
+        """
+        Pièce comptable d'une dépense : GET pour la relire, POST (champ
+        `fichier`) pour la déposer ou la remplacer, DELETE pour la retirer.
+
+        Elle n'est pas servie à une adresse publique : une facture nomme des
+        fournisseurs et des montants, elle reste derrière l'authentification
+        et le cloisonnement par école. La lire demande de pouvoir lire les
+        dépenses ; la déposer, de pouvoir les écrire.
+        """
+        depense = self.get_object()
+
+        if request.method == "GET":
+            fichier = justificatifs.chemin(depense)
+            if fichier is None:
+                return Response({"detail": "Aucun justificatif pour cette dépense."},
+                                status=status.HTTP_404_NOT_FOUND)
+            reponse = FileResponse(open(fichier, "rb"),
+                                   content_type=justificatifs.type_mime(fichier))
+            reponse["Content-Disposition"] = (
+                f'attachment; filename="{justificatifs.nom_telechargement(depense, fichier)}"')
+            reponse["Cache-Control"] = "private, no-store"
+            return reponse
+
+        if request.method == "DELETE":
+            justificatifs.supprimer(depense)
+            journaliser(request, models.JournalActivite.Action.MODIFICATION, entite="depense",
+                        id_entite=depense.pk,
+                        description=f"Justificatif retiré de la dépense « {depense.motif} »")
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        envoye = request.FILES.get("fichier")
+        if envoye is None:
+            raise ValidationError({"fichier": "Aucun fichier reçu."})
+        try:
+            justificatifs.enregistrer(depense, envoye)
+        except justificatifs.ErreurJustificatif as exc:
+            raise ValidationError({"fichier": str(exc)})
+        journaliser(request, models.JournalActivite.Action.MODIFICATION, entite="depense",
+                    id_entite=depense.pk,
+                    description=f"Justificatif joint à la dépense « {depense.motif} »")
+        return Response({"a_justificatif": True})
 
     @action(detail=False, methods=["get"], url_path="export")
     def exporter(self, request):

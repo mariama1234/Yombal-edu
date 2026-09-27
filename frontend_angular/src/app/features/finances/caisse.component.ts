@@ -8,6 +8,7 @@ import { FactureEleve, HistoriqueCaisse, MethodePaiement, Soldes } from '../../c
 import { AuthService } from '../../core/services/auth.service';
 import { ToastService } from '../../core/services/toast.service';
 import { FinanceService } from './finance.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 const METHODES: { value: MethodePaiement; label: string }[] = [
   { value: 'especes', label: 'Espèces' },
@@ -59,7 +60,7 @@ function isoLocal(jour: Date): string {
 @Component({
   selector: 'app-caisse',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective],
   templateUrl: './caisse.component.html',
 })
 export class CaisseComponent implements OnInit {
@@ -101,6 +102,10 @@ export class CaisseComponent implements OnInit {
   voitToutesLesCaisses = computed(() => this.auth.currentUser()?.role !== 'caissier');
   peutEncaisser = computed(() => this.auth.peutEcrire('encaissement'));
   peutSaisirDepense = computed(() => this.auth.peutEcrire('depenses'));
+
+  /** Dépense dont le justificatif part vers le serveur, et l'erreur s'il est refusé. */
+  envoiJustificatif = signal<number | null>(null);
+  erreurJustificatif = signal<string | null>(null);
   estAujourdhui = computed(() => this.jour() >= this.aujourdhui);
   cloture = computed(() => this.journee()?.cloture ?? null);
   /** Des opérations ont été saisies après l'arrêté : la caisse ne tombe plus juste. */
@@ -333,4 +338,50 @@ export class CaisseComponent implements OnInit {
     const texte = Array.isArray(premiere) ? String(premiere[0]) : String(premiere);
     return texte || defaut;
   }
+
+  // ---- Justificatifs des dépenses ---------------------------------------
+
+  /**
+   * Joint la facture ou le reçu à une dépense du jour.
+   *
+   * Le fichier part tel quel : c'est le serveur qui vérifie le format aux
+   * premiers octets et la taille, un nom de fichier ne prouvant rien.
+   */
+  joindreJustificatif(idDepense: number, evenement: Event): void {
+    const entree = evenement.target as HTMLInputElement;
+    const fichier = entree.files?.[0];
+    if (!fichier) return;
+    this.envoiJustificatif.set(idDepense);
+    this.erreurJustificatif.set(null);
+    this.finance.deposerJustificatif(idDepense, fichier).subscribe({
+      next: () => {
+        this.envoiJustificatif.set(null);
+        entree.value = '';
+        this.toast.succes('Justificatif joint', 'La pièce est rattachée à la dépense.');
+        this.charger();
+      },
+      error: (e) => {
+        this.envoiJustificatif.set(null);
+        entree.value = '';
+        this.erreurJustificatif.set(
+          e?.error?.fichier?.[0] ?? e?.error?.fichier ?? e?.error?.detail
+          ?? "Le justificatif n'a pas pu être enregistré.");
+      },
+    });
+  }
+
+  /** Ouvre le justificatif dans un nouvel onglet, le temps de le lire. */
+  ouvrirJustificatif(idDepense: number): void {
+    this.erreurJustificatif.set(null);
+    this.finance.telechargerJustificatif(idDepense).subscribe({
+      next: (blob) => {
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        // Révoqué plus tard : trop tôt, l'onglet n'a pas fini de le lire.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      },
+      error: () => this.erreurJustificatif.set("Ce justificatif n'a pas pu être ouvert."),
+    });
+  }
+
 }

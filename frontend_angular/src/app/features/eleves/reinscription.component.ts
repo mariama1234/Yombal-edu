@@ -12,6 +12,7 @@ import {
 } from '../../core/models/models';
 import { ScolariteService } from './scolarite.service';
 import { ToastService } from '../../core/services/toast.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /**
  * Réinscription d'une classe en bloc — le cas d'exception.
@@ -27,7 +28,7 @@ import { ToastService } from '../../core/services/toast.service';
 @Component({
   selector: 'app-reinscription',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, SiAccesDirective],
   templateUrl: './reinscription.component.html',
 })
 export class ReinscriptionComponent implements OnInit {

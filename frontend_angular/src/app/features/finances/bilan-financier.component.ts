@@ -6,6 +6,7 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
 import { AnneeScolaire, Bilan, LigneVentilation, Paginated } from '../../core/models/models';
 import { FinanceService } from './finance.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /**
  * Synthèse « Budget, Dépenses & Bilan » du TDR.
@@ -17,7 +18,7 @@ import { FinanceService } from './finance.service';
 @Component({
   selector: 'app-bilan-financier',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective],
   templateUrl: './bilan-financier.component.html',
 })
 export class BilanFinancierComponent implements OnInit {

@@ -6,8 +6,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
-from . import finances, models
-from .permissions import ROLES_DIRECTION
+from . import finances, justificatifs, models
+from .permissions import ROLES_DIRECTION, peut_lire
 
 Utilisateur = get_user_model()
 
@@ -1218,11 +1218,23 @@ class TypeDepenseSerializer(serializers.ModelSerializer):
     montant_depense = serializers.SerializerMethodField()
     budget_disponible = serializers.SerializerMethodField()
 
+    # Les chiffres du budget en sortent pour qui n'a pas accès au module
+    # Budget : un caissier choisit une catégorie sans lire son enveloppe.
+    CHAMPS_BUDGET = ("budget_alloue", "montant_depense", "budget_disponible")
+
     class Meta:
         model = models.TypeDepense
         fields = ["id", "id_ecole", "libelle", "budget_alloue",
                   "montant_depense", "budget_disponible"]
         read_only_fields = ["id_ecole"]
+
+    def to_representation(self, instance):
+        donnees = super().to_representation(instance)
+        utilisateur = getattr(self.context.get("request"), "user", None)
+        if utilisateur is not None and not peut_lire(utilisateur, "budget"):
+            for champ in self.CHAMPS_BUDGET:
+                donnees.pop(champ, None)
+        return donnees
 
     # ---------- lecture ----------
 
@@ -1280,12 +1292,19 @@ class TypeDepenseSerializer(serializers.ModelSerializer):
 class DepenseSerializer(serializers.ModelSerializer):
     categorie = serializers.CharField(source="id_type_depense.libelle", read_only=True)
     saisi_par = serializers.SerializerMethodField()
+    # Le justificatif se dépose par POST /depenses/{id}/justificatif/ : le
+    # champ ne porte qu'un chemin interne, que le client n'a pas à connaître.
+    a_justificatif = serializers.SerializerMethodField()
+    justificatif_url = serializers.CharField(read_only=True)
 
     class Meta:
         model = models.Depense
         fields = "__all__"
         # L'auteur est celui du compte connecté, jamais une valeur saisie.
         read_only_fields = ["id_ecole", "id_utilisateur"]
+
+    def get_a_justificatif(self, obj) -> bool:
+        return justificatifs.chemin(obj) is not None
 
     def get_saisi_par(self, obj) -> str | None:
         u = obj.id_utilisateur

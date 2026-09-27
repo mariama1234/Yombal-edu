@@ -13,6 +13,7 @@ import {
   StatistiquesClasse,
 } from '../../core/models/models';
 import { PedagogieService } from './pedagogie.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /**
  * Palmarès et statistiques d'une classe (2.3 de la priorisation).
@@ -24,7 +25,7 @@ import { PedagogieService } from './pedagogie.service';
 @Component({
   selector: 'app-palmares',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, SiAccesDirective],
   templateUrl: './palmares.component.html',
 })
 export class PalmaresComponent implements OnInit {

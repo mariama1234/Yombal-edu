@@ -5460,6 +5460,10 @@ class TestMatriceAutorisations(BaseAPI):
         "relances": "relances", "journal_caisse": "journal-caisse", "depenses": "depenses",
         "budget": "budgets", "types_frais": "types-frais", "parametres": "parametres",
     }
+    # Le catalogue des postes de charge se lit dès qu'on peut enregistrer un
+    # décaissement : sa lecture suit « Dépenses », son écriture « Types de
+    # dépenses ». Il est donc vérifié à part.
+    ENDPOINT_TYPES_DEPENSES = "types-depenses"
 
     def setUp(self):
         super().setUp()
@@ -5492,26 +5496,63 @@ class TestMatriceAutorisations(BaseAPI):
     def test_quelques_cellules_du_fichier(self):
         """Relu à la main sur le fichier, pour qu'une faute de frappe dans la matrice se voie."""
         M, E, L = self.MATRICE, self.ECRITURE, self.LECTURE
-        self.assertEqual(M["depenses"]["caissier"], None)
+        # Le décaissement revient au caissier ; le catalogue des postes, non.
+        self.assertEqual(M["depenses"]["caissier"], E)
+        self.assertEqual(M["types_depenses"]["caissier"], None)
+        self.assertEqual(M["budget"]["caissier"], None)
+        self.assertEqual(M["depenses"]["vie_scolaire"], None)
         self.assertEqual(M["depenses"]["comptable"], E)
         self.assertEqual(M["types_frais"]["responsable_financier"], E)
-        self.assertEqual(M["types_frais"]["comptable"], L)
+        self.assertEqual(M["types_frais"]["comptable"], E)
         self.assertEqual(M["encaissement"]["caissier"], E)
-        self.assertEqual(M["encaissement"]["comptable"], L)
+        self.assertEqual(M["encaissement"]["vie_scolaire"], L)
+        self.assertEqual(M["encaissement"]["comptable"], E)
         self.assertEqual(M["personnel"]["vie_scolaire"], L)
+        self.assertEqual(M["personnel"]["responsable_financier"], E)
         self.assertEqual(M["personnel"]["enseignant"], None)
         self.assertEqual(M["journal_caisse"]["direction"], L)
+        self.assertEqual(M["journal_caisse"]["vie_scolaire"], None)
         self.assertEqual(M["parametres"]["vie_scolaire"], None)
         self.assertEqual(M["notes"]["enseignant"], E)
+        self.assertEqual(M["eleves"]["caissier"], L)
+        self.assertEqual(M["inscriptions"]["caissier"], None)
+        # Un parent tient à jour ses propres coordonnées.
+        self.assertEqual(M["parents"]["parent"], E)
+        self.assertEqual(M["parents"]["caissier"], None)
         self.assertEqual(M["frais"]["eleve"], None)
         self.assertEqual(M["frais"]["parent"], L)
+
+    def test_le_catalogue_des_postes_se_lit_pour_imputer_une_depense(self):
+        """
+        Un caissier enregistre un décaissement : il doit pouvoir choisir sa
+        catégorie, sans pour autant gérer le catalogue ni voir les enveloppes.
+        """
+        models.TypeDepense.objects.create(id_ecole=self.ecole, libelle="Fournitures")
+        caissier = self.clients["caissier"]
+        lecture = caissier.get(f"/api/{self.ENDPOINT_TYPES_DEPENSES}/")
+        self.assertEqual(lecture.status_code, 200)
+        ligne = self.resultats(lecture)[0]
+        self.assertEqual(ligne["libelle"], "Fournitures")
+        # Les chiffres du budget ne lui sont pas servis.
+        for champ in ("budget_alloue", "montant_depense", "budget_disponible"):
+            self.assertNotIn(champ, ligne)
+
+        self.assertEqual(
+            caissier.post(f"/api/{self.ENDPOINT_TYPES_DEPENSES}/",
+                          {"libelle": "Autre"}, format="json").status_code, 403)
+        # Le comptable, lui, gère le catalogue et lit les enveloppes.
+        comptable = self.clients["comptable"].get(f"/api/{self.ENDPOINT_TYPES_DEPENSES}/")
+        self.assertIn("budget_disponible", self.resultats(comptable)[0])
+        self.assertEqual(
+            self.clients["surveillant"].get(f"/api/{self.ENDPOINT_TYPES_DEPENSES}/").status_code, 403)
 
     def test_moi_renvoie_les_acces(self):
         r = self.clients["comptable"].get("/api/auth/moi/")
         self.assertEqual(r.data["profil"], "comptable")
         self.assertEqual(r.data["role_libelle"], "Comptable")
         self.assertEqual(r.data["acces"]["depenses"], "ecriture")
-        self.assertEqual(r.data["acces"]["frais"], "lecture")
+        self.assertEqual(r.data["acces"]["types_depenses"], "ecriture")
+        self.assertEqual(r.data["acces"]["journal_caisse"], "lecture")
         self.assertNotIn("notes", r.data["acces"])
 
     def test_directeur_gere_les_comptes_et_compte_comme_administrateur(self):
@@ -5534,8 +5575,10 @@ class TestMatriceAutorisations(BaseAPI):
         self.assertEqual(r.status_code, 200)
         roles = {c["role"] for c in r.data["caissiers"]}
         self.assertIn("caissier", roles)
-        self.assertIn("surveillant", roles)
-        self.assertNotIn("comptable", roles)
+        self.assertIn("comptable", roles)
+        # Le surveillant ne fait que consulter l'encaissement : il n'encaisse pas.
+        self.assertNotIn("surveillant", roles)
+        self.assertNotIn("enseignant", roles)
 
     def test_bilan_reserve_aux_profils_du_budget(self):
         self.assertEqual(self.clients["comptable"].get("/api/finances/bilan/").status_code, 200)
@@ -5592,11 +5635,20 @@ class TestPerimetreFamilleEtEnseignant(BaseAPI):
         r = self.parent.patch(f"/api/eleves/{self.enfant.pk}/", {"nom": "X"}, format="json")
         self.assertEqual(r.status_code, 403)
 
-    def test_le_dossier_vu_par_un_enseignant_na_ni_finances_ni_parents(self):
+    def test_le_dossier_vu_par_un_enseignant_na_pas_les_finances(self):
+        # Matrice : l'enseignant lit les parents et les bulletins, pas les frais.
         dossier = self.prof.get(f"/api/eleves/{self.enfant.pk}/dossier/").data
         self.assertIsNone(dossier["finances"])
-        self.assertIsNone(dossier["parents"])
+        self.assertIsNotNone(dossier["parents"])
         self.assertIsNotNone(dossier["resultats"])
+
+    def test_le_dossier_vu_par_un_caissier_na_pas_les_notes(self):
+        # Matrice : le caissier lit les frais, pas les notes ni les parents.
+        caissier = self._client(self._compte("caisse@p.sn", self.ecole, "caissier").email)
+        dossier = caissier.get(f"/api/eleves/{self.enfant.pk}/dossier/").data
+        self.assertIsNotNone(dossier["finances"])
+        self.assertIsNone(dossier["resultats"])
+        self.assertIsNone(dossier["parents"])
 
     def test_lenseignant_ne_voit_les_notes_que_de_ses_classes(self):
         periode = models.PeriodeScolaire.objects.create(
@@ -5799,3 +5851,94 @@ class TestListeDesElevesPourUneSaisie(BaseAPI):
             nom="6ème A", capacite_max=40)
         r = self.client.get("/api/eleves/", {"classe": classe_b.pk})
         self.assertEqual(r.status_code, 400)
+
+
+class TestJustificatifDeDepense(BaseAPI):
+    """Facture ou reçu joint à une dépense, déposé depuis la caisse."""
+
+    PDF = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n"
+
+    def setUp(self):
+        super().setUp()
+        # Un dossier média à part, comme les tests de photos : les fichiers
+        # déposés ici n'ont pas à s'accumuler dans le `media/` du projet, et un
+        # reste d'une autre exécution ne doit pas les gêner.
+        import shutil
+        import tempfile
+        from django.test import override_settings
+
+        dossier = tempfile.mkdtemp()
+        reglage = override_settings(MEDIA_ROOT=dossier)
+        reglage.enable()
+        self.addCleanup(shutil.rmtree, dossier, ignore_errors=True)
+        self.addCleanup(reglage.disable)
+
+        self.categorie = models.TypeDepense.objects.create(
+            id_ecole=self.ecole, libelle="Fournitures")
+        self.depense = models.Depense.objects.create(
+            id_ecole=self.ecole, id_type_depense=self.categorie, motif="Ramettes A4",
+            montant=25000, date_depense=timezone.localdate())
+
+    def _fichier(self, contenu=None, nom="facture.pdf"):
+        return SimpleUploadedFile(nom, contenu if contenu is not None else self.PDF)
+
+    def _deposer(self, client=None, **kwargs):
+        return (client or self.client).post(
+            f"/api/depenses/{self.depense.pk}/justificatif/",
+            {"fichier": self._fichier(**kwargs)}, format="multipart")
+
+    def test_depot_lecture_et_retrait(self):
+        self.assertEqual(self._deposer().status_code, 200)
+        self.depense.refresh_from_db()
+        self.assertTrue(self.depense.justificatif_url.startswith("justificatifs/"))
+        # Le fichier n'est pas servi à une adresse publique : il passe par l'API.
+        lecture = self.client.get(f"/api/depenses/{self.depense.pk}/justificatif/")
+        self.assertEqual(lecture.status_code, 200)
+        self.assertEqual(lecture["Content-Type"], "application/pdf")
+        self.assertIn("attachment", lecture["Content-Disposition"])
+        # Lire la réponse jusqu'au bout la referme, fichier compris. Un
+        # `close()` explicite enverrait `request_finished`, qui coupe la
+        # connexion à la base au milieu de la transaction du test.
+        self.assertEqual(lecture.getvalue(), self.PDF)
+
+        self.assertEqual(self.client.get(f"/api/depenses/{self.depense.pk}/").data["a_justificatif"],
+                         True)
+        self.assertEqual(
+            self.client.delete(f"/api/depenses/{self.depense.pk}/justificatif/").status_code, 204)
+        self.depense.refresh_from_db()
+        self.assertIsNone(self.depense.justificatif_url)
+        self.assertEqual(self.client.get(f"/api/depenses/{self.depense.pk}/justificatif/").status_code, 404)
+
+    def test_le_format_est_reconnu_au_contenu_pas_au_nom(self):
+        # Un exécutable renommé en .pdf est refusé.
+        r = self._deposer(contenu=b"MZ\x90\x00 programme", nom="facture.pdf")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Format non reconnu", str(r.data["fichier"]))
+        # Une photo de la facture prise au téléphone passe, elle.
+        self.assertEqual(self._deposer(contenu=b"\xff\xd8\xff\xe0 photo", nom="photo").status_code, 200)
+
+    def test_un_fichier_trop_gros_est_refuse(self):
+        r = self._deposer(contenu=self.PDF + b"0" * (5 * 1024 * 1024))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("volumineux", str(r.data["fichier"]))
+
+    def test_qui_peut_joindre_et_qui_peut_seulement_lire(self):
+        self._deposer()
+        caissier = self._client(self._compte("caisse@j.sn", self.ecole, "caissier").email)
+        # Le caissier enregistre les décaissements : il joint la pièce.
+        self.assertEqual(self._deposer(caissier).status_code, 200)
+        surveillant = self._client(self._compte("surv@j.sn", self.ecole, "surveillant").email)
+        self.assertEqual(self._deposer(surveillant).status_code, 403)
+        self.assertEqual(
+            surveillant.get(f"/api/depenses/{self.depense.pk}/justificatif/").status_code, 403)
+
+    def test_une_autre_ecole_ne_lit_pas_le_justificatif(self):
+        self._deposer()
+        self.assertEqual(
+            self.client_autre.get(f"/api/depenses/{self.depense.pk}/justificatif/").status_code, 404)
+
+    def test_la_caisse_annonce_les_pieces_de_la_journee(self):
+        self._deposer()
+        journee = self.client.get("/api/caisse/historique/").data
+        ligne = next(d for d in journee["depenses"] if d["id"] == self.depense.pk)
+        self.assertTrue(ligne["a_justificatif"])

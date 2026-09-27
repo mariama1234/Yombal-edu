@@ -23,8 +23,8 @@
       </tbody>
     </table>
     <div class="form-actions">
-      <a class="btn-ghost" routerLink="/finances/relances">Relances</a>
-      <a class="btn-ghost" routerLink="/finances/caisse">Caisse</a>
+      <a *siAcces="'relances:ecriture'" class="btn-ghost" routerLink="/finances/relances">Relances</a>
+      <a *siAcces="'journal_caisse'" class="btn-ghost" routerLink="/finances/caisse">Caisse</a>
       <a class="btn-primary" routerLink="/finances">Voir les impayés →</a>
     </div>
   </div>

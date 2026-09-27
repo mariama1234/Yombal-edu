@@ -39,7 +39,7 @@ export type Module =
   | 'tableau_de_bord' | 'eleves' | 'inscriptions' | 'parents' | 'classes'
   | 'matieres' | 'emploi_du_temps' | 'presences' | 'notes' | 'bulletins'
   | 'personnel' | 'frais' | 'encaissement' | 'relances' | 'journal_caisse'
-  | 'depenses' | 'budget' | 'types_frais' | 'parametres'
+  | 'depenses' | 'types_depenses' | 'budget' | 'types_frais' | 'parametres'
   | 'annees_scolaires' | 'comptes' | 'communications';
 
 export interface Ecole {
@@ -1003,6 +1003,8 @@ export interface HistoriqueCaisse {
     montant: number;
     id_caissier: number | null;
     caissier: string;
+    /** Une facture ou un reçu est joint à la dépense. */
+    a_justificatif: boolean;
   }[];
   /** L'arrêté du jour, s'il a été fait : totaux figés au moment du comptage. */
   cloture: {

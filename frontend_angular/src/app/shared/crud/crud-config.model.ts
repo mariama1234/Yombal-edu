@@ -112,12 +112,20 @@ export interface FiltreConfig {
 export interface EtapeSuivante {
   label: string;
   chemin: string;
+  /**
+   * Module de la page visée, `'module'` ou `'module:ecriture'` : l'étape
+   * disparaît pour un profil qui n'y a pas accès. Proposer la suite d'un
+   * parcours fermé serait une impasse.
+   */
+  module?: string;
 }
 
 /** Raccourci sur chaque ligne, ex: la liste des élèves d'une classe. */
 export interface LienLigne {
   label: string;
   chemin: string;
+  /** Module de la page visée : le raccourci disparaît sans accès (voir `EtapeSuivante`). */
+  module?: string;
   /** Paramètre d'URL qui reçoit la valeur de la ligne. */
   parametre: string;
   /** Champ de la ligne à transmettre ; `id` par défaut. */

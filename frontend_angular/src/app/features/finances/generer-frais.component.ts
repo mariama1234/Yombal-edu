@@ -13,6 +13,7 @@ import {
 } from '../../core/models/models';
 import { FinanceService } from './finance.service';
 import { ToastService } from '../../core/services/toast.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /**
  * Facturation en masse : un type de frais, une année, des échéances.
@@ -24,7 +25,7 @@ import { ToastService } from '../../core/services/toast.service';
 @Component({
   selector: 'app-generer-frais',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, SiAccesDirective],
   templateUrl: './generer-frais.component.html',
 })
 export class GenererFraisComponent implements OnInit {

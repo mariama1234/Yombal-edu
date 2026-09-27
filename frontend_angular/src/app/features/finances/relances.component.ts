@@ -4,6 +4,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { Relance, ResultatRelances } from '../../core/models/models';
 import { FinanceService } from './finance.service';
+import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /**
  * Relances des impayés.
@@ -14,7 +15,7 @@ import { FinanceService } from './finance.service';
 @Component({
   selector: 'app-relances',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, SiAccesDirective],
   templateUrl: './relances.component.html',
 })
 export class RelancesComponent implements OnInit {

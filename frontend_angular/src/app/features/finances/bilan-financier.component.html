@@ -14,7 +14,7 @@
     </select>
     <button class="btn-ghost" (click)="exporter('xlsx')" [disabled]="telechargement()">Export Excel</button>
     <button class="btn-ghost" (click)="exporter('pdf')" [disabled]="telechargement()">Export PDF</button>
-    <a class="btn-ghost" routerLink="/finances">← Finances</a>
+    <a *siAcces="'frais'" class="btn-ghost" routerLink="/finances">← Finances</a>
   </div>
 </div>
 
@@ -86,7 +86,7 @@
       <div class="tile-generic">
         <div class="tile-generic-label">Total disponible</div>
         <div class="tile-generic-value">{{ b.tresorerie.total | number:'1.0-0' }}</div>
-        <div class="tile-generic-meta"><a class="panel-link" routerLink="/finances/journal">Voir le journal →</a></div>
+        <div class="tile-generic-meta"><a *siAcces="'journal_caisse'" class="panel-link" routerLink="/finances/journal">Voir le journal →</a></div>
       </div>
     </div>
   </div>
@@ -164,7 +164,7 @@
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">Dépenses par catégorie</div>
-      <a class="panel-link" routerLink="/depenses">Gérer les dépenses →</a>
+      <a *siAcces="'depenses'" class="panel-link" routerLink="/depenses">Gérer les dépenses →</a>
     </div>
     @if (b.depenses.par_categorie.length === 0) {
       <p style="color:var(--ink-400); font-size:13px;">Aucune dépense enregistrée sur la période.</p>
@@ -198,7 +198,7 @@
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">Suivi budgétaire</div>
-      <a class="panel-link" routerLink="/types-depenses">Gérer les budgets →</a>
+      <a *siAcces="'types_depenses'" class="panel-link" routerLink="/types-depenses">Gérer les budgets →</a>
     </div>
     @if (b.budgets.length === 0) {
       <p style="color:var(--ink-400); font-size:13px;">Aucun budget défini pour cette période.</p>

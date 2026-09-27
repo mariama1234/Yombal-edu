@@ -5,8 +5,8 @@
     <p>Classement de la classe et indicateurs de la période, pour le conseil de classe.</p>
   </div>
   <div class="form-actions" style="margin:0;">
-    <a class="btn-ghost" routerLink="/pedagogie/bulletins">Bulletins</a>
-    <a class="btn-ghost" routerLink="/pedagogie/notes">Saisir des notes</a>
+    <a *siAcces="'bulletins'" class="btn-ghost" routerLink="/pedagogie/bulletins">Bulletins</a>
+    <a *siAcces="'notes:ecriture'" class="btn-ghost" routerLink="/pedagogie/notes">Saisir des notes</a>
   </div>
 </div>
 

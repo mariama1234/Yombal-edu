@@ -8,15 +8,15 @@
     </p>
   </div>
   <div style="display:flex; gap:10px; flex-wrap:wrap;">
-    <a class="btn-ghost" routerLink="/types-frais">Types de frais</a>
-    <a class="btn-ghost" routerLink="/niveaux">Niveaux</a>
+    <a *siAcces="'types_frais'" class="btn-ghost" routerLink="/types-frais">Types de frais</a>
+    <a *siAcces="'classes'" class="btn-ghost" routerLink="/niveaux">Niveaux</a>
   </div>
 </div>
 
 @if (message()) {
   <div class="form-success" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
     <span>{{ message() }}</span>
-    <a class="panel-link" routerLink="/eleves/nouveau">Inscrire un élève →</a>
+    <a *siAcces="'inscriptions:ecriture'" class="panel-link" routerLink="/eleves/nouveau">Inscrire un élève →</a>
   </div>
 }
 @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
@@ -29,10 +29,10 @@
     <div class="panel">
       <p style="font-size:13px; color:var(--ink-600); margin:0;">
         @if (!g.niveaux.length) {
-          Aucun niveau n'est encore créé : ajoute-les dans <a class="panel-link" routerLink="/niveaux">Niveaux</a>.
+          Aucun niveau n'est encore créé : ajoute-les dans <a *siAcces="'classes'" class="panel-link" routerLink="/niveaux">Niveaux</a>.
         }
         @if (!g.types.length) {
-          Aucun frais n'est encore créé : ajoute-les dans <a class="panel-link" routerLink="/types-frais">Types de frais</a>.
+          Aucun frais n'est encore créé : ajoute-les dans <a *siAcces="'types_frais'" class="panel-link" routerLink="/types-frais">Types de frais</a>.
         }
       </p>
     </div>

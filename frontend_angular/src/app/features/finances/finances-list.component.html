@@ -8,7 +8,7 @@
     @if (auth.peutLire('budget')) {
       <a class="btn-ghost" routerLink="/finances/bilan">Bilan financier</a>
     }
-    <a class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
+    <a *siAcces="'journal_caisse'" class="btn-ghost" routerLink="/finances/journal">Journal de caisse</a>
     @if (peutRelancer()) {
       <a class="btn-ghost" routerLink="/finances/relances">Relances</a>
     }

@@ -12,8 +12,8 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   'annees-scolaires': {
     key: 'annees-scolaires',
     suite: [
-      { label: 'Niveaux', chemin: '/niveaux' },
-      { label: 'Périodes scolaires', chemin: '/periodes' },
+      { label: 'Niveaux', chemin: '/niveaux', module: 'classes' },
+      { label: 'Périodes scolaires', chemin: '/periodes', module: 'annees_scolaires' },
     ],
     endpoint: 'annees-scolaires',
     titre: 'Années scolaires',
@@ -50,8 +50,8 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   niveaux: {
     key: 'niveaux',
     suite: [
-      { label: 'Classes', chemin: '/classes' },
-      { label: 'Tarifs par niveau', chemin: '/finances/tarifs' },
+      { label: 'Classes', chemin: '/classes', module: 'classes' },
+      { label: 'Tarifs par niveau', chemin: '/finances/tarifs', module: 'types_frais' },
     ],
     endpoint: 'niveaux',
     titre: 'Niveaux',
@@ -72,7 +72,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   salles: {
     key: 'salles',
     suite: [
-      { label: 'Emploi du temps', chemin: '/emploi-du-temps' },
+      { label: 'Emploi du temps', chemin: '/emploi-du-temps', module: 'emploi_du_temps' },
     ],
     endpoint: 'salles',
     titre: 'Salles',
@@ -94,7 +94,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   'conseils-classe': {
     key: 'conseils-classe',
     suite: [
-      { label: 'Bulletins', chemin: '/pedagogie/bulletins' },
+      { label: 'Bulletins', chemin: '/pedagogie/bulletins', module: 'bulletins' },
     ],
     filtreParAnnee: true,
     endpoint: 'conseils-classe',
@@ -120,7 +120,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     key: 'parents',
     acces: { role: 'parent' },
     suite: [
-      { label: 'Élèves', chemin: '/eleves' },
+      { label: 'Élèves', chemin: '/eleves', module: 'eleves' },
     ],
     endpoint: 'parents',
     titre: 'Parents & tuteurs',
@@ -145,8 +145,8 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   matieres: {
     key: 'matieres',
     suite: [
-      { label: 'Coefficients', chemin: '/coefficients' },
-      { label: 'Affectations', chemin: '/affectations' },
+      { label: 'Coefficients', chemin: '/coefficients', module: 'matieres' },
+      { label: 'Affectations', chemin: '/affectations', module: 'matieres' },
     ],
     endpoint: 'matieres',
     titre: 'Matières',
@@ -161,7 +161,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     key: 'personnel',
     acces: { role: 'enseignant' },
     suite: [
-      { label: 'Affectations', chemin: '/affectations' },
+      { label: 'Affectations', chemin: '/affectations', module: 'matieres' },
     ],
     endpoint: 'enseignants',
     titre: 'Enseignants & personnel',
@@ -222,7 +222,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   evaluations: {
     key: 'evaluations',
     suite: [
-      { label: 'Saisie des notes', chemin: '/pedagogie/notes' },
+      { label: 'Saisie des notes', chemin: '/pedagogie/notes', module: 'notes:ecriture' },
     ],
     filtreParAnnee: true,
     endpoint: 'evaluations',
@@ -259,7 +259,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   notes: {
     key: 'notes',
     suite: [
-      { label: 'Bulletins', chemin: '/pedagogie/bulletins' },
+      { label: 'Bulletins', chemin: '/pedagogie/bulletins', module: 'bulletins' },
     ],
     endpoint: 'notes',
     titre: 'Notes',
@@ -289,7 +289,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   'emploi-du-temps': {
     key: 'emploi-du-temps',
     suite: [
-      { label: 'Présences', chemin: '/presences' },
+      { label: 'Présences', chemin: '/presences', module: 'presences' },
     ],
     filtreParAnnee: true,
     endpoint: 'emplois-du-temps',
@@ -321,11 +321,11 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   classes: {
     key: 'classes',
     suite: [
-      { label: 'Inscrire un élève', chemin: '/eleves/nouveau' },
-      { label: 'Coefficients', chemin: '/coefficients' },
+      { label: 'Inscrire un élève', chemin: '/eleves/nouveau', module: 'inscriptions:ecriture' },
+      { label: 'Coefficients', chemin: '/coefficients', module: 'matieres' },
     ],
     liens: [
-      { label: 'Élèves', chemin: '/eleves', parametre: 'classe' },
+      { label: 'Élèves', chemin: '/eleves', parametre: 'classe', module: 'eleves' },
     ],
     filtreParAnnee: true,
     endpoint: 'classes',
@@ -354,7 +354,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   'types-frais': {
     key: 'types-frais',
     suite: [
-      { label: 'Tarifs par niveau', chemin: '/finances/tarifs' },
+      { label: 'Tarifs par niveau', chemin: '/finances/tarifs', module: 'types_frais' },
     ],
     endpoint: 'types-frais',
     titre: 'Types de frais',
@@ -398,8 +398,8 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   'types-depenses': {
     key: 'types-depenses',
     suite: [
-      { label: 'Dépenses', chemin: '/depenses' },
-      { label: 'Bilan financier', chemin: '/finances/bilan' },
+      { label: 'Dépenses', chemin: '/depenses', module: 'depenses' },
+      { label: 'Bilan financier', chemin: '/finances/bilan', module: 'budget' },
     ],
     endpoint: 'types-depenses',
     // Le budget disponible se compte sur l'année du bandeau haut : la liste
@@ -411,12 +411,15 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     description: 'Postes de charge de l’école : loyer, salaires, fournitures, transport… Chacun porte '
       + 'l’enveloppe de l’année affichée en haut de l’écran, que les dépenses consomment au fur et à mesure. '
       + 'Changez d’année pour voir ou fixer celle d’un autre exercice.',
-    // Deux colonnes et rien d'autre : la catégorie et son enveloppe. Le
-    // dépensé et le disponible restent calculés par l'API — le formulaire de
-    // dépense s'en sert pour annoncer ce qui reste au moment d'engager.
+    // L'enveloppe, ce qu'elle a déjà payé, et ce qui reste : les trois se
+    // lisent d'un coup d'œil, sur l'année affichée en haut. Le dépensé et le
+    // disponible sont calculés par l'API à chaque affichage — une dépense
+    // enregistrée les met donc à jour d'elle-même.
     columns: [
       { key: 'libelle', label: 'Catégorie' },
       { key: 'budget_alloue', label: 'Budget alloué', type: 'number' },
+      { key: 'montant_depense', label: 'Déjà dépensé', type: 'number' },
+      { key: 'budget_disponible', label: 'Budget disponible', type: 'number' },
     ],
     fields: [
       { key: 'libelle', label: 'Libellé', type: 'text', required: true, placeholder: 'Loyer' },
@@ -431,7 +434,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   depenses: {
     key: 'depenses',
     suite: [
-      { label: 'Bilan financier', chemin: '/finances/bilan' },
+      { label: 'Bilan financier', chemin: '/finances/bilan', module: 'budget' },
     ],
     endpoint: 'depenses',
     titre: 'Dépenses',
@@ -576,7 +579,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     // L'identité de l'école (nom, adresse, coordonnées) ne se règle pas en
     // clé/valeur : elle a son propre écran, rappelé ici pour qu'on le trouve.
     suite: [
-      { label: 'Informations de l’école', chemin: '/parametres/ecole' },
+      { label: 'Informations de l’école', chemin: '/parametres/ecole', module: 'parametres' },
     ],
     titre: 'Paramètres',
     titreSingulier: 'un paramètre',
@@ -660,7 +663,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   periodes: {
     key: 'periodes',
     suite: [
-      { label: 'Évaluations', chemin: '/evaluations' },
+      { label: 'Évaluations', chemin: '/evaluations', module: 'notes' },
     ],
     filtreParAnnee: true,
     endpoint: 'periodes',
@@ -685,7 +688,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   coefficients: {
     key: 'coefficients',
     suite: [
-      { label: 'Évaluations', chemin: '/evaluations' },
+      { label: 'Évaluations', chemin: '/evaluations', module: 'notes' },
     ],
     filtreParAnnee: true,
     endpoint: 'coefficients',
@@ -709,7 +712,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   affectations: {
     key: 'affectations',
     suite: [
-      { label: 'Emploi du temps', chemin: '/emploi-du-temps' },
+      { label: 'Emploi du temps', chemin: '/emploi-du-temps', module: 'emploi_du_temps' },
     ],
     filtreParAnnee: true,
     endpoint: 'affectations',
