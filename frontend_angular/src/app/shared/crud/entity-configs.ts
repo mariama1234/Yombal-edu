@@ -464,7 +464,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
             + 'Le montant saisi s’en retranche au fur et à mesure de la frappe.',
       },
       { key: 'montant', label: 'Montant (F CFA)', type: 'number', required: true },
-      { key: 'date_depense', label: 'Date', type: 'date', required: true },
+      { key: 'date_depense', label: 'Date', type: 'date', required: true, defaut: 'aujourdhui' },
       { key: 'motif', label: 'Motif', type: 'text', required: true, span2: true },
       {
         key: 'justificatif', label: 'Justificatif', type: 'fichier', span2: true,

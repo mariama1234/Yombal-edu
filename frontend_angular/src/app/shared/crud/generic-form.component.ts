@@ -79,12 +79,27 @@ export class GenericFormComponent implements OnInit {
       // vient d'ailleurs, et ne doit pas partir dans le payload.
       if (field.type === 'lecture' || field.type === 'fichier') continue;
       const validators = field.required ? [Validators.required] : [];
-      controls[field.key] = [field.type === 'checkbox' ? false : '', validators];
+      controls[field.key] = [field.type === 'checkbox' ? false : this.valeurParDefaut(field), validators];
       if (field.optionsEndpoint) {
         this.optionsParChamp[field.key] = [];
       }
     }
     this.form = this.fb.group(controls);
+  }
+
+  /**
+   * Valeur de départ d'un champ. En modification, elle est aussitôt remplacée
+   * par celle de la ligne chargée : le défaut ne vaut que pour une création.
+   */
+  private valeurParDefaut(field: FieldConfig): string {
+    if (field.defaut === 'aujourdhui') {
+      // Date locale, pas `toISOString()` : en UTC, une saisie faite tard le
+      // soir tomberait sur le lendemain dans les fuseaux à l'est de Greenwich.
+      const d = new Date();
+      const deux = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${deux(d.getMonth() + 1)}-${deux(d.getDate())}`;
+    }
+    return '';
   }
 
   private chargerOptions(): void {

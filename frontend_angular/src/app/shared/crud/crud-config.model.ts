@@ -91,6 +91,11 @@ export interface FieldConfig {
   optionsFiltrePar?: { champ: string; param: string };
   placeholder?: string;
   span2?: boolean;
+  /**
+   * Valeur proposée à la création, que l'utilisateur peut changer.
+   * `'aujourdhui'` pour un champ `date` : la date du jour.
+   */
+  defaut?: 'aujourdhui';
 }
 
 /**

@@ -234,7 +234,7 @@
       }
     } @else {
       <p class="hint" style="margin:0 0 14px;">
-        Ventilation des encaissements du jour par moyen de paiement.
+        Encaissements du jour par moyen de paiement, puis les dépenses sorties de la caisse.
       </p>
       <table class="simple">
         <tbody>
@@ -250,8 +250,40 @@
             </tr>
           }
           <tr>
-            <td><strong>Total du jour</strong></td>
+            <td><strong>Total encaissé du jour</strong></td>
             <td class="mono" style="text-align:right;"><strong>{{ j.totaux.encaisse | number:'1.0-0' }} F</strong></td>
+          </tr>
+
+          <!-- Les dépenses du jour se comptent avant d'arrêter la caisse : ce
+               sont elles qui expliquent l'écart entre l'encaissé et le tiroir. -->
+          <tr>
+            <td colspan="2" class="sous-titre" style="padding-top:16px;">Dépenses du jour</td>
+          </tr>
+          @for (d of j.depenses; track d.id) {
+            <tr>
+              <td>
+                {{ d.motif }}
+                <span class="hint">· {{ d.categorie }} · {{ d.caissier }}</span>
+              </td>
+              <td class="mono" style="text-align:right; color:var(--serie-2);">− {{ d.montant | number:'1.0-0' }} F</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td class="hint">Aucune dépense enregistrée aujourd'hui.</td>
+              <td class="mono" style="text-align:right;">0 F</td>
+            </tr>
+          }
+          <tr>
+            <td><strong>Total des dépenses du jour</strong></td>
+            <td class="mono" style="text-align:right;"><strong>− {{ j.totaux.depense | number:'1.0-0' }} F</strong></td>
+          </tr>
+
+          <tr>
+            <td><strong>Solde du jour</strong> <span class="hint">· encaissé moins dépensé</span></td>
+            <td class="mono" style="text-align:right;"
+                [style.color]="j.totaux.solde < 0 ? 'var(--red)' : 'var(--ink-900)'">
+              <strong>{{ j.totaux.solde | number:'1.0-0' }} F</strong>
+            </td>
           </tr>
           <tr>
             <td>Espèces attendues en caisse <span class="hint">· espèces reçues moins les dépenses</span></td>
