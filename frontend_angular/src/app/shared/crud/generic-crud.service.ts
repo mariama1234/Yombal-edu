@@ -38,6 +38,21 @@ export class GenericCrudService<T extends { id: number }> {
     return this.http.delete<void>(`${environment.apiUrl}/${endpoint}/${id}/`);
   }
 
+  /** Pièce jointe d'une ligne, ex: POST /depenses/12/justificatif/ (champ `fichier`). */
+  deposerFichier(endpoint: string, id: number, chemin: string, fichier: File): Observable<unknown> {
+    const corps = new FormData();
+    corps.append('fichier', fichier);
+    return this.http.post(`${environment.apiUrl}/${endpoint}/${id}/${chemin}/`, corps);
+  }
+
+  lireFichier(endpoint: string, id: number, chemin: string): Observable<Blob> {
+    return this.http.get(`${environment.apiUrl}/${endpoint}/${id}/${chemin}/`, { responseType: 'blob' });
+  }
+
+  retirerFichier(endpoint: string, id: number, chemin: string): Observable<unknown> {
+    return this.http.delete(`${environment.apiUrl}/${endpoint}/${id}/${chemin}/`);
+  }
+
   /** Action métier sur une ligne, ex: POST /communications/12/envoyer/ */
   action(endpoint: string, id: number, chemin: string, payload: unknown = {}): Observable<T> {
     return this.http.post<T>(`${environment.apiUrl}/${endpoint}/${id}/${chemin}/`, payload);

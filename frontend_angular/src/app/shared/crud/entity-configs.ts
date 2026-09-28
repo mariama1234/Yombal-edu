@@ -447,6 +447,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'motif', label: 'Motif' },
       { key: 'montant', label: 'Montant', type: 'number' },
       { key: 'saisi_par', label: 'Saisie par' },
+      { key: 'a_justificatif', label: 'Justificatif' },
     ],
     fields: [
       // La catégorie ouvre la saisie : c'est elle qui décide du budget, et le
@@ -465,7 +466,14 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'montant', label: 'Montant (F CFA)', type: 'number', required: true },
       { key: 'date_depense', label: 'Date', type: 'date', required: true },
       { key: 'motif', label: 'Motif', type: 'text', required: true, span2: true },
-      { key: 'justificatif_url', label: 'Justificatif (lien)', type: 'text', span2: true, aide: 'Lien vers la facture ou le reçu numérisé.' },
+      {
+        key: 'justificatif', label: 'Justificatif', type: 'fichier', span2: true,
+        fichier: {
+          chemin: 'justificatif', presente: 'a_justificatif',
+          accept: 'application/pdf,image/jpeg,image/png,image/webp',
+        },
+        aide: 'Facture ou reçu : PDF ou photo (JPEG, PNG, WebP), 5 Mo au plus.',
+      },
     ],
   },
 

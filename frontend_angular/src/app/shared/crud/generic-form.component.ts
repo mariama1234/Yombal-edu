@@ -2,7 +2,7 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { forkJoin } from 'rxjs';
+import { Observable, concat, forkJoin, toArray } from 'rxjs';
 import { GenericCrudService } from './generic-crud.service';
 import { ToastService } from '../../core/services/toast.service';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
@@ -31,6 +31,11 @@ export class GenericFormComponent implements OnInit {
   /** Vrai le temps de remplir le formulaire depuis l'API, en modification. */
   private remplissageEnCours = false;
   enregistrement = signal(false);
+  /** Pièces choisies dans les champs `fichier`, envoyées après l'enregistrement. */
+  fichiersChoisis = signal<Record<string, File>>({});
+  /** Champs `fichier` dont la pièce déjà jointe est à retirer à l'enregistrement. */
+  retraits = signal<Record<string, boolean>>({});
+  erreurFichier = signal<string | null>(null);
   private toast = inject(ToastService);
   private annees = inject(AnneeScolaireService);
   private auth = inject(AuthService);
@@ -72,7 +77,7 @@ export class GenericFormComponent implements OnInit {
     for (const field of this.config.fields) {
       // Un champ `lecture` n'a pas de contrôle : il affiche une valeur qui
       // vient d'ailleurs, et ne doit pas partir dans le payload.
-      if (field.type === 'lecture') continue;
+      if (field.type === 'lecture' || field.type === 'fichier') continue;
       const validators = field.required ? [Validators.required] : [];
       controls[field.key] = [field.type === 'checkbox' ? false : '', validators];
       if (field.optionsEndpoint) {
@@ -312,20 +317,106 @@ export class GenericFormComponent implements OnInit {
       : this.crud.create(this.config.endpoint, payload);
 
     requete.subscribe({
-      next: () => {
-        this.enregistrement.set(false);
-        // La liste affiche « enregistrement effectué » et propose la suite
-        // logique : le nom saisi sert de repère quand il y en a un.
-        const champTexte = this.config.fields.find((f) => f.type === 'text');
-        const libelle = champTexte ? String(payload[champTexte.key] ?? '').trim() || null : null;
-        this.toast.succes(this.modeEdition ? 'Modifications enregistrées' : 'Enregistrement effectué',
-                          libelle ?? undefined);
-        this.router.navigate(['..'], {
-          relativeTo: this.route,
-          state: { enregistre: { libelle, creation: !this.modeEdition } },
+      next: (enregistre) => {
+        const id = enregistre?.id ?? this.idEnCours!;
+        const pieces = this.requetesPieces(id);
+        if (pieces.length === 0) {
+          this.terminer(payload);
+          return;
+        }
+        concat(...pieces).pipe(toArray()).subscribe({
+          next: () => this.terminer(payload),
+          error: (e) => {
+            // La ligne est enregistrée, seule la pièce a été refusée : le
+            // formulaire reste ouvert sur elle, en modification, pour qu'on
+            // puisse choisir un autre fichier sans tout ressaisir.
+            this.enregistrement.set(false);
+            this.modeEdition = true;
+            this.idEnCours = id;
+            this.valeursInitiales = enregistre ?? this.valeursInitiales;
+            this.erreurFichier.set(
+              'L’enregistrement est fait, mais la pièce jointe a été refusée : '
+              + (e?.error?.fichier?.[0] ?? e?.error?.fichier ?? e?.error?.detail
+                 ?? 'réessayez avec un autre fichier.'));
+          },
         });
       },
       error: () => this.enregistrement.set(false),
+    });
+  }
+
+  private terminer(payload: Record<string, any>): void {
+    this.enregistrement.set(false);
+    // La liste affiche « enregistrement effectué » et propose la suite
+    // logique : le nom saisi sert de repère quand il y en a un.
+    const champTexte = this.config.fields.find((f) => f.type === 'text');
+    const libelle = champTexte ? String(payload[champTexte.key] ?? '').trim() || null : null;
+    this.toast.succes(this.modeEdition ? 'Modifications enregistrées' : 'Enregistrement effectué',
+                      libelle ?? undefined);
+    this.router.navigate(['..'], {
+      relativeTo: this.route,
+      state: { enregistre: { libelle, creation: !this.modeEdition } },
+    });
+  }
+
+  // ---- Champs `fichier` -------------------------------------------------
+
+  /**
+   * Dépôts et retraits à faire une fois la ligne enregistrée : la pièce se
+   * rattache à un identifiant, qu'une création n'a qu'au retour de l'API.
+   */
+  private requetesPieces(id: number): Observable<unknown>[] {
+    const requetes: Observable<unknown>[] = [];
+    for (const field of this.config.fields) {
+      if (field.type !== 'fichier' || !field.fichier) continue;
+      const fichier = this.fichiersChoisis()[field.key];
+      if (fichier) {
+        requetes.push(this.crud.deposerFichier(this.config.endpoint, id, field.fichier.chemin, fichier));
+      } else if (this.retraits()[field.key]) {
+        requetes.push(this.crud.retirerFichier(this.config.endpoint, id, field.fichier.chemin));
+      }
+    }
+    return requetes;
+  }
+
+  /** Vrai quand la ligne ouverte a déjà une pièce, et qu'on ne l'a pas retirée. */
+  pieceJointe(field: FieldConfig): boolean {
+    return !!field.fichier && !!this.valeursInitiales[field.fichier.presente]
+        && !this.retraits()[field.key];
+  }
+
+  choisirFichier(field: FieldConfig, evenement: Event): void {
+    const entree = evenement.target as HTMLInputElement;
+    const fichier = entree.files?.[0];
+    entree.value = '';
+    if (!fichier) return;
+    this.erreurFichier.set(null);
+    this.fichiersChoisis.update((f) => ({ ...f, [field.key]: fichier }));
+  }
+
+  annulerChoix(field: FieldConfig): void {
+    this.fichiersChoisis.update(({ [field.key]: _, ...reste }) => reste);
+  }
+
+  retirerPiece(field: FieldConfig): void {
+    this.retraits.update((r) => ({ ...r, [field.key]: true }));
+  }
+
+  garderPiece(field: FieldConfig): void {
+    this.retraits.update(({ [field.key]: _, ...reste }) => reste);
+  }
+
+  /** Ouvre la pièce déjà jointe dans un nouvel onglet, le temps de la relire. */
+  ouvrirPiece(field: FieldConfig): void {
+    if (!field.fichier || this.idEnCours === null) return;
+    this.crud.lireFichier(this.config.endpoint, this.idEnCours, field.fichier.chemin).subscribe({
+      next: (blob) => {
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        // Révoqué plus tard : trop tôt, l'onglet n'a pas fini de la lire.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      },
+      error: () => this.erreurFichier.set('Cette pièce n’a pas pu être ouverte.'),
     });
   }
 

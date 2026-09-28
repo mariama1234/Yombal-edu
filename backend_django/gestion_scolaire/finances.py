@@ -279,6 +279,25 @@ def enregistrer_depense(depense, utilisateur=None):
     return mouvement
 
 
+def exercice(annee):
+    """
+    Période budgétaire d'une année scolaire : `(début, fin)`.
+
+    Elle s'ouvre le lendemain de la fin de l'année précédente, et non le jour
+    de la rentrée : les achats d'août et de septembre préparent l'année qui
+    vient. Bornée à la rentrée, une dépense faite entre deux années n'était
+    imputée à aucun budget — l'enveloppe restait pleine après l'achat, et la
+    dépense suivante repartait du même disponible.
+
+    La première année de l'école, sans devancière, s'ouvre à sa rentrée.
+    """
+    precedente = (models.AnneeScolaire.objects
+                  .filter(id_ecole=annee.id_ecole_id, date_fin__lt=annee.date_debut)
+                  .order_by("-date_fin").values_list("date_fin", flat=True).first())
+    debut = precedente + timedelta(days=1) if precedente else annee.date_debut
+    return debut, annee.date_fin
+
+
 def imputer_au_budget(depense):
     """
     Recalcule le réalisé des budgets couvrant cette dépense.
@@ -289,16 +308,18 @@ def imputer_au_budget(depense):
     budgets = models.Budget.objects.filter(
         id_ecole=depense.id_ecole,
         id_type_depense=depense.id_type_depense,
-        id_annee_scolaire__date_debut__lte=depense.date_depense,
         id_annee_scolaire__date_fin__gte=depense.date_depense,
     ).select_related("id_annee_scolaire")
     for budget in budgets:
+        debut, fin = exercice(budget.id_annee_scolaire)
+        if depense.date_depense < debut:
+            continue
         budget.montant_realise = (
             models.Depense.objects
             .filter(id_ecole=budget.id_ecole_id,
                     id_type_depense=budget.id_type_depense_id,
-                    date_depense__gte=budget.id_annee_scolaire.date_debut,
-                    date_depense__lte=budget.id_annee_scolaire.date_fin)
+                    date_depense__gte=debut,
+                    date_depense__lte=fin)
             .aggregate(total=_somme("montant"))["total"]
         )
         budget.save(update_fields=["montant_realise"])
@@ -336,8 +357,9 @@ def annoter_consommation(queryset, annee=None):
     fenetre = None
     alloue = Value(ZERO, output_field=_SOMME)
     if annee is not None:
-        fenetre = Q(depenses__date_depense__gte=annee.date_debut,
-                    depenses__date_depense__lte=annee.date_fin)
+        debut, fin = exercice(annee)
+        fenetre = Q(depenses__date_depense__gte=debut,
+                    depenses__date_depense__lte=fin)
         alloue = Coalesce(
             Subquery(models.Budget.objects
                      .filter(id_type_depense=OuterRef("pk"), id_annee_scolaire=annee)
@@ -929,11 +951,13 @@ def bilan(ecole, annee=None, debut=None, fin=None):
     trésorerie, budgets et évolution mensuelle.
 
     Sans année ni bornes, tout l'historique est pris en compte ; avec une
-    année, la période par défaut est celle de l'année scolaire.
+    année, la période par défaut est son exercice (voir `exercice`) : les
+    dépenses comptées sont alors celles qu'impute le budget.
     """
     if annee is not None:
-        debut = debut or annee.date_debut
-        fin = fin or annee.date_fin
+        debut_exercice, fin_exercice = exercice(annee)
+        debut = debut or debut_exercice
+        fin = fin or fin_exercice
 
     frais = models.FraisEleve.objects.filter(id_eleve__id_ecole=ecole)
     paiements = models.Paiement.objects.filter(id_frais_eleve__id_eleve__id_ecole=ecole)

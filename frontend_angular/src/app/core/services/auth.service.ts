@@ -48,6 +48,14 @@ export class AuthService {
     return this.currentUser()?.acces?.[module] === 'ecriture';
   }
 
+  /**
+   * Le compte peut-il modifier au moins un module ? Sans quoi il ne supprime
+   * jamais rien, et la corbeille — qui ne lui montre que ses propres
+   * suppressions — resterait vide à jamais.
+   */
+  readonly ecritQuelquePart = computed(() =>
+    Object.values(this.currentUser()?.acces ?? {}).some((niveau) => niveau === 'ecriture'));
+
   get accessToken(): string | null {
     return localStorage.getItem(this.ACCESS_KEY);
   }

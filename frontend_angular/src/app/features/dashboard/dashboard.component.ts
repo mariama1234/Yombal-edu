@@ -9,12 +9,15 @@ import {
   Bilan,
   Classe,
   ImpayesParClasse,
+  LigneVentilation,
   Paginated,
   SyntheseAssiduite,
   SyntheseEcole,
 } from '../../core/models/models';
 import { FinanceService } from '../finances/finance.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
+import { GrapheAnneauComponent, Segment } from '../../shared/graphes/graphe-anneau.component';
+import { Colonne, GrapheColonnesComponent } from '../../shared/graphes/graphe-colonnes.component';
 
 /** Une barre prête à dessiner, en coordonnées du viewBox. */
 interface Barre {
@@ -46,6 +49,10 @@ interface ClasseTrace {
   saturee: boolean;
 }
 
+/** Teintes des parts, dans l'ordre validé pour le daltonisme : jamais tirées au hasard. */
+const SERIES = ['var(--serie-1)', 'var(--serie-2)', 'var(--serie-3)',
+                'var(--serie-4)', 'var(--serie-5)'];
+
 const MOIS_COURTS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin',
                      'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 
@@ -55,7 +62,7 @@ const G = { largeur: 720, hauteur: 240, gauche: 62, droite: 14, haut: 18, bas: 3
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, RouterLink, SiAccesDirective],
+  imports: [CommonModule, RouterLink, SiAccesDirective, GrapheAnneauComponent, GrapheColonnesComponent],
   templateUrl: './dashboard.component.html',
 })
 export class DashboardComponent implements OnInit {
@@ -174,15 +181,6 @@ export class DashboardComponent implements OnInit {
   budgetsDepasses = computed(() => this.budgets().filter((b) => b.depasse).length);
 
   // ---- Recouvrement et assiduité --------------------------------------
-
-  /** Les cinq classes qui doivent le plus : c'est par là qu'on commence. */
-  classesDebitrices = computed(() => (this.impayes()?.classes ?? []).slice(0, 5));
-
-  /** Part du reste dû, pour dimensionner les barres du panneau impayés. */
-  partReste(reste: number): number {
-    const maximum = Math.max(1, ...(this.impayes()?.classes ?? []).map((c) => c.reste));
-    return (reste / maximum) * 100;
-  }
 
   aDesImpayes = computed(() => (this.impayes()?.classes?.length ?? 0) > 0);
 
@@ -337,4 +335,80 @@ export class DashboardComponent implements OnInit {
 
   totalEffectif = computed(() => this.effectifs().reduce((t, c) => t + c.effectif, 0));
   classesSaturees = computed(() => this.effectifs().filter((c) => c.saturee).length);
+
+  // ---- Graphiques circulaires -----------------------------------------
+
+  /**
+   * Situation de paiement des élèves. Ce sont des états — à jour, en retard —
+   * et non des séries : ils prennent les couleurs d'état de l'application,
+   * nommées dans la légende, et chaque part ouvre la liste des élèves concernés.
+   */
+  situationPaiements = computed<Segment[]>(() => {
+    const e = this.bilan()?.eleves;
+    if (!e) return [];
+    const etat = (statut: string, libelle: string, couleur: string): Segment => ({
+      libelle, couleur, valeur: e[statut as keyof typeof e] ?? 0,
+      lien: { chemin: '/finances', params: { statut } },
+    });
+    return [
+      etat('a_jour', 'À jour', 'var(--green)'),
+      etat('partiel', 'Partiel', 'var(--orange-500)'),
+      etat('en_retard', 'En retard', 'var(--red)'),
+      etat('non_paye', 'Non payé', 'var(--ink-400)'),
+    ];
+  });
+
+  recettesParType = computed(() => this.parts(this.bilan()?.recettes.par_type_frais));
+  recettesParMoyen = computed(() => this.parts(this.bilan()?.recettes.par_methode));
+  depensesParCategorie = computed(() => this.parts(this.bilan()?.depenses.par_categorie));
+
+  /**
+   * Une ventilation en six parts au plus : les cinq plus grosses, puis le
+   * reste regroupé. Au-delà, les teintes se confondent et l'anneau ne se lit
+   * plus — la liste complète reste au bilan financier.
+   */
+  private parts(lignes?: LigneVentilation[]): Segment[] {
+    const triees = [...(lignes ?? [])].filter((l) => l.montant > 0)
+      .sort((a, b) => b.montant - a.montant);
+    const tete = triees.length > 6 ? triees.slice(0, 5) : triees;
+    const segments: Segment[] = tete.map((l, i) => ({
+      libelle: l.libelle || 'Sans libellé',
+      valeur: l.montant,
+      couleur: i < SERIES.length ? SERIES[i] : 'var(--serie-6)',
+    }));
+    if (triees.length > 6) {
+      segments.push({
+        libelle: 'Autres',
+        valeur: triees.slice(5).reduce((t, l) => t + l.montant, 0),
+        couleur: 'var(--serie-autre)',
+      });
+    }
+    return segments;
+  }
+
+  // ---- Histogrammes en colonnes ---------------------------------------
+
+  colonnesEffectifs = computed<Colonne[]>(() => this.effectifs().map((c) => ({
+    libelle: c.nom,
+    valeur: c.effectif,
+    accent: c.saturee,
+    detail: c.capacite ? `${c.effectif} / ${c.capacite} places (${c.remplissage} %)` : undefined,
+  })));
+
+  colonnesMentions = computed<Colonne[]>(() => this.mentions().map((m) => ({
+    libelle: m.libelle,
+    valeur: m.nombre,
+    accent: m.faible,
+    detail: `${m.part} % des élèves évalués`,
+  })));
+
+  /** Les huit classes qui doivent le plus : c'est par là qu'on commence. */
+  colonnesImpayes = computed<Colonne[]>(() => (this.impayes()?.classes ?? []).slice(0, 8).map((c) => ({
+    libelle: c.classe,
+    valeur: c.reste,
+    accent: c.eleves_en_retard > 0,
+    detail: c.eleves_en_retard > 0
+      ? `${c.eleves_en_retard} élève(s) en retard · ${Math.round(c.taux)} % payé`
+      : `${Math.round(c.taux)} % payé`,
+  })));
 }

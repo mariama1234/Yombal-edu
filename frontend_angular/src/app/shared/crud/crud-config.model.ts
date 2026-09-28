@@ -41,18 +41,35 @@ export interface SourceLecture {
   total?: string;
 }
 
+/**
+ * Pièce jointe déposée sur une sous-route du détail (ex:
+ * /api/depenses/12/justificatif/), en GET pour la relire, POST (champ
+ * `fichier`) pour la déposer, DELETE pour la retirer.
+ */
+export interface FichierConfig {
+  /** Sous-route, sans slash initial ni final. */
+  chemin: string;
+  /** Booléen de la ligne qui dit si une pièce est déjà jointe. */
+  presente: string;
+  /** Types proposés par le sélecteur de fichiers, ex: `application/pdf,image/*`. */
+  accept: string;
+}
+
 export interface FieldConfig {
   key: string;
   label: string;
   /**
    * `lecture` n'est pas saisissable : le champ n'a pas de contrôle de
    * formulaire et n'est pas envoyé à l'API, il ne fait qu'afficher.
+   * `fichier` non plus : la pièce part à part, une fois la ligne enregistrée.
    */
-  type: 'text' | 'email' | 'tel' | 'password' | 'number' | 'date' | 'time' | 'select' | 'textarea' | 'checkbox' | 'lecture';
+  type: 'text' | 'email' | 'tel' | 'password' | 'number' | 'date' | 'time' | 'select' | 'textarea' | 'checkbox' | 'lecture' | 'fichier';
   /** Texte d'aide affiché sous le champ. */
   aide?: string;
   /** Requis par les champs `lecture` : d'où vient la valeur affichée. */
   source?: SourceLecture;
+  /** Requis par les champs `fichier` : où déposer la pièce. */
+  fichier?: FichierConfig;
   required?: boolean;
   /** Options statiques (ex: enum Django TextChoices) */
   options?: FieldOption[];

@@ -1971,6 +1971,31 @@ class TestCaisseEtDepenses(BaseFinances):
         self.assertEqual(archive["budget_alloue"], "20000.00")
         self.assertEqual(archive["budget_disponible"], -10000.0)
 
+    def test_depense_entre_deux_annees_va_sur_lannee_qui_vient(self):
+        # Le cas relevé en test : un achat du 27 septembre, entre la fin de
+        # 2025-2026 (31 juillet) et la rentrée de 2026-2027 (1er octobre).
+        precedente = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2025-2026",
+            date_debut=date(2025, 10, 1), date_fin=date(2026, 7, 31),
+            statut=models.AnneeScolaire.Statut.ARCHIVEE)
+        self._allouer("3000000.00")
+        self._allouer("100000.00", annee=precedente)
+        self._depenser("2000000.00", jour=date(2026, 9, 27))
+
+        categorie = self._categorie()
+        self.assertEqual(categorie["montant_depense"], 2000000.0)
+        self.assertEqual(categorie["budget_disponible"], 1000000.0,
+                         "la dépense suivante repart de ce qui reste")
+        self.assertEqual(self._categorie(annee=precedente)["budget_disponible"], 100000.0,
+                         "l'année close n'est pas touchée")
+        budget = models.Budget.objects.get(id_type_depense=self.type_depense,
+                                           id_annee_scolaire=self.annee)
+        self.assertEqual(budget.montant_realise, Decimal("2000000.00"))
+        bilan = self.client.get("/api/finances/bilan/",
+                                {"id_annee_scolaire": self.annee.pk}).data
+        self.assertEqual(bilan["depenses"]["total"], 2000000.0,
+                         "le bilan compte les mêmes dépenses que le budget")
+
     def test_enveloppe_posee_apres_coup_rattrape_le_realise(self):
         self._depenser("30000.00")
         self._allouer("50000.00")

@@ -110,6 +110,37 @@
 </div>
 
 @if (bilan(); as b) {
+  <!-- Vue d'ensemble en graphiques circulaires : chaque anneau répartit un
+       total en six parts au plus, valeurs écrites dans la légende. -->
+  <div class="grille-anneaux">
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Situation des paiements</div>
+        <a class="panel-link" routerLink="/finances">Voir les élèves →</a>
+      </div>
+      <app-graphe-anneau [segments]="situationPaiements()" libelleTotal="élèves"
+                         vide="Aucun frais à suivre sur cette année." />
+    </div>
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Encaissements par type de frais</div></div>
+      <app-graphe-anneau [segments]="recettesParType()" format="montant" libelleTotal="encaissés"
+                         vide="Aucun encaissement sur cette année." />
+    </div>
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Encaissements par moyen de paiement</div></div>
+      <app-graphe-anneau [segments]="recettesParMoyen()" format="montant" libelleTotal="encaissés"
+                         vide="Aucun encaissement sur cette année." />
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Dépenses par catégorie</div>
+        <a *siAcces="'depenses'" class="panel-link" routerLink="/depenses">Dépenses →</a>
+      </div>
+      <app-graphe-anneau [segments]="depensesParCategorie()" format="montant" libelleTotal="dépensés"
+                         vide="Aucune dépense sur cette année." />
+    </div>
+  </div>
+
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">Recouvrement {{ b.periode.annee ? '— ' + b.periode.annee : '' }}</div>
@@ -125,25 +156,6 @@
       {{ b.recouvrement.encaisse | number:'1.0-0' }} F encaissés sur
       {{ b.recouvrement.attendu | number:'1.0-0' }} F attendus.
     </p>
-
-    <!-- Le montant global ne dit pas si l'ardoise pèse sur trois familles ou
-         sur trois cents : chaque compteur ouvre la liste correspondante. -->
-    @if (b.eleves; as e) {
-      <div class="filters" style="margin:14px 0 0;">
-        <a class="chip" routerLink="/finances" [queryParams]="{ statut: 'a_jour' }">
-          🟢 À jour · {{ e.a_jour ?? 0 }}
-        </a>
-        <a class="chip" routerLink="/finances" [queryParams]="{ statut: 'partiel' }">
-          🟠 Partiel · {{ e.partiel ?? 0 }}
-        </a>
-        <a class="chip" routerLink="/finances" [queryParams]="{ statut: 'en_retard' }">
-          🔴 En retard · {{ e.en_retard ?? 0 }}
-        </a>
-        <a class="chip" routerLink="/finances" [queryParams]="{ statut: 'non_paye' }">
-          ⚪ Non payé · {{ e.non_paye ?? 0 }}
-        </a>
-      </div>
-    }
   </div>
 
   <!-- Dernières transactions : le contrôle de caisse le plus fréquent est
@@ -307,23 +319,8 @@
       {{ impayes()!.classes.length }} classes.
     </p>
 
-    <div class="barres-classes">
-      @for (c of classesDebitrices(); track c.id_classe) {
-        <div class="barre-ligne">
-          <span class="barre-nom">{{ c.classe }}</span>
-          <span class="barre-piste">
-            <span class="barre-remplie" [class.saturee]="c.eleves_en_retard > 0"
-                  [style.width.%]="partReste(c.reste)"></span>
-          </span>
-          <span class="barre-valeur mono">{{ c.reste | number:'1.0-0' }} F</span>
-          <span class="barre-etat">
-            @if (c.eleves_en_retard > 0) {
-              <span class="pill-sature">{{ c.eleves_en_retard }} en retard</span>
-            } @else { {{ c.taux | number:'1.0-0' }} % payé }
-          </span>
-        </div>
-      }
-    </div>
+    <app-graphe-colonnes [colonnes]="colonnesImpayes()" format="montant"
+                         libelleSerie="Reste à encaisser" libelleAccent="Classe avec des élèves en retard" />
     <p style="font-size:11.5px; color:var(--ink-400); margin:12px 0 0;">
       Une classe est signalée dès qu'un élève a une échéance dépassée, quel que
       soit le montant.
@@ -460,19 +457,8 @@
       <div class="bloc-resultats">
         <div>
           <div class="sous-titre">Répartition des élèves</div>
-          <div class="barres-classes">
-            @for (m of mentions(); track m.libelle) {
-              <div class="barre-ligne">
-                <span class="barre-nom">{{ m.libelle }}</span>
-                <span class="barre-piste">
-                  <span class="barre-remplie" [class.saturee]="m.faible"
-                        [style.width.%]="m.part"></span>
-                </span>
-                <span class="barre-valeur mono">{{ m.nombre }}</span>
-                <span class="barre-etat">{{ m.part }} %</span>
-              </div>
-            }
-          </div>
+          <app-graphe-colonnes [colonnes]="colonnesMentions()"
+                               libelleSerie="Élèves" libelleAccent="Sous la moyenne" />
         </div>
 
         <div>
@@ -536,42 +522,28 @@
 
 <!-- Effectifs : série unique, donc une seule couleur et aucune légende — le
      titre suffit à dire ce qu'on lit. -->
-<div class="panel">
-  <div class="panel-head">
-    <div class="panel-title">Effectifs par classe</div>
-    <a *siAcces="'classes'" class="panel-link" routerLink="/classes">Toutes les classes →</a>
-  </div>
-
-  @if (effectifs().length === 0) {
-    <p style="color:var(--ink-400); font-size:13px;">Aucune classe sur cette année.</p>
-  } @else {
-    <p style="font-size:12.5px; color:var(--ink-600); margin:0 0 14px;">
-      {{ totalEffectif() | number:'1.0-0' }} élèves répartis sur
-      {{ effectifs().length }} classes.
-      @if (classesSaturees() > 0) {
-        <strong style="color:var(--orange-500);">
-          {{ classesSaturees() }} classe(s) à pleine capacité.
-        </strong>
-      }
-    </p>
-
-    <div class="barres-classes">
-      @for (c of effectifs(); track c.nom) {
-        <div class="barre-ligne">
-          <span class="barre-nom">{{ c.nom }}</span>
-          <span class="barre-piste">
-            <span class="barre-remplie" [class.saturee]="c.saturee"
-                  [style.width.%]="c.largeur"></span>
-          </span>
-          <span class="barre-valeur mono">
-            {{ c.effectif }}@if (c.capacite) { / {{ c.capacite }} }
-          </span>
-          <span class="barre-etat">
-            @if (c.saturee) { <span class="pill-sature">pleine</span> }
-            @else if (c.capacite) { {{ c.remplissage }} % }
-          </span>
-        </div>
-      }
+@if (auth.peutLire('classes')) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Effectifs par classe</div>
+      <a *siAcces="'classes'" class="panel-link" routerLink="/classes">Toutes les classes →</a>
     </div>
-  }
-</div>
+
+    @if (effectifs().length === 0) {
+      <p style="color:var(--ink-400); font-size:13px;">Aucune classe sur cette année.</p>
+    } @else {
+      <p style="font-size:12.5px; color:var(--ink-600); margin:0 0 14px;">
+        {{ totalEffectif() | number:'1.0-0' }} élèves répartis sur
+        {{ effectifs().length }} classes.
+        @if (classesSaturees() > 0) {
+          <strong style="color:var(--orange-500);">
+            {{ classesSaturees() }} classe(s) à pleine capacité.
+          </strong>
+        }
+      </p>
+
+      <app-graphe-colonnes [colonnes]="colonnesEffectifs()"
+                           libelleSerie="Élèves inscrits" libelleAccent="Classe pleine" />
+    }
+  </div>
+}

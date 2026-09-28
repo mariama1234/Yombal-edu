@@ -60,6 +60,34 @@
                   </span>
                 }
               }
+              @case ('fichier') {
+                <!-- Pas de contrôle de formulaire : la pièce part après
+                     l'enregistrement, sur la sous-route de la ligne. -->
+                <div class="piece-jointe">
+                  @if (fichiersChoisis()[field.key]; as choisi) {
+                    <span class="piece-nom">{{ choisi.name }}</span>
+                    <span class="hint">envoyé à l'enregistrement</span>
+                    <button type="button" class="panel-link" (click)="annulerChoix(field)">Annuler</button>
+                  } @else if (pieceJointe(field)) {
+                    <span class="piece-nom">Pièce jointe</span>
+                    <button type="button" class="panel-link" (click)="ouvrirPiece(field)">Ouvrir</button>
+                    <button type="button" class="panel-link" style="color:var(--red);"
+                            (click)="retirerPiece(field)">Retirer</button>
+                  } @else if (retraits()[field.key]) {
+                    <span class="hint">Pièce retirée à l'enregistrement.</span>
+                    <button type="button" class="panel-link" (click)="garderPiece(field)">La garder</button>
+                  }
+                  <label class="btn-ghost" style="cursor:pointer;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                    {{ fichiersChoisis()[field.key] || pieceJointe(field) ? 'Remplacer' : 'Choisir un fichier' }}
+                    <input type="file" [id]="field.key" [accept]="field.fichier?.accept ?? ''"
+                           class="sr-only" (change)="choisirFichier(field, $event)">
+                  </label>
+                </div>
+                @if (erreurFichier()) {
+                  <div class="form-error" style="margin-top:8px;">{{ erreurFichier() }}</div>
+                }
+              }
               @case ('checkbox') {
                 <label class="radio-pill" style="justify-content:flex-start; gap:10px;">
                   <input type="checkbox" [id]="field.key" [formControlName]="field.key">
