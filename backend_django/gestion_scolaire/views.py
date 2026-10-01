@@ -23,7 +23,7 @@ from . import (corbeille, finances, finances_documents, imports_eleves, justific
 from .audit import JournalisationMixin, journaliser
 from .permissions import (ECRITURE, AccesModule, EstAdmin, Profil, acces_du_compte,
                           classes_de_lenseignant, eleves_de_la_famille, est_direction,
-                          peut_lire, profil_de)
+                          peut_ecrire, peut_lire, profil_de)
 
 Utilisateur = get_user_model()
 
@@ -558,8 +558,11 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
         "finances": "frais",
         "facture": "frais",
         "par_matricule": "frais",
-        "frais_disponibles": ("encaissement", ECRITURE),
-        "ajouter_frais": "encaissement",
+        # Ajouter des frais, c'est facturer : cela relève des frais élèves,
+        # pas de l'encaissement. Un caissier encaisse ce qui est dû, il ne
+        # décide pas de ce que la famille doit.
+        "frais_disponibles": ("frais", ECRITURE),
+        "ajouter_frais": "frais",
         "releve": "notes",
         "exporter_releve": "notes",
         "creer_acces": "comptes",
@@ -1236,10 +1239,21 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
         famille = eleves_de_la_famille(request.user)
         return qs if famille is None else qs.filter(pk__in=famille.values("pk"))
 
+    @staticmethod
+    def _exiger_ecriture_du_dossier(request):
+        """
+        Ajouter des frais à un élève modifie son dossier : il faut écrire les
+        frais *et* le dossier. Le comptable fixe les tarifs mais ne lit le
+        dossier qu'en consultation ; il n'y ajoute rien.
+        """
+        if not peut_ecrire(request.user, "eleves"):
+            raise PermissionDenied("Le dossier de l'élève n'est ouvert qu'en consultation à votre profil.")
+
     @extend_schema(responses=dict)
     @action(detail=True, methods=["get"], url_path="frais-disponibles")
     def frais_disponibles(self, request, pk=None):
         """Frais au choix qu'on peut ajouter : GET /api/eleves/{id}/frais-disponibles/"""
+        self._exiger_ecriture_du_dossier(request)
         ecole = request.user.id_ecole
         eleve = self._eleve_de_lecole(request, pk)
         if eleve is None:
@@ -1259,6 +1273,7 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
 
         Renvoie les lignes émises et la situation financière recalculée.
         """
+        self._exiger_ecriture_du_dossier(request)
         ecole = request.user.id_ecole
         eleve = self._eleve_de_lecole(request, pk)
         if eleve is None:
@@ -2709,6 +2724,14 @@ class CommunicationDestinataireViewSet(CoherenceEcoleMixin, viewsets.ModelViewSe
     serializer_class = serializers.CommunicationDestinataireSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_permissions(self):
+        # Chacun lit ce qui lui est adressé et le marque comme lu ; créer,
+        # modifier ou retirer un destinataire reste à la direction, qui gère
+        # les communications.
+        if self.action in ("list", "retrieve", "marquer_lu"):
+            return super().get_permissions()
+        return [EstAdmin()]
+
     def get_queryset(self):
         qs = super().get_queryset().filter(
             id_communication__id_ecole_id=self.request.user.id_ecole_id
@@ -2737,7 +2760,8 @@ class CommunicationDestinataireViewSet(CoherenceEcoleMixin, viewsets.ModelViewSe
 class DocumentViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Document.objects.select_related("id_utilisateur_depot").all()
     serializer_class = serializers.DocumentSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [AccesModule]
+    module = "documents"
     filterset_fields = ["categorie", "visibilite"]
     search_fields = ["titre", "description"]
 

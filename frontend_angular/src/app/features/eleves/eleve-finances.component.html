@@ -26,7 +26,8 @@
             }
           </select>
         }
-        @if (s.scolarite && droitEncaisser()) {
+        <!-- Facturer depuis le dossier : écrire les frais et le dossier (voir droitAjouterFrais). -->
+        @if (s.scolarite && droitAjouterFrais()) {
           <button type="button" class="btn-ghost" (click)="ouvrirAjout()">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 13.4L12 22l-9-9V3h10z"/><circle cx="7.5" cy="7.5" r="1.3"/></svg>
             Ajouter des frais
@@ -168,11 +169,15 @@
         @if (sansFrais()) {
           <p style="font-size:13px; color:var(--ink-600); margin:0 0 14px;">
             Aucun frais n'a été émis pour {{ s.eleve.prenom }} en {{ s.annee?.libelle }} : il n'y a
-            rien sur quoi imputer un paiement. Génère d'abord ses frais, puis reviens ici.
+            rien sur quoi imputer un paiement.
+            @if (droitFacturer()) { Génère d'abord ses frais, puis reviens ici. }
+            @else { Demande à la comptabilité d'émettre ses frais. }
           </p>
           <div class="form-actions">
             <button type="button" class="btn-ghost" (click)="fermer()">Fermer</button>
-            <a class="btn-primary" routerLink="/finances/generer">Générer les frais</a>
+            @if (droitFacturer()) {
+              <a class="btn-primary" routerLink="/finances/generer">Générer les frais</a>
+            }
           </div>
         } @else {
           <form [formGroup]="formPaiement" (ngSubmit)="encaisser()">

@@ -350,8 +350,211 @@ table.simple tr:hover td{background:var(--bg);}
   .annee-filtre{padding:7px 10px;}
   .annee-filtre select{font-size:13px;max-width:140px;}
 }
+/* ---------- Plateforme (super administrateur) ----------
+   Console des écoles clientes : un bandeau sombre, une page centrée et
+   aérée, des écoles en cartes. Elle reprend les jetons de l'application
+   pour rester de la même famille que l'espace des écoles. */
+.pf-bandeau{background:linear-gradient(100deg, var(--navy-950) 0%, var(--navy-900) 55%, var(--navy-800) 100%);color:#fff;position:sticky;top:0;z-index:5;box-shadow:0 1px 0 rgba(255,255,255,0.06), 0 8px 24px rgba(11,29,51,0.18);}
+.pf-bandeau-interieur{max-width:1240px;margin:0 auto;display:flex;align-items:center;gap:28px;padding:12px 28px;}
+.pf-marque{display:flex;align-items:center;gap:11px;color:#fff;flex-shrink:0;}
+.pf-marque-nom{display:block;font-family:var(--font-display);font-weight:600;font-size:16.5px;letter-spacing:0.2px;}
+.pf-marque-sous{display:block;font-size:10.5px;color:#8FA6C7;text-transform:uppercase;letter-spacing:0.6px;margin-top:1px;}
+.pf-nav{display:flex;gap:6px;flex:1;}
+.pf-nav a{display:inline-flex;align-items:center;gap:8px;color:#C7D5EA;font-size:14px;font-weight:500;padding:9px 14px;border-radius:10px;transition:background .15s ease, color .15s ease;}
+.pf-nav a:hover{background:rgba(255,255,255,0.07);color:#fff;}
+.pf-nav a.active{background:rgba(255,255,255,0.12);color:#fff;box-shadow:inset 0 -2px 0 var(--orange-500);}
+.pf-compte{display:flex;align-items:center;gap:12px;margin-left:auto;}
+.pf-compte-texte{text-align:right;line-height:1.25;}
+.pf-compte-nom{display:block;font-size:13.5px;font-weight:600;}
+.pf-compte-role{display:block;font-size:11px;color:#8FA6C7;}
+.pf-avatar{width:38px;height:38px;border-radius:50%;background:var(--orange-500);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:13.5px;box-shadow:0 0 0 3px rgba(242,118,12,0.25);}
+.pf-deconnexion{width:38px;height:38px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:#DCE6F5;display:flex;align-items:center;justify-content:center;transition:background .15s ease;}
+.pf-deconnexion:hover{background:rgba(255,255,255,0.14);color:#fff;}
+.pf-contenu{max-width:1240px;margin:0 auto;padding:28px 28px 56px;}
+
+/* Accueil : un bandeau d'accueil, puis les chiffres clés. */
+.pf-hero{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;background:radial-gradient(120% 140% at 100% 0%, rgba(242,118,12,0.22) 0%, transparent 45%), linear-gradient(120deg, var(--navy-900), var(--navy-700));color:#fff;border-radius:18px;padding:28px 30px;margin-bottom:20px;box-shadow:0 14px 34px rgba(11,29,51,0.18);}
+.pf-hero-surtitre{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:0.7px;color:#FFB877;font-weight:600;}
+.pf-hero h1{font-size:28px;margin:0 0 6px;color:#fff;}
+.pf-hero p{margin:0;color:#C7D5EA;font-size:14.5px;}
+.pf-hero strong{color:#fff;}
+.pf-bouton-clair{display:inline-flex;align-items:center;gap:8px;background:#fff;color:var(--navy-950);font-weight:600;font-size:14px;padding:12px 18px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.18);transition:transform .15s ease;}
+.pf-bouton-clair:hover{transform:translateY(-1px);}
+.pf-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:20px;}
+.pf-stat{display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;}
+.pf-stat.alerte{border-color:rgba(198,64,46,0.35);background:linear-gradient(0deg, var(--red-bg), var(--surface) 70%);}
+.pf-stat-icone{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.pf-stat-valeur{font-family:var(--font-display);font-size:26px;font-weight:600;line-height:1.1;color:var(--ink-900);}
+.pf-stat-libelle{font-size:12.5px;color:var(--ink-600);margin-top:2px;}
+
+/* Recherche et filtres en pastilles, sur une ligne qui se replie. */
+.pf-barre-filtres{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+.pf-recherche{flex:1 1 280px;display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 14px;color:var(--ink-400);}
+.pf-recherche:focus-within{border-color:var(--navy-700);box-shadow:0 0 0 3px rgba(42,78,126,0.12);}
+.pf-recherche input{border:none;outline:none;background:transparent;font-size:14px;width:100%;color:var(--ink-900);}
+.pf-pastilles{display:flex;gap:6px;flex-wrap:wrap;}
+
+/* Écoles en cartes. */
+.pf-grille{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:16px;}
+.pf-carte{display:flex;flex-direction:column;gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;color:inherit;transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease;position:relative;overflow:hidden;}
+.pf-carte::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--line);}
+.pf-carte.alerte::before{background:var(--red);}
+.pf-carte:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(15,26,43,0.10);border-color:#D2D8E2;}
+.pf-carte-attente{min-height:220px;background:linear-gradient(100deg, var(--surface) 30%, var(--bg) 50%, var(--surface) 70%);background-size:300% 100%;animation:pf-attente 1.3s linear infinite;}
+@keyframes pf-attente{from{background-position:100% 0;}to{background-position:-100% 0;}}
+.pf-carte-tete{display:flex;align-items:center;gap:12px;}
+.pf-initiale{width:44px;height:44px;border-radius:12px;color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:18px;flex-shrink:0;}
+.pf-initiale.grande{width:58px;height:58px;border-radius:16px;font-size:24px;}
+.pf-carte-titre{flex:1;min-width:0;}
+.pf-carte-titre strong{display:block;font-family:var(--font-display);font-size:16px;color:var(--ink-900);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pf-carte-titre span{display:block;font-size:12.5px;color:var(--ink-400);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pf-carte-paiement{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.pf-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:5px 11px;border-radius:20px;}
+.pf-badge.ok{background:var(--green-bg);color:var(--green);}
+.pf-badge.ko{background:var(--red-bg);color:var(--red);}
+.pf-badge.neutre{background:var(--bg);color:var(--ink-600);border:1px solid var(--line);}
+.pf-carte-chiffres{display:grid;grid-template-columns:repeat(3,1fr);background:var(--bg);border-radius:12px;padding:10px 4px;}
+.pf-carte-chiffres > div{text-align:center;}
+.pf-carte-chiffres > div + div{border-left:1px solid var(--line);}
+.pf-carte-chiffres strong{display:block;font-family:var(--font-display);font-size:16px;color:var(--ink-900);}
+.pf-carte-chiffres span{font-size:11px;color:var(--ink-400);}
+.pf-carte-pied{display:flex;align-items:center;gap:10px;padding-top:12px;border-top:1px solid var(--line);margin-top:auto;}
+.pf-pile-avatars{display:flex;}
+.pf-pile-avatars .pf-mini-avatar + .pf-mini-avatar{margin-left:-8px;}
+.pf-mini-avatar{width:28px;height:28px;border-radius:50%;background:var(--navy-800);color:#fff;font-size:10.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px var(--surface);text-transform:uppercase;flex-shrink:0;}
+.pf-admins-texte{font-size:12.5px;color:var(--ink-600);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pf-ouvrir{font-size:12.5px;font-weight:600;color:var(--orange-500);}
+.pf-vide{text-align:center;padding:40px 20px;}
+.pf-vide p{color:var(--ink-600);margin:0 0 14px;}
+
+/* Fiche d'une école : formulaire à gauche, résumé et comptes à droite. */
+.pf-fil{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-400);margin-bottom:14px;}
+.pf-fil a{color:var(--navy-700);font-weight:500;}
+.pf-fil a:hover{text-decoration:underline;}
+.pf-entete-fiche{display:flex;align-items:center;gap:16px;margin-bottom:22px;}
+.pf-entete-fiche h1{font-size:26px;margin:0 0 6px;}
+.pf-entete-fiche p{margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink-600);font-size:14px;}
+.pf-fiche{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start;}
+.pf-fiche.creation{grid-template-columns:minmax(0,860px);}
+.pf-etape{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 24px;margin-bottom:16px;}
+.pf-etape-tete{display:flex;align-items:flex-start;gap:14px;margin-bottom:18px;}
+.pf-etape-tete h2{font-size:16px;margin:2px 0 3px;}
+.pf-etape-tete p{margin:0;font-size:12.5px;color:var(--ink-400);}
+.pf-etape-numero{width:30px;height:30px;border-radius:50%;background:var(--orange-100);color:var(--orange-500);font-family:var(--font-display);font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.pf-offres{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;}
+.pf-offre{position:relative;display:flex;flex-direction:column;gap:5px;border:1.5px solid var(--line);border-radius:14px;padding:14px 16px;cursor:pointer;transition:border-color .15s ease, background .15s ease, box-shadow .15s ease;}
+.pf-offre input{position:absolute;opacity:0;pointer-events:none;}
+.pf-offre:hover{border-color:#C9D1DD;}
+.pf-offre.choisie{border-color:var(--navy-800);background:#F3F6FB;box-shadow:0 0 0 3px rgba(27,58,99,0.10);}
+.pf-offre:focus-within{outline:2.5px solid var(--orange-500);outline-offset:2px;}
+.pf-offre-nom{font-family:var(--font-display);font-weight:600;font-size:15px;color:var(--ink-900);}
+.pf-offre.choisie .pf-offre-nom::after{content:"✓";margin-left:8px;color:var(--navy-800);}
+.pf-offre-texte{font-size:12px;color:var(--ink-600);line-height:1.45;}
+.pf-interrupteur{display:inline-flex !important;align-items:center;gap:12px;cursor:pointer;margin-top:26px;font-weight:500;}
+.pf-interrupteur input{position:absolute;opacity:0;}
+.pf-interrupteur-piste{width:42px;height:24px;border-radius:20px;background:#CBD3DE;position:relative;transition:background .15s ease;flex-shrink:0;}
+.pf-interrupteur-piste::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.2);transition:transform .15s ease;}
+.pf-interrupteur input:checked + .pf-interrupteur-piste{background:var(--green);}
+.pf-interrupteur input:checked + .pf-interrupteur-piste::after{transform:translateX(18px);}
+.pf-interrupteur input:focus-visible + .pf-interrupteur-piste{outline:2.5px solid var(--orange-500);outline-offset:2px;}
+.pf-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;}
+.pf-fiche-cote{display:flex;flex-direction:column;gap:16px;position:sticky;top:86px;}
+.pf-resume{display:grid;grid-template-columns:repeat(3,1fr);background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 6px;}
+.pf-resume > div{text-align:center;}
+.pf-resume > div + div{border-left:1px solid var(--line);}
+.pf-resume strong{display:block;font-family:var(--font-display);font-size:20px;color:var(--ink-900);}
+.pf-resume span{font-size:11.5px;color:var(--ink-400);}
+.pf-abonnement{border-radius:16px;padding:18px;background:var(--surface);border:1px solid var(--line);}
+.pf-abonnement.ok{background:linear-gradient(160deg, var(--green-bg), var(--surface) 75%);border-color:rgba(30,142,90,0.3);}
+.pf-abonnement.ko{background:linear-gradient(160deg, var(--red-bg), var(--surface) 75%);border-color:rgba(198,64,46,0.3);}
+.pf-abonnement-tete{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.pf-abonnement-titre{font-size:11.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--ink-400);font-weight:600;}
+.pf-abonnement-etat{font-family:var(--font-display);font-size:21px;font-weight:600;color:var(--ink-900);margin-bottom:14px;}
+.pf-abonnement.ok .pf-abonnement-etat{color:var(--green);}
+.pf-abonnement.ko .pf-abonnement-etat{color:var(--red);}
+.pf-abonnement-etat span{font-family:var(--font-body);font-size:13px;font-weight:500;color:var(--ink-600);}
+.pf-abonnement-bouton{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 12px;font-size:13px;font-weight:600;color:var(--navy-900);transition:background .15s ease;}
+.pf-abonnement-bouton:hover{background:var(--bg);}
+.pf-abonnement.ko .pf-abonnement-bouton{background:var(--navy-900);color:#fff;border-color:var(--navy-900);}
+.pf-bloc{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;}
+.pf-bloc-tete{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.pf-bloc-tete h2{font-size:15px;margin:0;}
+.pf-admin{display:flex;align-items:flex-start;gap:11px;padding:10px 0;}
+.pf-admin + .pf-admin{border-top:1px solid var(--line);}
+.pf-admin .pf-mini-avatar{width:34px;height:34px;font-size:12px;box-shadow:none;}
+.pf-admin > div strong{display:block;font-size:13.5px;color:var(--ink-900);}
+.pf-admin > div span{display:block;font-size:12.5px;color:var(--ink-600);overflow-wrap:anywhere;}
+.pf-ajout-admin{margin-top:14px;padding-top:14px;border-top:1px solid var(--line);}
+.pf-ajout-admin .field{margin-bottom:10px;}
+.pill.offre.pro{background:linear-gradient(90deg, var(--navy-900), var(--navy-700));color:#fff;}
+.pill.offre.standard{background:var(--serie-1-fond);color:var(--serie-1);}
+.pill.offre.essai{background:var(--bg);color:var(--ink-600);border:1px solid var(--line);}
+.pill.suspendu{background:var(--orange-100);color:var(--orange-500);}
+.pill.resilie, .pill.inactif{background:var(--bg);color:var(--ink-400);border:1px solid var(--line);}
+
+@media (max-width:1000px){
+  .pf-stats{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .pf-fiche{grid-template-columns:minmax(0,1fr);}
+  .pf-fiche-cote{position:static;}
+}
+@media (max-width:700px){
+  .pf-bandeau-interieur{flex-wrap:wrap;gap:10px;padding:10px 16px;}
+  .pf-nav{order:3;flex:1 1 100%;}
+  .pf-nav a{flex:1;justify-content:center;}
+  .pf-compte-texte{display:none;}
+  .pf-contenu{padding:18px 16px 40px;}
+  .pf-hero{padding:22px 20px;}
+  .pf-hero h1{font-size:23px;}
+  .pf-offres{grid-template-columns:minmax(0,1fr);}
+  .pf-etape{padding:18px 16px;}
+  .pf-entete-fiche h1{font-size:21px;}
+}
+@media (max-width:700px){
+  /* Chiffres clés sur deux colonnes, resserrés : sur une seule, ils
+     poussaient les écoles trois écrans plus bas. */
+  .pf-stats{gap:10px;}
+  .pf-stat{flex-direction:column;align-items:flex-start;gap:8px;padding:14px;}
+  .pf-stat-icone{width:34px;height:34px;border-radius:10px;}
+  .pf-stat-valeur{font-size:22px;}
+}
+
+/* Actions d'une ligne de liste, séparées par un point médian. */
+.actions-ligne > * + *::before{content:"·";display:inline-block;margin:0 8px;color:var(--ink-400);font-weight:400;}
+/* Sélecteur de jour (caisse) : les flèches encadrent la date sur une ligne. */
+.filtre-jour{display:flex;align-items:center;gap:8px;}
+.filtre-jour .input{width:auto;}
+
+@media (max-width:900px){
+  /* Un matricule, une date ou un montant ne se coupent pas sur trois lignes. */
+  table.simple td.mono, table.simple .pill{white-space:nowrap;}
+}
+
+@media (max-width:700px){
+  /* La barre du haut tient sur deux lignes : menu, année et icônes, puis la
+     recherche. Sur trois, elle mangeait un cinquième de l'écran. */
+  .topbar{column-gap:8px;}
+  .topbar-right{gap:6px;}
+  .annee-filtre svg{display:none;}
+  .annee-filtre select{max-width:118px;}
+}
+
+@media (max-width:640px){
+  /* Listes en cartes : une ligne du tableau par carte, chaque valeur sous
+     son libellé, les actions en pied de carte. Sinon la colonne d'actions
+     sortait à droite de l'écran, sans que rien n'invite à faire défiler. */
+  table.liste-cartes thead{display:none;}
+  table.liste-cartes, table.liste-cartes tbody, table.liste-cartes tr, table.liste-cartes td{display:block;width:100%;}
+  table.liste-cartes tr{border:1px solid var(--line);border-radius:12px;padding:6px 12px;margin-bottom:10px;}
+  table.liste-cartes tr:hover td{background:transparent;}
+  table.liste-cartes td{border-top:none;padding:6px 0;display:flex;justify-content:space-between;align-items:baseline;gap:12px;text-align:right;white-space:normal;}
+  table.liste-cartes td[data-label]::before{content:attr(data-label);flex-shrink:0;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;color:var(--ink-400);font-weight:600;text-align:left;}
+  table.liste-cartes td.cellule-actions{display:block;white-space:normal !important;text-align:left !important;border-top:1px solid var(--line);margin-top:4px;padding-top:9px;line-height:1.9;}
+}
+
 @media (max-width:560px){
   .page-head{align-items:flex-start;}
+  .filtre-jour{flex:1 1 100%;}
+  .filters .filtre-jour .input{flex:1 1 auto;width:auto !important;min-width:0;}
   .panel-head{align-items:flex-start;}
   .form-actions > .btn-primary, .form-actions > .btn-ghost{flex:1 1 auto;justify-content:center;}
   .filters .input{flex:1 1 100%;width:100% !important;}

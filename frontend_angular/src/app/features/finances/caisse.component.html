@@ -14,11 +14,14 @@
 
 <!-- Le jour consulté : aujourd'hui par défaut, les jours passés à un clic. -->
 <div class="filters">
-  <button type="button" class="btn-ghost" (click)="decaler(-1)" aria-label="Jour précédent">←</button>
-  <input class="input" type="date" style="width:auto;" aria-label="Jour affiché"
-         [value]="jour()" [max]="aujourdhui" (change)="choisirJour($any($event.target).value)">
-  <button type="button" class="btn-ghost" (click)="decaler(1)" [disabled]="estAujourdhui()"
-          aria-label="Jour suivant">→</button>
+  <!-- Jour précédent, jour, jour suivant : toujours sur une ligne, même au téléphone. -->
+  <div class="filtre-jour">
+    <button type="button" class="btn-ghost" (click)="decaler(-1)" aria-label="Jour précédent">←</button>
+    <input class="input" type="date" aria-label="Jour affiché"
+           [value]="jour()" [max]="aujourdhui" (change)="choisirJour($any($event.target).value)">
+    <button type="button" class="btn-ghost" (click)="decaler(1)" [disabled]="estAujourdhui()"
+            aria-label="Jour suivant">→</button>
+  </div>
   @if (!estAujourdhui()) {
     <button type="button" class="chip" (click)="choisirJour(aujourdhui)">Aujourd'hui</button>
   }

@@ -26,8 +26,8 @@
   <div class="field">
     <label>Canal</label>
     <div class="radio-pills">
-      <label class="radio-pill" [class.checked]="form.get('canal')?.value === 'sms'">
-        <input type="radio" formControlName="canal" value="sms"> SMS
+      <label class="radio-pill" [class.checked]="form.get('canal')?.value === 'whatsapp'">
+        <input type="radio" formControlName="canal" value="whatsapp"> WhatsApp
       </label>
       <label class="radio-pill" [class.checked]="form.get('canal')?.value === 'email'">
         <input type="radio" formControlName="canal" value="email"> E-mail
@@ -44,7 +44,7 @@
     <div class="field">
       <label for="delai">Ne pas relancer deux fois en (jours)</label>
       <input class="input" id="delai" type="number" min="0" formControlName="delai_min">
-      <span class="hint">Évite d'envoyer trois SMS au même parent le même jour.</span>
+      <span class="hint">Évite d'envoyer trois messages au même parent le même jour.</span>
     </div>
   </div>
 

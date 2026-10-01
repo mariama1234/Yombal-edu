@@ -20,7 +20,7 @@ class Ecole(models.Model):
     class PlanAbonnement(models.TextChoices):
         ESSAI = "essai", "Essai"
         STANDARD = "standard", "Standard"
-        PREMIUM = "premium", "Premium"
+        PRO = "pro", "Pro"
 
     class Statut(models.TextChoices):
         ACTIF = "actif", "Actif"
@@ -35,6 +35,10 @@ class Ecole(models.Model):
     plan_abonnement = models.CharField(max_length=20, choices=PlanAbonnement.choices, default=PlanAbonnement.ESSAI)
     date_activation = models.DateField(blank=True, null=True)
     statut = models.CharField(max_length=20, choices=Statut.choices, default=Statut.ACTIF)
+    # L'abonnement de la période en cours est-il réglé ? Tenu par le super
+    # administrateur de la plateforme, qui encaisse les écoles clientes.
+    abonnement_paye = models.BooleanField(default=False)
+    date_paiement = models.DateField(blank=True, null=True)
     date_creation = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -50,7 +54,7 @@ class Ecole(models.Model):
 # =====================================================================
 
 class UtilisateurManager(BaseUserManager):
-    def create_user(self, email, id_ecole, password=None, **extra_fields):
+    def create_user(self, email, id_ecole=None, password=None, **extra_fields):
         if not email:
             raise ValueError("L'adresse e-mail est obligatoire.")
         user = self.model(email=self.normalize_email(email), id_ecole=id_ecole, **extra_fields)
@@ -68,6 +72,9 @@ class UtilisateurManager(BaseUserManager):
 class Utilisateur(AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
         # Les droits de chaque rôle sont dans permissions.py (matrice par profil).
+        # Le super administrateur n'y figure pas : il gère la plateforme (les
+        # écoles clientes et leur premier compte), jamais l'intérieur d'une école.
+        SUPER_ADMIN = "super_admin", "Super administrateur"
         ADMIN = "admin", "Administrateur"
         DIRECTEUR = "directeur", "Directeur"
         RESPONSABLE_ADMINISTRATIF = "responsable_administratif", "Responsable administratif"
@@ -84,7 +91,9 @@ class Utilisateur(AbstractBaseUser, PermissionsMixin):
         ACTIF = "actif", "Actif"
         INACTIF = "inactif", "Inactif"
 
-    id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="utilisateurs", db_column="id_ecole")
+    # Vide pour le seul super administrateur : il n'appartient à aucune école.
+    id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="utilisateurs",
+                                 db_column="id_ecole", null=True, blank=True)
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
     email = models.EmailField(max_length=150, unique=True)
@@ -104,6 +113,16 @@ class Utilisateur(AbstractBaseUser, PermissionsMixin):
     class Meta:
         db_table = "utilisateur"
         ordering = ["nom", "prenom"]
+        constraints = [
+            # Le super administrateur n'a pas d'école, tout autre compte en a
+            # une : sans ce garde-fou, un compte d'école sans école échapperait
+            # au cloisonnement, qui filtre sur `id_ecole`.
+            models.CheckConstraint(
+                condition=(models.Q(role="super_admin", id_ecole__isnull=True)
+                           | (~models.Q(role="super_admin") & models.Q(id_ecole__isnull=False))),
+                name="chk_utilisateur_ecole_selon_role",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.prenom} {self.nom} ({self.role})"
@@ -738,8 +757,10 @@ class Recu(models.Model):
 
 
 class Relance(models.Model):
+    # WhatsApp plutôt que le SMS : c'est là que les familles lisent leurs
+    # messages, et une relance s'y accompagne du reçu ou de l'état des frais.
     class Canal(models.TextChoices):
-        SMS = "sms", "SMS"
+        WHATSAPP = "whatsapp", "WhatsApp"
         EMAIL = "email", "E-mail"
 
     class Statut(models.TextChoices):
@@ -900,7 +921,10 @@ class Communication(models.Model):
     # Renseignés selon la cible : une classe précise, ou un rôle (parents, enseignants...).
     id_classe = models.ForeignKey(Classe, on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="communications", db_column="id_classe")
-    role_cible = models.CharField(max_length=30, choices=Utilisateur.Role.choices, blank=True, null=True)
+    # Les rôles d'une école : le super administrateur n'est le destinataire
+    # d'aucune communication d'établissement.
+    role_cible = models.CharField(max_length=30, blank=True, null=True,
+                                  choices=[c for c in Utilisateur.Role.choices if c[0] != "super_admin"])
     objet = models.CharField(max_length=255)
     contenu = models.TextField()
     statut = models.CharField(max_length=15, choices=Statut.choices, default=Statut.BROUILLON)

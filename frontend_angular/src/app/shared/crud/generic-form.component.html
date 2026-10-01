@@ -13,6 +13,7 @@
 
   <div class="form-section" style="max-width:760px;">
     <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (erreurGenerale()) { <div class="form-error">{{ erreurGenerale() }}</div> }
       <div class="form-grid">
         @for (field of config.fields; track field.key) {
           <div class="field" [class.span-2]="field.span2 || field.type === 'textarea'">
@@ -104,7 +105,9 @@
               }
             }
 
-            @if (form.get(field.key)?.invalid && form.get(field.key)?.touched) {
+            @if (erreursServeur()[field.key]) {
+              <span class="hint" style="color:var(--red);">{{ erreursServeur()[field.key] }}</span>
+            } @else if (form.get(field.key)?.invalid && form.get(field.key)?.touched) {
               <span class="hint" style="color:var(--red);">Ce champ est requis.</span>
             } @else if (depasseLecture(field)) {
               <span class="hint" style="color:var(--orange-500);">

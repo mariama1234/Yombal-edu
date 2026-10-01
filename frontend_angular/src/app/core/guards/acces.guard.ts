@@ -7,8 +7,7 @@ import { AuthService } from '../services/auth.service';
 /**
  * Module de la matrice dont relève chaque écran du CRUD générique.
  *
- * `null` : ouvert à tout compte connecté (les documents filtrent eux-mêmes
- * par visibilité).
+ * `null` : ouvert à tout compte connecté.
  */
 export const MODULE_DE_L_ENTITE: Record<string, Module | null> = {
   'annees-scolaires': 'annees_scolaires',
@@ -33,7 +32,8 @@ export const MODULE_DE_L_ENTITE: Record<string, Module | null> = {
   bulletins: 'bulletins',
   recus: 'frais',
   communications: 'communications',
-  documents: null,
+  // Chacun lit les documents qui lui sont destinés ; la direction seule écrit.
+  documents: 'documents',
   parametres: 'parametres',
   'journal-activite': 'comptes',
 };
@@ -65,7 +65,9 @@ export const accesGuard: CanActivateFn = (route) => {
     if (route.data['personnel'] && auth.estFamille()) return false;
     return route.data['ecriture'] ? auth.peutEcrire(module) : auth.peutLire(module);
   };
-  const refus = () => router.createUrlTree(['/tableau-de-bord']);
+  // Le super administrateur n'a rien à faire dans une école : il retourne à
+  // la plateforme (sinon le tableau de bord, refusé lui aussi, bouclerait).
+  const refus = () => router.createUrlTree([auth.estSuperAdmin() ? '/plateforme' : '/tableau-de-bord']);
 
   if (auth.currentUser()) return autorise() || refus();
   return auth.chargerProfil().pipe(

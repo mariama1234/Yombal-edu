@@ -48,6 +48,12 @@ export class EleveFinancesComponent implements OnInit {
   // relèvent de l'encaissement ; accorder une remise ou facturer, des frais.
   droitEncaisser = computed(() => this.auth.peutEcrire('encaissement'));
   droitFacturer = computed(() => this.auth.peutEcrire('frais'));
+  /**
+   * Ajouter des frais modifie le dossier de l'élève : il faut écrire les frais
+   * et le dossier. Le comptable fixe les tarifs, il n'ajoute rien au dossier,
+   * qu'il ne lit qu'en consultation.
+   */
+  droitAjouterFrais = computed(() => this.auth.peutEcrire('frais') && this.auth.peutEcrire('eleves'));
 
   situation = signal<SituationFinanciereEleve | null>(null);
   chargement = signal(true);

@@ -298,6 +298,16 @@ class TestComptes(BaseAPI):
             "role": "parent", "password": MDP,
         }, format="json")
         self.assertEqual(r.status_code, 400)
+        # Le message s'affiche tel quel sous le champ : il doit se comprendre.
+        self.assertEqual(r.data["email"], ["Cette adresse e-mail est déjà utilisée."])
+
+    def test_email_deja_pris_quelle_que_soit_la_casse(self):
+        r = self.client.post("/api/utilisateurs/", {
+            "nom": "N", "prenom": "P", "email": self.admin_autre.email.upper(),
+            "role": "parent", "password": MDP,
+        }, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("email", r.data)
 
     def test_mot_de_passe_obligatoire_a_la_creation(self):
         r = self.client.post("/api/utilisateurs/", {
@@ -1155,7 +1165,7 @@ class TestFinances(BaseAPI):
 
     def test_relance_sur_un_impaye(self):
         r = self.client.post("/api/relances/", {
-            "id_frais_eleve": self.frais.pk, "canal": "sms",
+            "id_frais_eleve": self.frais.pk, "canal": "whatsapp",
         }, format="json")
         self.assertEqual(r.status_code, 201, r.content)
         self.assertEqual(len(self.resultats(self.client_autre.get("/api/relances/"))), 0)
@@ -1790,7 +1800,7 @@ class TestRelancesAutomatiques(BaseFinances):
                 id_annee_scolaire=self.annee, montant_du=25000, echeance=self.hier)
 
     def _relancer(self, **surcharges):
-        corps = {"canal": "sms", "valider": True}
+        corps = {"canal": "whatsapp", "valider": True}
         corps.update(surcharges)
         return self.client.post("/api/relances/generer/", corps, format="json")
 
@@ -4319,6 +4329,24 @@ class TestAjoutDeFraisEnCoursDAnnee(BaseDossierFinancier):
                     .filter(id_eleve=self.eleve, id_type_frais=type_frais)
                     .order_by("echeance"))
 
+    def test_ajouter_des_frais_exige_decrire_les_frais_et_le_dossier(self):
+        # Le fichier des autorisations : un caissier encaisse (écriture) mais
+        # ne fait que consulter les frais ; un comptable écrit les deux.
+        caissier = self._client(self._compte("caisse@a.sn", self.ecole, "caissier").email)
+        self.assertEqual(self._ajouter([self.uniforme.pk], client=caissier).status_code, 403)
+        self.assertEqual(caissier.get(f"/api/eleves/{self.eleve.pk}/frais-disponibles/").status_code, 403)
+        self.assertEqual(self._lignes(self.uniforme), [])
+
+        # Le comptable fixe les tarifs mais ne lit le dossier qu'en consultation.
+        comptable = self._client(self._compte("compta@a.sn", self.ecole, "comptable").email)
+        self.assertEqual(self._ajouter([self.uniforme.pk], client=comptable).status_code, 403)
+        self.assertEqual(self._lignes(self.uniforme), [])
+
+        # La vie scolaire écrit le dossier et les frais : elle ajoute.
+        secretaire = self._client(self._compte("secret@a.sn", self.ecole, "secretaire").email)
+        reponse = self._ajouter([self.uniforme.pk], client=secretaire)
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+
     def test_les_frais_proposes_suivent_le_niveau(self):
         models.TarifNiveau.objects.create(id_niveau=self.niveau, id_type_frais=self.taekwondo,
                                           montant=7000)
@@ -5498,7 +5526,9 @@ class TestMatriceAutorisations(BaseAPI):
             self.clients[role] = self._client(compte.email)
 
     def test_tous_les_roles_ont_un_profil(self):
-        self.assertEqual(set(Utilisateur.Role.values), set(self.PROFIL_DU_ROLE))
+        # Sauf le super administrateur : il gère la plateforme, pas une école,
+        # et n'a donc aucune place dans la matrice.
+        self.assertEqual(set(Utilisateur.Role.values) - {"super_admin"}, set(self.PROFIL_DU_ROLE))
 
     def test_lecture_selon_la_matrice(self):
         for module, endpoint in self.ENDPOINTS.items():
@@ -5967,3 +5997,210 @@ class TestJustificatifDeDepense(BaseAPI):
         journee = self.client.get("/api/caisse/historique/").data
         ligne = next(d for d in journee["depenses"] if d["id"] == self.depense.pk)
         self.assertTrue(ligne["a_justificatif"])
+
+
+class TestFichierDesAutorisations(BaseAPI):
+    """
+    Le fichier `yombaledu_autorisations.xlsx`, recopié tel quel, contre ce
+    que l'API laisse réellement faire.
+
+    Deux garanties : la matrice du code est celle du fichier, case par case ;
+    et chaque profil qui n'a que « Lecture » (ou aucun accès) sur un module
+    se voit refuser toute écriture sur son API, quel que soit l'écran d'où
+    elle part.
+    """
+
+    # Colonnes du fichier : Dir, Vie scolaire, Caissier, Comptable,
+    # Responsable financier, Enseignant, Parent, Élève.
+    FICHIER = {
+        "tableau_de_bord": "EELLLLLL",
+        "eleves":          "EELLLLLL",
+        "inscriptions":    "EE-LL-LL",
+        "parents":         "EE-LLLEL",
+        "classes":         "EE-LLLLL",
+        "matieres":        "EE-LLLLL",
+        "emploi_du_temps": "EE-LLLLL",
+        "presences":       "EE---ELL",
+        "notes":           "EE---ELL",
+        "bulletins":       "EE---ELL",
+        "personnel":       "EL-LE---",
+        "frais":           "EELEE-L-",
+        "encaissement":    "ELEEE-L-",
+        "relances":        "EEEEE-L-",
+        "journal_caisse":  "L-LLL---",
+        "depenses":        "E-EEE---",
+        "types_depenses":  "E--EE---",
+        "budget":          "E--EE---",
+        "types_frais":     "EELEE-L-",
+        "parametres":      "E-------",
+    }
+    ROLES = ["admin", "surveillant", "caissier", "comptable",
+             "responsable_financier", "enseignant", "parent", "eleve"]
+
+    # L'API d'écriture de chaque module (création). Le tableau de bord et le
+    # journal de caisse n'en ont pas : ils ne font que se lire.
+    ECRITURES = {
+        "eleves": "/api/eleves/",
+        "inscriptions": "/api/inscriptions/",
+        "parents": "/api/parents/",
+        "classes": "/api/classes/",
+        "matieres": "/api/matieres/",
+        "emploi_du_temps": "/api/emplois-du-temps/",
+        "presences": "/api/absences/",
+        "notes": "/api/notes/",
+        "bulletins": "/api/bulletins/",
+        "personnel": "/api/enseignants/",
+        "frais": "/api/frais-eleves/",
+        "encaissement": "/api/paiements/",
+        "relances": "/api/relances/",
+        "depenses": "/api/depenses/",
+        "types_depenses": "/api/types-depenses/",
+        "budget": "/api/budgets/",
+        "types_frais": "/api/types-frais/",
+        "parametres": "/api/parametres/",
+    }
+
+    def test_la_matrice_du_code_est_celle_du_fichier(self):
+        from .permissions import ECRITURE, LECTURE, MATRICE, _COLONNES
+        lettre = {ECRITURE: "E", LECTURE: "L", None: "-"}
+        for module, attendu in self.FICHIER.items():
+            reel = "".join(lettre[MATRICE[module][c]] for c in _COLONNES)
+            self.assertEqual(reel, attendu, f"module {module}")
+
+    def test_lecture_seule_ne_peut_rien_ecrire(self):
+        comptes = {role: self._compte(f"{role}@fichier.sn", self.ecole, role)
+                   for role in self.ROLES}
+        for module, url in self.ECRITURES.items():
+            for colonne, role in enumerate(self.ROLES):
+                client = APIClient()
+                client.force_authenticate(comptes[role])
+                statut = client.post(url, {}, format="json").status_code
+                with self.subTest(module=module, role=role):
+                    if self.FICHIER[module][colonne] == "E":
+                        # Le corps vide est refusé à la validation (400),
+                        # jamais par les droits.
+                        self.assertNotEqual(statut, 403, f"{role} doit pouvoir écrire {module}")
+                    else:
+                        self.assertEqual(statut, 403, f"{role} ne doit pas écrire {module}")
+
+    def test_documents_en_lecture_hors_direction(self):
+        for role in self.ROLES[1:]:
+            client = APIClient()
+            client.force_authenticate(self._compte(f"doc-{role}@fichier.sn", self.ecole, role))
+            with self.subTest(role=role):
+                self.assertEqual(client.get("/api/documents/").status_code, 200)
+                self.assertEqual(client.post("/api/documents/", {
+                    "titre": "X", "categorie": "administratif", "visibilite": "tous",
+                    "fichier_url": "/media/x.pdf"}, format="json").status_code, 403)
+
+    def test_destinataires_des_communications_en_lecture_hors_direction(self):
+        client = APIClient()
+        client.force_authenticate(self._compte("dest@fichier.sn", self.ecole, "parent"))
+        self.assertEqual(client.get("/api/communication-destinataires/").status_code, 200)
+        self.assertEqual(client.post("/api/communication-destinataires/", {}, format="json")
+                         .status_code, 403)
+
+
+class TestPlateformeSuperAdmin(BaseAPI):
+    """Le super administrateur gère les écoles clientes, jamais leur intérieur."""
+
+    def setUp(self):
+        super().setUp()
+        self.super_admin = Utilisateur.objects.create_user(
+            email="plateforme@yombaledu.sn", id_ecole=None, password=MDP,
+            role="super_admin", nom="Plateforme", prenom="Super")
+        self.plateforme = self._client(self.super_admin.email)
+
+    def _creer_ecole(self, **surcharges):
+        corps = {
+            "nom": "École Les Pins", "telephone": "770000000", "plan_abonnement": "standard",
+            "admin": {"nom": "Fall", "prenom": "Aïda", "email": "aida@pins.sn", "password": "Motdepasse!2026"},
+        }
+        corps.update(surcharges)
+        return self.plateforme.post("/api/plateforme/ecoles/", corps, format="json")
+
+    def test_cree_une_ecole_et_son_administrateur(self):
+        r = self._creer_ecole()
+        self.assertEqual(r.status_code, 201, r.content)
+        ecole = models.Ecole.objects.get(nom="École Les Pins")
+        admin = Utilisateur.objects.get(email="aida@pins.sn")
+        self.assertEqual(admin.id_ecole, ecole)
+        self.assertEqual(admin.role, "admin")
+        # L'administrateur se connecte avec le mot de passe choisi, et ne voit
+        # que son école.
+        client = APIClient()
+        jeton = client.post("/api/auth/token/", {"email": "aida@pins.sn", "password": "Motdepasse!2026"},
+                            format="json")
+        self.assertEqual(jeton.status_code, 200, jeton.content)
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {jeton.data['access']}")
+        self.assertEqual(client.get("/api/auth/moi/").data["acces"]["parametres"], "ecriture")
+        self.assertEqual(len(self.resultats(client.get("/api/eleves/"))), 0)
+
+    def test_une_ecole_sans_administrateur_est_refusee(self):
+        r = self.plateforme.post("/api/plateforme/ecoles/", {"nom": "Sans compte"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("admin", r.data)
+        self.assertFalse(models.Ecole.objects.filter(nom="Sans compte").exists())
+
+    def test_email_deja_pris_ne_cree_pas_lecole(self):
+        r = self._creer_ecole(admin={"nom": "X", "prenom": "Y", "email": self.admin.email,
+                                     "password": "Motdepasse!2026"})
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(models.Ecole.objects.filter(nom="École Les Pins").exists())
+
+    def test_liste_les_ecoles_avec_leurs_administrateurs(self):
+        self._creer_ecole()
+        ecoles = {e["nom"]: e for e in self.resultats(self.plateforme.get("/api/plateforme/ecoles/"))}
+        self.assertEqual({"École A", "École B", "École Les Pins"} - set(ecoles), set())
+        self.assertEqual([a["email"] for a in ecoles["École Les Pins"]["admins"]], ["aida@pins.sn"])
+        self.assertIn(self.admin.email, [a["email"] for a in ecoles["École A"]["admins"]])
+        # Les comptes d'école qui ne dirigent pas n'apparaissent pas.
+        self.assertNotIn(self.enseignant_user.email, [a["email"] for a in ecoles["École A"]["admins"]])
+
+    def test_offre_et_paiement(self):
+        r = self.plateforme.patch(f"/api/plateforme/ecoles/{self.ecole.pk}/",
+                                  {"plan_abonnement": "pro", "abonnement_paye": True}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.ecole.refresh_from_db()
+        self.assertEqual(self.ecole.plan_abonnement, "pro")
+        self.assertTrue(self.ecole.abonnement_paye)
+        self.assertEqual(self.ecole.date_paiement, timezone.localdate(), "réglé sans date : aujourd'hui")
+
+    def test_ajoute_un_administrateur(self):
+        r = self.plateforme.post(f"/api/plateforme/ecoles/{self.autre.pk}/admins/", {
+            "nom": "Ba", "prenom": "Omar", "email": "omar@b.sn", "password": "Motdepasse!2026",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(Utilisateur.objects.get(email="omar@b.sn").id_ecole, self.autre)
+
+    def test_la_plateforme_est_fermee_aux_ecoles(self):
+        for client in (self.client, self._client(self.enseignant_user.email)):
+            self.assertEqual(client.get("/api/plateforme/ecoles/").status_code, 403)
+            self.assertEqual(client.post("/api/plateforme/ecoles/", {}, format="json").status_code, 403)
+
+    def test_le_super_admin_ne_voit_pas_linterieur_des_ecoles(self):
+        for url in ("/api/eleves/", "/api/utilisateurs/", "/api/paiements/", "/api/notes/",
+                    "/api/frais-eleves/", "/api/depenses/", "/api/ecoles/"):
+            with self.subTest(url=url):
+                self.assertEqual(self.plateforme.get(url).status_code, 403)
+        moi = self.plateforme.get("/api/auth/moi/").data
+        self.assertEqual(moi["role"], "super_admin")
+        self.assertEqual(moi["acces"], {})
+
+    def test_une_ecole_ne_se_declare_pas_payee(self):
+        r = self.client.patch(f"/api/ecoles/{self.ecole.pk}/", {
+            "abonnement_paye": True, "date_paiement": "2026-09-01", "plan_abonnement": "pro"},
+            format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.ecole.refresh_from_db()
+        self.assertFalse(self.ecole.abonnement_paye)
+        self.assertIsNone(self.ecole.date_paiement)
+        self.assertNotEqual(self.ecole.plan_abonnement, "pro")
+
+    def test_une_ecole_ne_cree_pas_de_super_admin(self):
+        r = self.client.post("/api/utilisateurs/", {
+            "nom": "N", "prenom": "P", "email": "pirate@a.sn", "role": "super_admin",
+            "password": MDP}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("role", r.data)
+        self.assertFalse(Utilisateur.objects.filter(email="pirate@a.sn").exists())

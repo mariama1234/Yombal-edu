@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/guards/auth.guard';
 import { accesGuard } from './core/guards/acces.guard';
+import { ecoleGuard, plateformeGuard } from './core/guards/plateforme.guard';
 import { LayoutComponent } from './layout/layout.component';
 import { GenericListComponent } from './shared/crud/generic-list.component';
 import { GenericFormComponent } from './shared/crud/generic-form.component';
@@ -11,10 +12,37 @@ export const routes: Routes = [
     loadComponent: () => import('./features/auth/login/login.component').then((m) => m.LoginComponent),
   },
 
+  // Plateforme : les écoles clientes, réservées au super administrateur.
+  {
+    path: 'plateforme',
+    canActivate: [authGuard, plateformeGuard],
+    loadComponent: () => import('./features/plateforme/plateforme-layout.component')
+      .then((m) => m.PlateformeLayoutComponent),
+    children: [
+      {
+        path: '',
+        loadComponent: () => import('./features/plateforme/ecoles-plateforme.component')
+          .then((m) => m.EcolesPlateformeComponent),
+      },
+      {
+        path: 'ecoles/nouvelle',
+        loadComponent: () => import('./features/plateforme/ecole-plateforme.component')
+          .then((m) => m.EcolePlateformeComponent),
+      },
+      {
+        path: 'ecoles/:id',
+        loadComponent: () => import('./features/plateforme/ecole-plateforme.component')
+          .then((m) => m.EcolePlateformeComponent),
+      },
+    ],
+  },
+
   {
     path: '',
     component: LayoutComponent,
-    canActivate: [authGuard],
+    // Le super administrateur n'entre pas dans une école : `ecoleGuard` le
+    // ramène à la plateforme.
+    canActivate: [authGuard, ecoleGuard],
     // Chaque page suit la matrice des autorisations : voir `accesGuard`.
     canActivateChild: [accesGuard],
     children: [

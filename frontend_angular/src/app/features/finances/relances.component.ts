@@ -29,7 +29,7 @@ export class RelancesComponent implements OnInit {
   occupe = signal(false);
 
   form = this.fb.group({
-    canal: ['sms', Validators.required],
+    canal: ['whatsapp', Validators.required],
     jours_retard: [0, [Validators.required, Validators.min(0)]],
     delai_min: [7, [Validators.required, Validators.min(0)]],
   });

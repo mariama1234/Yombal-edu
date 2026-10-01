@@ -36,6 +36,9 @@ export class GenericFormComponent implements OnInit {
   /** Champs `fichier` dont la pièce déjà jointe est à retirer à l'enregistrement. */
   retraits = signal<Record<string, boolean>>({});
   erreurFichier = signal<string | null>(null);
+  /** Refus du serveur, champ par champ, et ce qui ne vise aucun champ. */
+  erreursServeur = signal<Record<string, string>>({});
+  erreurGenerale = signal<string | null>(null);
   private toast = inject(ToastService);
   private annees = inject(AnneeScolaireService);
   private auth = inject(AuthService);
@@ -314,6 +317,8 @@ export class GenericFormComponent implements OnInit {
       return;
     }
     this.enregistrement.set(true);
+    this.erreursServeur.set({});
+    this.erreurGenerale.set(null);
     const payload = this.form.getRawValue();
 
     // Un nombre, une date ou une liste déroulante laissés vides n'ont pas de
@@ -356,8 +361,38 @@ export class GenericFormComponent implements OnInit {
           },
         });
       },
-      error: () => this.enregistrement.set(false),
+      error: (e) => {
+        this.enregistrement.set(false);
+        this.lireRefus(e?.error);
+      },
     });
+  }
+
+  /**
+   * Répartit un refus de l'API (400) : chaque message sous son champ, le
+   * reste en tête du formulaire. Sans cela le bouton se débloquait sans rien
+   * dire, et on recommençait sans savoir pourquoi — un e-mail déjà pris, par
+   * exemple.
+   */
+  private lireRefus(corps: unknown): void {
+    const texte = (v: unknown): string =>
+      Array.isArray(v) ? v.map(texte).join(' ') : typeof v === 'string' ? v : '';
+    if (!corps || typeof corps !== 'object') {
+      this.erreurGenerale.set('L’enregistrement a échoué. Réessayez dans un instant.');
+      return;
+    }
+    const parChamp: Record<string, string> = {};
+    const autres: string[] = [];
+    const champs = new Set(this.config.fields.map((f) => f.key));
+    for (const [cle, valeur] of Object.entries(corps as Record<string, unknown>)) {
+      const message = texte(valeur);
+      if (!message) continue;
+      if (champs.has(cle)) parChamp[cle] = message;
+      else autres.push(message);
+    }
+    this.erreursServeur.set(parChamp);
+    this.erreurGenerale.set(autres.length ? autres.join(' ')
+      : Object.keys(parChamp).length ? 'Corrigez les champs signalés.' : 'L’enregistrement a échoué.');
   }
 
   private terminer(payload: Record<string, any>): void {

@@ -405,7 +405,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     // Le budget disponible se compte sur l'année du bandeau haut : la liste
     // la transmet, sinon une enveloppe annuelle compterait toutes les années.
     filtreParAnnee: true,
-    titre: 'Catégories de dépenses',
+    // « Budgets » dans le titre : c'est ici que l'enveloppe de chaque poste
+    // se fixe, et le mot manquait au menu pour qu'on l'y cherche.
+    titre: 'Catégories & budgets',
     titreSingulier: 'une catégorie',
     eyebrow: 'Gestion financière',
     description: 'Postes de charge de l’école : loyer, salaires, fournitures, transport… Chacun porte '
@@ -659,7 +661,8 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'telephone', label: 'Téléphone', type: 'tel' },
       {
         key: 'password', label: 'Mot de passe', type: 'password', span2: true,
-        aide: '8 caractères minimum. Laisser vide pour conserver le mot de passe actuel.',
+        aide: 'Obligatoire à la création, 8 caractères minimum. En modification, '
+            + 'laisser vide pour conserver le mot de passe actuel.',
       },
       {
         key: 'statut', label: 'Statut', type: 'select',

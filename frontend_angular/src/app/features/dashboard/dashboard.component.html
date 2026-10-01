@@ -82,7 +82,7 @@
     @if (auth.peutLire('frais') && !auth.estFamille()) {
       <a class="btn-ghost" routerLink="/finances">Finances</a>
     }
-    @if (auth.peutEcrire('encaissement') && !auth.estFamille()) {
+    @if (auth.peutLire('journal_caisse')) {
       <a class="btn-ghost" routerLink="/finances/caisse">Caisse</a>
     }
     @if (auth.peutLire('journal_caisse')) {

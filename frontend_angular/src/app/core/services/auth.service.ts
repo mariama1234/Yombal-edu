@@ -27,6 +27,14 @@ export class AuthService {
     return profil === 'parent' || profil === 'eleve';
   });
 
+  /** Compte de la plateforme : il gère les écoles clientes, pas leur intérieur. */
+  readonly estSuperAdmin = computed(() => this.currentUser()?.role === 'super_admin');
+
+  /** Page d'accueil du compte : la plateforme ou le tableau de bord de l'école. */
+  accueil(): string {
+    return this.estSuperAdmin() ? '/plateforme' : '/tableau-de-bord';
+  }
+
   /** Administrateur, directeur ou responsable administratif. */
   readonly estDirection = computed(() => this.currentUser()?.profil === 'direction');
 

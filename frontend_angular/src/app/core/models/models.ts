@@ -11,7 +11,8 @@ export interface Paginated<T> {
 
 export interface Utilisateur {
   id: number;
-  id_ecole: number;
+  /** `null` pour le seul super administrateur, qui n'appartient à aucune école. */
+  id_ecole: number | null;
   nom: string;
   prenom: string;
   email: string;
@@ -27,6 +28,7 @@ export interface Utilisateur {
 }
 
 export type Role =
+  | 'super_admin'
   | 'admin' | 'directeur' | 'responsable_administratif'
   | 'surveillant' | 'secretaire'
   | 'caissier' | 'comptable' | 'responsable_financier'
@@ -40,7 +42,7 @@ export type Module =
   | 'matieres' | 'emploi_du_temps' | 'presences' | 'notes' | 'bulletins'
   | 'personnel' | 'frais' | 'encaissement' | 'relances' | 'journal_caisse'
   | 'depenses' | 'types_depenses' | 'budget' | 'types_frais' | 'parametres'
-  | 'annees_scolaires' | 'comptes' | 'communications';
+  | 'annees_scolaires' | 'comptes' | 'communications' | 'documents';
 
 export interface Ecole {
   id: number;
@@ -374,7 +376,7 @@ export interface Relance {
   eleve_nom?: string;
   type_frais?: string;
   date_envoi: string;
-  canal: 'sms' | 'email';
+  canal: 'whatsapp' | 'email';
   statut: 'envoyee' | 'echouee';
 }
 
@@ -1167,4 +1169,44 @@ export interface FactureEleve {
   total_du: number;
   total_paye: number;
   reste: number;
+}
+
+// ---------------------------------------------------------------------------
+// Plateforme — réservée au super administrateur
+// ---------------------------------------------------------------------------
+
+export type PlanAbonnement = 'essai' | 'standard' | 'pro';
+export type StatutEcole = 'actif' | 'suspendu' | 'resilie';
+
+/** Un compte de direction d'une école, vu depuis la plateforme. */
+export interface AdminEcole {
+  id: number;
+  nom: string;
+  prenom: string;
+  email: string;
+  telephone: string | null;
+  role: Role;
+  role_libelle: string;
+  statut: 'actif' | 'inactif';
+  date_creation: string;
+}
+
+/** Réponse de /plateforme/ecoles/. */
+export interface EcolePlateforme {
+  id: number;
+  nom: string;
+  adresse: string | null;
+  telephone: string | null;
+  email: string | null;
+  plan_abonnement: PlanAbonnement;
+  plan_libelle: string;
+  abonnement_paye: boolean;
+  date_paiement: string | null;
+  statut: StatutEcole;
+  statut_libelle: string;
+  date_activation: string | null;
+  date_creation: string;
+  nb_utilisateurs: number;
+  nb_eleves: number;
+  admins: AdminEcole[];
 }

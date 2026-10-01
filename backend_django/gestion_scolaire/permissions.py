@@ -98,6 +98,10 @@ _MATRICE = {
     "annees_scolaires":     (E,  L,  L,  L,  L,  L,  L,  L),
     "comptes":              (E,  _,  _,  _,  _,  _,  _,  _),
     "communications":       (E,  L,  L,  L,  L,  L,  L,  L),
+    # Les documents se lisent selon leur visibilité ; seule la direction en
+    # dépose, en modifie ou en retire. Ouverts à tout compte connecté, un
+    # parent pouvait supprimer le règlement intérieur.
+    "documents":            (E,  L,  L,  L,  L,  L,  L,  L),
 }
 
 MATRICE = {
@@ -224,6 +228,23 @@ class AccesModule(permissions.BasePermission):
         if exige == ECRITURE or not lecture_seule:
             return niveau == ECRITURE
         return True
+
+
+def est_super_admin(utilisateur):
+    """Le compte de la plateforme, qui gère les écoles clientes."""
+    return bool(utilisateur and utilisateur.is_authenticated
+                and getattr(utilisateur, "role", None) == "super_admin")
+
+
+class EstSuperAdmin(permissions.BasePermission):
+    """
+    Réservé au super administrateur. Il n'a aucun profil dans la matrice :
+    les vues des écoles lui restent fermées, celles-ci sont les siennes.
+    """
+    message = "Réservé au super administrateur de la plateforme."
+
+    def has_permission(self, request, view):
+        return est_super_admin(request.user)
 
 
 class EstAdmin(permissions.BasePermission):

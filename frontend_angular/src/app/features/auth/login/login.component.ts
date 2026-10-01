@@ -40,7 +40,7 @@ export class LoginComponent {
       next: () => {
         this.auth.chargerProfil().subscribe(() => {
           this.loading.set(false);
-          this.router.navigate(['/tableau-de-bord']);
+          this.router.navigate([this.auth.accueil()]);
         });
       },
       error: () => {

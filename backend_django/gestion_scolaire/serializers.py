@@ -144,6 +144,11 @@ class UtilisateurAdminSerializer(serializers.ModelSerializer):
         fields = ["id", "id_ecole", "nom", "prenom", "email", "role", "telephone",
                   "statut", "date_creation", "password"]
         read_only_fields = ["id", "id_ecole", "date_creation"]
+        # L'unicité est vérifiée par `validate_email`, sans tenir compte des
+        # majuscules et avec un message clair ; le contrôle générique du modèle
+        # passait avant lui et renvoyait « utilisateur with this email… ».
+        # La contrainte de la base reste le dernier garde-fou.
+        extra_kwargs = {"email": {"validators": []}}
 
     def validate(self, attrs):
         """
@@ -175,6 +180,14 @@ class UtilisateurAdminSerializer(serializers.ModelSerializer):
                 "Nommez d'abord un autre administrateur."
             )
         return attrs
+
+    def validate_role(self, value):
+        # Un administrateur d'école ne crée pas de compte de plateforme : un
+        # super administrateur rattaché à une école violerait la contrainte, et
+        # lui donnerait la main sur toutes les autres.
+        if value == Utilisateur.Role.SUPER_ADMIN:
+            raise serializers.ValidationError("Ce rôle ne s'attribue pas depuis une école.")
+        return value
 
     def validate_email(self, value):
         """
@@ -223,7 +236,9 @@ class EcoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = models.Ecole
         fields = "__all__"
-        read_only_fields = ["plan_abonnement", "statut", "date_activation", "date_creation"]
+        # Le règlement de l'abonnement aussi : une école ne se déclare pas payée.
+        read_only_fields = ["plan_abonnement", "statut", "date_activation", "date_creation",
+                            "abonnement_paye", "date_paiement"]
 
 
 # ---------- Module élèves ----------

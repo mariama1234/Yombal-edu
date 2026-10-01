@@ -2,10 +2,12 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from . import views
+from . import plateforme, views
 
 router = DefaultRouter()
 router.register(r"ecoles", views.EcoleViewSet, basename="ecole")
+# Administration de la plateforme : réservée au super administrateur.
+router.register(r"plateforme/ecoles", plateforme.EcolePlateformeViewSet, basename="plateforme-ecole")
 router.register(r"utilisateurs", views.UtilisateurViewSet, basename="utilisateur")
 router.register(r"annees-scolaires", views.AnneeScolaireViewSet, basename="annee-scolaire")
 router.register(r"periodes", views.PeriodeScolaireViewSet, basename="periode")

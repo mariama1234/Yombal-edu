@@ -99,7 +99,8 @@
         }
       </p>
     } @else {
-      <table class="simple">
+      <!-- Au téléphone, chaque ligne devient une carte (voir .liste-cartes). -->
+      <table class="simple liste-cartes">
         <thead>
           <tr>
             @for (col of config.columns; track col.key) {
@@ -112,7 +113,7 @@
           @for (item of items(); track item.id) {
             <tr>
               @for (col of config.columns; track col.key) {
-                <td [class.mono]="col.type === 'number' || col.type === 'date'">
+                <td [class.mono]="col.type === 'number' || col.type === 'date'" [attr.data-label]="col.label">
                   @if (col.type === 'badge') {
                     <span class="pill" [class]="item[col.key]">{{ item[col.key] }}</span>
                   } @else if (item[col.key] === true) {
@@ -124,32 +125,27 @@
                   }
                 </td>
               }
-              <td style="text-align:right; white-space:nowrap;">
+              <!-- Les « · » entre deux actions viennent du CSS (.actions-ligne) :
+                   aucun ne traîne en bout de ligne quand une action manque. -->
+              <td class="cellule-actions actions-ligne" style="text-align:right; white-space:nowrap;">
                 @for (action of config.actions ?? []; track action.chemin) {
                   @if (modifiable() && actionVisible(action, item)) {
                     <button class="panel-link" (click)="lancerAction(action, item)">{{ action.label }}</button>
-                    &nbsp;·&nbsp;
                   }
                 }
                 @if (peutCreerUnAcces(item)) {
                   <button class="panel-link" (click)="accesPour.set(item)">Créer son accès</button>
-                  &nbsp;·&nbsp;
                 } @else if (config.acces && item.acces_email) {
                   <span style="color:var(--ink-400); font-size:12px;" [title]="item.acces_email">Accès créé</span>
-                  &nbsp;·&nbsp;
                 }
                 @for (lien of config.liens ?? []; track lien.chemin) {
                   @if (accesOuvert(lien.module)) {
                     <a class="panel-link" [routerLink]="lien.chemin" [queryParams]="parametresLien(lien, item)">{{ lien.label }}</a>
-                    &nbsp;·&nbsp;
                   }
                 }
                 @if (modifiable()) {
                   <a class="panel-link" [routerLink]="[item.id]">Modifier</a>
-                  &nbsp;·&nbsp;
                   <button class="panel-link" style="color:var(--red)" (click)="supprimer(item)">Supprimer</button>
-                } @else {
-                  <span style="color:var(--ink-400); font-size:12px;">Consultation seule</span>
                 }
               </td>
             </tr>
