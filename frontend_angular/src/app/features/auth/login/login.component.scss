@@ -1,1 +1,6 @@
 /* La quasi-totalité du style vient des classes globales (styles.scss). */
+
+.lien-inactif {
+  color: var(--ink-400, #9aa3ad);
+  cursor: not-allowed;
+}

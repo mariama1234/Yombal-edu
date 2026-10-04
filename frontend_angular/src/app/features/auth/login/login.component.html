@@ -49,6 +49,14 @@
       </form>
 
       <div class="login-foot">Besoin d'aide ? Contactez l'administrateur YombalEdu de votre école.</div>
+      <div class="login-foot">
+        Pas encore de compte ?
+        @if (landingUrl) {
+          <a [href]="landingUrl">Découvrir YombalEdu</a>
+        } @else {
+          <span class="lien-inactif" title="Bientôt disponible">Découvrir YombalEdu</span>
+        }
+      </div>
     </div>
   </div>
 </div>
