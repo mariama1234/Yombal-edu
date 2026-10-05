@@ -1067,6 +1067,26 @@ class TestEmploiDuTemps(BasePedagogie):
         r = self._seance(id_classe=autre_classe.pk, id_salle=autre_salle.pk)
         self.assertEqual(r.status_code, 400, "l'enseignant ne peut pas être à deux endroits")
 
+    def test_lannee_se_deduit_de_la_classe(self):
+        """Le formulaire n'envoie pas l'année : c'est celle de la classe."""
+        r = self._seance(id_annee_scolaire=None)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["id_annee_scolaire"], self.annee.pk)
+
+    def test_sans_annee_les_conflits_sont_toujours_vus(self):
+        self.assertEqual(self._seance(id_annee_scolaire=None).status_code, 201)
+        autre_matiere = models.Matiere.objects.create(id_ecole=self.ecole, nom="Français")
+        r = self._seance(id_annee_scolaire=None, id_matiere=autre_matiere.pk)
+        self.assertEqual(r.status_code, 400, r.content)
+
+    def test_une_annee_qui_contredit_la_classe_est_refusee(self):
+        autre = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2027-2028",
+            date_debut=date(2027, 10, 1), date_fin=date(2028, 7, 31))
+        r = self._seance(id_annee_scolaire=autre.pk)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("id_classe", r.data)
+
 
 class TestFinances(BaseAPI):
     def setUp(self):

@@ -950,11 +950,30 @@ class EmploiDuTempsSerializer(serializers.ModelSerializer):
         model = models.EmploiDuTemps
         fields = "__all__"
 
+    def to_internal_value(self, data):
+        """
+        L'année d'une séance est celle de sa classe : le formulaire ne la
+        demande pas, et la demander laisserait saisir un couple incohérent.
+        Elle est ajoutée avant la validation, pour que les contrôles de
+        créneau (classe, enseignant, salle sur une même année) s'appliquent.
+        """
+        if data.get("id_classe") and not data.get("id_annee_scolaire"):
+            annee = (models.Classe.objects.filter(pk=data.get("id_classe"))
+                     .values_list("id_annee_scolaire", flat=True).first()
+                     if str(data.get("id_classe")).isdigit() else None)
+            if annee is not None:
+                data = {**data, "id_annee_scolaire": annee}
+        return super().to_internal_value(data)
+
     def validate(self, attrs):
         """
-        Sans ce contrôle, la contrainte `chk_seance_horaire` remonte en erreur
-        serveur : la base refuse l'insertion, mais après le serializer.
+        Sans le contrôle des heures, la contrainte `chk_seance_horaire` remonte
+        en erreur serveur : la base refuse l'insertion, mais après le serializer.
         """
+        classe, annee = attrs.get("id_classe"), attrs.get("id_annee_scolaire")
+        if classe and annee and classe.id_annee_scolaire_id != annee.pk:
+            raise serializers.ValidationError(
+                {"id_classe": "Cette classe relève d'une autre année scolaire."})
         debut = attrs.get("heure_debut", getattr(self.instance, "heure_debut", None))
         fin = attrs.get("heure_fin", getattr(self.instance, "heure_fin", None))
         if debut and fin and fin <= debut:
