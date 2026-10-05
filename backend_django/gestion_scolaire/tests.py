@@ -6204,3 +6204,311 @@ class TestPlateformeSuperAdmin(BaseAPI):
         self.assertEqual(r.status_code, 400)
         self.assertIn("role", r.data)
         self.assertFalse(Utilisateur.objects.filter(email="pirate@a.sn").exists())
+
+
+# ---------------------------------------------------------------------------
+# Retours de la réunion client (octobre 2026)
+# ---------------------------------------------------------------------------
+
+class TestGrilleDesAges(TestCase):
+    def test_les_libelles_courants_sont_reconnus(self):
+        for libelle, attendu in [("6ème", (12, 13)), ("6e", (12, 13)), ("CI", (5, 7)),
+                                 ("Petite Section", (2, 4)), ("PS", (2, 4)),
+                                 ("Terminale", (17, 20)), ("2nde", (15, 17))]:
+            with self.subTest(libelle=libelle):
+                self.assertEqual(scolarite.fourchette_par_defaut(libelle), attendu)
+        self.assertIsNone(scolarite.fourchette_par_defaut("Classe passerelle"))
+
+    def test_age_en_annees_revolues(self):
+        self.assertEqual(scolarite.age_au(date(2014, 12, 31), date(2026, 12, 31)), 12)
+        self.assertEqual(scolarite.age_au(date(2015, 1, 1), date(2026, 12, 31)), 11)
+
+
+class InscriptionParFormulaire:
+    """Le POST du formulaire « Inscrire un élève », sans hériter des tests d'une autre classe."""
+
+    def _inscrire(self, date_inscription="2026-10-01", **extra):
+        return self.client.post("/api/eleves/inscrire/", {
+            "id_ecole": self.ecole.pk, "nom": "Ndiaye", "prenom": "Fatou",
+            "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "date_inscription": date_inscription, **extra,
+        }, format="json")
+
+
+class TestControleAgeInscription(InscriptionParFormulaire, BaseAPI):
+    """L'âge de l'élève confronté au niveau, à l'inscription par le formulaire."""
+
+    def setUp(self):
+        super().setUp()
+        self.niveau.age_min, self.niveau.age_max = 12, 14
+        self.niveau.save()
+
+    def _parametre(self, cle, valeur):
+        models.ParametreEcole.objects.update_or_create(
+            id_ecole=self.ecole, cle=cle, defaults={"libelle": cle, "valeur": valeur})
+
+    def test_un_age_conforme_passe_sans_question(self):
+        reponse = self._inscrire(date_naissance="2013-05-10")  # 13 ans au 31/12/2026
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertFalse(models.HistoriqueScolaire.objects.filter(
+            type_evenement="derogation_age").exists())
+
+    def test_hors_fourchette_on_previent_avec_le_message_du_client(self):
+        reponse = self._inscrire(date_naissance="2009-03-01")  # 17 ans
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertEqual(reponse.data["code"], "age_a_confirmer")
+        self.assertIn("Fatou a 17 ans au 31/12/2026", str(reponse.data["detail"]))
+        self.assertIn("de 12 à 14 ans", str(reponse.data["detail"]))
+        self.assertFalse(models.Eleve.objects.filter(nom="Ndiaye").exists())
+
+    def test_confirmee_la_derogation_est_inscrite_dans_lhistorique(self):
+        reponse = self._inscrire(date_naissance="2009-03-01", derogation_age=True)
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        trace = models.HistoriqueScolaire.objects.get(
+            id_eleve_id=reponse.data["id"], type_evenement="derogation_age")
+        self.assertIn("17 ans", trace.motif)
+        self.assertIn("Confirmée par", trace.commentaire)
+
+    def test_lecole_qui_bloque_refuse_meme_confirme(self):
+        self._parametre("controle_age_inscription", "bloquer")
+        reponse = self._inscrire(date_naissance="2009-03-01", derogation_age=True)
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertEqual(reponse.data["code"], "age_hors_fourchette")
+        self.assertFalse(models.Eleve.objects.filter(nom="Ndiaye").exists())
+
+    def test_controle_desactive(self):
+        self._parametre("controle_age_inscription", "desactive")
+        self.assertEqual(self._inscrire(date_naissance="2009-03-01").status_code, 201)
+
+    def test_sans_date_de_naissance_on_la_demande(self):
+        reponse = self._inscrire()
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertEqual(reponse.data["code"], "date_naissance_manquante")
+        self.assertIn("date_naissance", reponse.data)
+
+    def test_classe_sans_niveau_pas_de_controle(self):
+        self.classe.id_niveau = None
+        self.classe.save()
+        self.assertEqual(self._inscrire().status_code, 201)
+
+    def test_la_date_de_reference_se_regle(self):
+        # Né le 15/09/2014 : 11 ans au 01/09/2026, 12 ans au 31/12/2026.
+        self.assertEqual(self._inscrire(date_naissance="2014-09-15").status_code, 201)
+        models.Eleve.objects.all().delete()
+        self._parametre("date_reference_age", "01/09")
+        self.assertEqual(self._inscrire(date_naissance="2014-09-15").status_code, 400)
+
+
+class TestControleAgeReinscription(BaseRentree):
+    def setUp(self):
+        super().setUp()
+        self.niveau.age_min, self.niveau.age_max = 12, 14
+        self.niveau.save()
+        for eleve, naissance in zip(self.eleves, (date(2013, 1, 1), date(2013, 6, 1), date(2009, 1, 1))):
+            eleve.date_naissance = naissance
+            eleve.save()
+
+    def _corps(self, **extra):
+        return {"id_annee_source": self.annee_passee.pk, "id_annee_cible": self.annee.pk,
+                "id_classe_source": self.classe_passee.pk,
+                "id_classe_cible": self.classe_cible.pk, **extra}
+
+    def test_reinscription_individuelle_hors_age(self):
+        url = f"/api/eleves/{self.eleves[2].pk}/reinscrire/"
+        reponse = self.client.post(url, {"id_classe": self.classe_cible.pk}, format="json")
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertEqual(reponse.data["code"], "age_a_confirmer")
+        reponse = self.client.post(url, {"id_classe": self.classe_cible.pk, "derogation_age": True},
+                                   format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertTrue(models.HistoriqueScolaire.objects.filter(
+            id_eleve=self.eleves[2], type_evenement="derogation_age").exists())
+
+    def test_lapercu_de_classe_signale_lalerte_par_eleve(self):
+        reponse = self.client.post("/api/inscriptions/reinscrire/", self._corps(), format="json")
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        alertes = {e["id"]: e["alerte_age"] for e in reponse.data["eleves"]}
+        self.assertIsNone(alertes[self.eleves[0].pk])
+        self.assertEqual(alertes[self.eleves[2].pk]["code"], "age_hors_fourchette")
+        self.assertEqual(reponse.data["alertes_age"], 1)
+
+    def test_valider_la_classe_exige_la_confirmation(self):
+        reponse = self.client.post("/api/inscriptions/reinscrire/", self._corps(valider=True),
+                                   format="json")
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertFalse(models.Inscription.objects.filter(id_annee_scolaire=self.annee).exists())
+        reponse = self.client.post("/api/inscriptions/reinscrire/",
+                                   self._corps(valider=True, derogation_age=True), format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual(models.HistoriqueScolaire.objects.filter(
+            type_evenement="derogation_age").count(), 1)
+
+    def test_un_eleve_sans_date_bloque_la_classe_jusqua_ce_quon_le_decoche(self):
+        self.eleves[0].date_naissance = None
+        self.eleves[0].save()
+        reponse = self.client.post("/api/inscriptions/reinscrire/",
+                                   self._corps(valider=True, derogation_age=True), format="json")
+        self.assertEqual(reponse.status_code, 400, reponse.content)
+        self.assertIn("Décochez", str(reponse.data))
+        reponse = self.client.post("/api/inscriptions/reinscrire/", self._corps(
+            valider=True, eleves=[self.eleves[1].pk]), format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+
+
+class TestNiveauxEtAges(BaseAPI):
+    def test_un_niveau_connu_nait_avec_sa_fourchette(self):
+        reponse = self.client.post("/api/niveaux/", {"libelle": "CE1"}, format="json")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        self.assertEqual((reponse.data["age_min"], reponse.data["age_max"]), (7, 9))
+
+    def test_la_fourchette_se_modifie_et_reste_coherente(self):
+        url = f"/api/niveaux/{self.niveau.pk}/"
+        self.assertEqual(self.client.patch(url, {"age_min": 11, "age_max": 15},
+                                           format="json").status_code, 200)
+        reponse = self.client.patch(url, {"age_min": 16}, format="json")
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn("age_max", reponse.data)
+
+
+class TestRegistreEtAdresseParent(InscriptionParFormulaire, BaseAPI):
+    def test_le_numero_de_registre_est_unique_dans_lecole(self):
+        self.assertEqual(self._inscrire(numero_registre="R-12").status_code, 201)
+        reponse = self._inscrire(numero_registre="R-12")
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn("numero_registre", reponse.data)
+        # Vide : aucun conflit entre élèves non numérotés.
+        self.assertEqual(self._inscrire(numero_registre="").status_code, 201)
+        self.assertEqual(self._inscrire().status_code, 201)
+
+    def test_une_autre_ecole_peut_reprendre_le_meme_numero(self):
+        models.Eleve.objects.create(id_ecole=self.autre, matricule="B-1", nom="X", prenom="Y",
+                                    numero_registre="R-12")
+        self.assertEqual(self._inscrire(numero_registre="R-12").status_code, 201)
+
+    def test_ladresse_du_parent_principal_figure_au_dossier(self):
+        reponse = self._inscrire(parent_nom_complet="Awa Ndiaye", parent_telephone="770000000",
+                                 parent_adresse="Parcelles Assainies, Unité 15")
+        self.assertEqual(reponse.status_code, 201, reponse.content)
+        dossier = self.client.get(f"/api/eleves/{reponse.data['id']}/dossier/").data
+        self.assertEqual(dossier["parents"][0]["adresse"], "Parcelles Assainies, Unité 15")
+        self.assertEqual(dossier["eleve"]["numero_registre"], None)
+
+
+class TestFicheSanitaire(BaseAPI):
+    def setUp(self):
+        super().setUp()
+        self.eleve = models.Eleve.objects.create(id_ecole=self.ecole, matricule="E-1",
+                                                 nom="Sow", prenom="Awa")
+        self.url = f"/api/eleves/{self.eleve.pk}/sante/"
+
+    def _rattacher_parent(self):
+        parent = models.ParentTuteur.objects.create(id_ecole=self.ecole, nom="Sow", prenom="M",
+                                                    id_utilisateur=self.parent_user)
+        models.EleveParent.objects.create(id_eleve=self.eleve, id_parent=parent,
+                                          lien_parente="pere", contact_principal=True)
+
+    def test_la_direction_remplit_la_fiche(self):
+        reponse = self.client.put(self.url, {"allergies": "Arachide", "groupe_sanguin": "O+",
+                                             "vaccinations_a_jour": True}, format="json")
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.assertEqual(reponse.data["allergies"], "Arachide")
+        self.assertEqual(reponse.data["maj_par"], "Admin Test")
+        self.assertEqual(self.client.get(self.url).data["groupe_sanguin"], "O+")
+
+    def test_le_parent_lit_sans_ecrire(self):
+        self._rattacher_parent()
+        self.client.put(self.url, {"allergies": "Arachide"}, format="json")
+        parent = self._client(self.parent_user.email)
+        self.assertEqual(parent.get(self.url).data["allergies"], "Arachide")
+        self.assertEqual(parent.put(self.url, {"allergies": ""}, format="json").status_code, 403)
+
+    def test_enseignant_et_caissier_nont_pas_acces(self):
+        caissier = self._compte("caisse@a.sn", self.ecole, "caissier")
+        for client in (self._client(self.enseignant_user.email), self._client(caissier.email)):
+            self.assertEqual(client.get(self.url).status_code, 403)
+            dossier = client.get(f"/api/eleves/{self.eleve.pk}/dossier/")
+            if dossier.status_code == 200:
+                self.assertIsNone(dossier.data["sante"])
+
+    def test_une_autre_ecole_ne_voit_rien(self):
+        self.assertEqual(self.client_autre.get(self.url).status_code, 404)
+        self.assertEqual(self.client_autre.put(self.url, {"allergies": "x"},
+                                               format="json").status_code, 404)
+
+
+class TestCasSocial(BaseDossierFinancier):
+    def setUp(self):
+        super().setUp()
+        self.url = f"/api/eleves/{self.eleve.pk}/cas-social/"
+
+    def _poser(self, client=None, **corps):
+        corps = {"cas_social": True, "taux_reduction_sociale": "50",
+                 "motif_cas_social": "Famille en difficulté", **corps}
+        return (client or self.client).post(self.url, corps, format="json")
+
+    def test_les_frais_non_soldes_sont_reduits(self):
+        mensualite = self._frais(25000, date(2026, 11, 5))
+        transport = self._frais(10000, date(2026, 11, 5), type_frais=models.TypeFrais.objects.create(
+            id_ecole=self.ecole, libelle="Transport", montant_defaut=10000))
+        reponse = self._poser()
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        mensualite.refresh_from_db()
+        transport.refresh_from_db()
+        self.assertEqual(mensualite.remise, Decimal("12500"))
+        self.assertEqual(mensualite.motif_remise, "Cas social (50 %)")
+        self.assertEqual(transport.remise, Decimal("0"), "le transport n'est pas réduit")
+
+    def test_un_mois_deja_paye_ne_bouge_pas(self):
+        paye = self._frais(25000, date(2026, 10, 5))
+        self._payer(paye, 25000)
+        self._poser()
+        paye.refresh_from_db()
+        self.assertEqual(paye.remise, Decimal("0"))
+
+    def test_la_remise_ne_descend_pas_sous_ce_qui_est_encaisse(self):
+        frais = self._frais(25000, date(2026, 11, 5))
+        self._payer(frais, 20000)
+        self._poser(taux_reduction_sociale="50")
+        frais.refresh_from_db()
+        self.assertEqual(frais.remise, Decimal("5000"))
+        self.assertEqual(frais.statut, "paye")
+
+    def test_une_remise_manuelle_nest_pas_ecrasee(self):
+        frais = self._frais(25000, date(2026, 11, 5), remise=3000)
+        frais.motif_remise = "Fratrie"
+        frais.save()
+        self._poser()
+        frais.refresh_from_db()
+        self.assertEqual((frais.remise, frais.motif_remise), (Decimal("3000"), "Fratrie"))
+
+    def test_les_frais_futurs_naissent_reduits(self):
+        self._poser(taux_reduction_sociale="20")
+        self.assertEqual(self._generer().status_code, 201)
+        frais = models.FraisEleve.objects.get(id_eleve=self.eleve, echeance=date(2026, 11, 5))
+        self.assertEqual(frais.remise, Decimal("5000"))
+        autre = models.FraisEleve.objects.get(id_eleve=self.eleves[1], echeance=date(2026, 11, 5))
+        self.assertEqual(autre.remise, Decimal("0"))
+
+    def test_retirer_le_statut_retire_la_remise(self):
+        frais = self._frais(25000, date(2026, 11, 5))
+        self._poser()
+        self.assertEqual(self.client.post(self.url, {"cas_social": False}, format="json").status_code, 200)
+        frais.refresh_from_db()
+        self.eleve.refresh_from_db()
+        self.assertEqual(frais.remise, Decimal("0"))
+        self.assertFalse(self.eleve.cas_social)
+
+    def test_motif_et_taux_exiges(self):
+        self.assertEqual(self._poser(motif_cas_social="").status_code, 400)
+        self.assertEqual(self._poser(taux_reduction_sociale="120").status_code, 400)
+
+    def test_la_fiche_eleve_ne_permet_pas_de_se_declarer_cas_social(self):
+        self.client.patch(f"/api/eleves/{self.eleve.pk}/", {"cas_social": True,
+                          "taux_reduction_sociale": "100"}, format="json")
+        self.eleve.refresh_from_db()
+        self.assertFalse(self.eleve.cas_social)
+
+    def test_reserve_a_qui_ecrit_les_frais(self):
+        caissier = self._compte("caisse@a.sn", self.ecole, "caissier")
+        self.assertEqual(self._poser(client=self._client(caissier.email)).status_code, 403)
+        self.assertEqual(self._poser(client=self.client_autre).status_code, 404)

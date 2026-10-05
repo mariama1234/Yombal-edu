@@ -477,10 +477,12 @@ def generer_frais(ecole, annee, type_frais, echeances, montant=None, classe=None
             if (eleve.pk, echeance) in deja:
                 ignores += 1
                 continue
+            remise, motif_remise = remise_sociale(eleve, type_frais, montant_eleve)
             a_creer.append(models.FraisEleve(
                 id_eleve=eleve, id_type_frais=type_frais, id_annee_scolaire=annee,
                 montant_du=montant_eleve, echeance=echeance,
-                statut=models.FraisEleve.Statut.IMPAYE,
+                remise=remise, motif_remise=motif_remise,
+                statut=_statut_initial(montant_eleve, remise),
             ))
     if sans_tarif and not a_creer and not ignores:
         raise ErreurFinance(
@@ -553,6 +555,91 @@ def grille_du_type(type_frais):
                 .values_list("id_niveau_id", "montant"))
 
 
+# ---------------------------------------------------------------------------
+# Cas sociaux
+# ---------------------------------------------------------------------------
+
+PREFIXE_MOTIF_SOCIAL = "Cas social"
+
+
+def _taux_lisible(taux):
+    return f"{taux.normalize():f}".replace(".", ",")
+
+
+def remise_sociale(eleve, type_frais, montant):
+    """
+    `(remise, motif)` à porter sur un frais neuf, ou `(ZERO, None)`.
+
+    Seuls les droits d'inscription et les mensualités sont réduits : le
+    transport ou la cantine coûtent à l'école ce qu'ils coûtent. La remise est
+    arrondie au franc, une famille ne règle pas des centimes.
+    """
+    if (not eleve.cas_social or not eleve.taux_reduction_sociale
+            or type_frais.nature not in TYPES_D_OFFICE or not montant):
+        return ZERO, None
+    remise = (montant * eleve.taux_reduction_sociale / 100).quantize(Decimal("1"))
+    remise = min(remise, montant)
+    return remise, f"{PREFIXE_MOTIF_SOCIAL} ({_taux_lisible(eleve.taux_reduction_sociale)} %)"
+
+
+def _statut_initial(montant, remise):
+    """Une gratuité totale naît réglée : rien ne reste à encaisser."""
+    return (models.FraisEleve.Statut.PAYE if montant - remise <= ZERO
+            else models.FraisEleve.Statut.IMPAYE)
+
+
+@transaction.atomic
+def definir_cas_social(ecole, eleve, actif, taux=None, motif=""):
+    """
+    Pose ou retire le statut « cas social » et met les frais en accord.
+
+    Seuls les frais non encore soldés bougent : un mois déjà réglé appartient
+    au passé, le rouvrir ferait réclamer à la famille ce qu'elle a payé au
+    tarif convenu à l'époque. Une remise saisie à la main (autre motif) n'est
+    jamais écrasée. La remise ne descend jamais le net sous ce qui a déjà été
+    encaissé.
+    """
+    if eleve.id_ecole_id != ecole.pk:
+        raise ErreurFinance("Cet élève appartient à une autre école.")
+    if actif:
+        try:
+            taux = Decimal(str(taux))
+        except (InvalidOperation, TypeError):
+            raise ErreurFinance("Indiquez le pourcentage de réduction.")
+        if not (ZERO < taux <= 100):
+            raise ErreurFinance("Le pourcentage de réduction doit être compris entre 0 et 100.")
+        motif = (motif or "").strip()
+        if len(motif) < 3:
+            raise ErreurFinance("Indiquez le motif du cas social.")
+        eleve.cas_social, eleve.taux_reduction_sociale, eleve.motif_cas_social = True, taux, motif[:255]
+    else:
+        eleve.cas_social, eleve.taux_reduction_sociale, eleve.motif_cas_social = False, ZERO, None
+    eleve.save(update_fields=["cas_social", "taux_reduction_sociale", "motif_cas_social"])
+
+    frais = (models.FraisEleve.objects
+             .filter(id_eleve=eleve, id_type_frais__nature__in=TYPES_D_OFFICE)
+             .exclude(statut=models.FraisEleve.Statut.PAYE)
+             .filter(Q(remise=ZERO) | Q(motif_remise__startswith=PREFIXE_MOTIF_SOCIAL))
+             .select_related("id_type_frais").prefetch_related("paiements"))
+    modifies = 0
+    annees = set()
+    for f in frais:
+        remise, motif_remise = remise_sociale(eleve, f.id_type_frais, f.montant_du)
+        remise = min(remise, max(f.montant_du - f.montant_paye, ZERO))
+        if remise == f.remise and motif_remise == f.motif_remise:
+            continue
+        f.remise, f.motif_remise = remise, motif_remise if remise else None
+        f.save(update_fields=["remise", "motif_remise"])
+        recalculer_statut(f)
+        annees.add(f.id_annee_scolaire_id)
+        modifies += 1
+    # Une remise totale peut solder les droits : l'inscription se confirme.
+    for annee in annees:
+        confirmer_inscription(eleve.pk, annee)
+    return {"cas_social": eleve.cas_social, "taux": montant_json(eleve.taux_reduction_sociale),
+            "motif": eleve.motif_cas_social, "frais_modifies": modifies}
+
+
 def types_d_office(ecole):
     """Les types de nature « inscription » puis « mensualité » de l'école."""
     types = []
@@ -623,11 +710,13 @@ def emettre_frais_inscription(eleve, annee, date_inscription, optionnels=(), cla
         montant = tarif(type_frais, classe)
         if not montant or montant <= 0 or (type_frais.pk, date_inscription) in deja:
             continue
+        remise, motif_remise = remise_sociale(eleve, type_frais, montant)
         # Une à une plutôt qu'en bloc : l'ordre des clés fixe l'ordre d'imputation.
         crees.append(models.FraisEleve.objects.create(
             id_eleve=eleve, id_type_frais=type_frais, id_annee_scolaire=annee,
             montant_du=montant, echeance=date_inscription,
-            statut=models.FraisEleve.Statut.IMPAYE,
+            remise=remise, motif_remise=motif_remise,
+            statut=_statut_initial(montant, remise),
         ))
     return crees
 

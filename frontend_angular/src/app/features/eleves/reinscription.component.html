@@ -47,6 +47,19 @@
     </div>
 
     @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+@if (alerte(); as a) {
+  <div class="form-error">
+    {{ a.message }}
+    @if (a.confirmable) {
+      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="btn-primary" [disabled]="occupe()" (click)="valider(true)">
+          Réinscrire quand même (dérogations notées dans l'historique)
+        </button>
+        <button type="button" class="btn-ghost" (click)="alerte.set(null)">Annuler</button>
+      </div>
+    }
+  </div>
+}
 
     <div class="form-grid">
       <div class="field">
@@ -152,12 +165,17 @@
               </td>
               <td [style.color]="coches().includes(e.id) || e.deja_inscrit ? null : 'var(--ink-400)'">
                 {{ e.nom_complet }}
+                @if (e.alerte_age; as al) {
+                  <div style="font-size:12px;" [style.color]="al.bloquant ? 'var(--red-500, #c0392b)' : 'var(--orange-500)'">
+                    ⚠ {{ al.message }}
+                  </div>
+                }
               </td>
               <td class="mono">{{ e.matricule }}</td>
               <td style="text-align:right; white-space:nowrap;">
                 @if (e.deja_inscrit) {
                   <span style="font-size:12px; color:var(--ink-400);">déjà inscrit pour {{ a.annee_cible }}</span>
-                } @else if (!coches().includes(e.id)) {
+                } @else if (!coches().includes(e.id) || e.alerte_age?.bloquant) {
                   <a class="panel-link" [routerLink]="['/eleves', e.id, 'dossier']">Dossier →</a>
                 }
               </td>
@@ -173,9 +191,16 @@
       @if (avertissement()) {
         <div class="form-error">⚠ {{ avertissement() }}</div>
       }
+      @if (bloquesCoches()) {
+        <div class="form-error">
+          {{ bloquesCoches() }} élève(s) coché(s) ne peuvent pas être réinscrits en l'état
+          (date de naissance à saisir, ou âge refusé par l'école).
+          <button type="button" class="panel-link" (click)="decocherBloques()">Les décocher</button>
+        </div>
+      }
 
       <div class="form-actions">
-        <button class="btn-primary" (click)="valider()" [disabled]="occupe() || coches().length === 0">
+        <button class="btn-primary" (click)="valider(false)" [disabled]="occupe() || coches().length === 0">
           {{ occupe() ? 'Réinscription…' : 'Réinscrire ' + coches().length + ' élève(s)' }}
         </button>
       </div>

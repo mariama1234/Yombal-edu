@@ -90,6 +90,10 @@ _MATRICE = {
     "budget":               (E,  _,  _,  E,  E,  _,  _,  _),
     "types_frais":          (E,  E,  L,  E,  E,  _,  L,  _),
     "parametres":           (E,  _,  _,  _,  _,  _,  _,  _),
+    # Demande du client (réunion d'octobre) : la fiche sanitaire se lit et se
+    # tient par la direction et la vie scolaire ; le parent la consulte pour
+    # son enfant. Ni la caisse ni les enseignants n'y ont accès.
+    "sante":                (E,  E,  _,  _,  _,  _,  L,  _),
 
     # Hors fichier : ce qui existait déjà, rapporté aux nouveaux profils.
     # Les années scolaires se lisent partout (le bandeau haut en dépend) et ne

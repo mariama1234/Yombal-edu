@@ -558,6 +558,10 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
         "finances": "frais",
         "facture": "frais",
         "par_matricule": "frais",
+        # Le statut de cas social réduit ce que la famille doit : c'est
+        # facturer, comme ajouter un frais.
+        "cas_social": "frais",
+        "sante": "sante",
         # Ajouter des frais, c'est facturer : cela relève des frais élèves,
         # pas de l'encaissement. Un caissier encaisse ce qui est dû, il ne
         # décide pas de ce que la famille doit.
@@ -808,7 +812,11 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
             resultat = scolarite.reinscrire_eleve(
                 ecole, eleve, classe,
                 date_inscription=entree.validated_data.get("date_inscription"),
-                frais_optionnels=entree.validated_data.get("frais_optionnels"))
+                frais_optionnels=entree.validated_data.get("frais_optionnels"),
+                derogation_age=entree.validated_data.get("derogation_age", False),
+                utilisateur=request.user)
+        except scolarite.ErreurAge:
+            raise
         except scolarite.ErreurScolarite as exc:
             raise ValidationError({"detail": str(exc)})
 
@@ -960,8 +968,9 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
         return Response(self._dossier(request, self.get_object()))
 
     # Section du dossier → module qu'il faut pouvoir lire pour la recevoir.
-    SECTIONS_DU_DOSSIER = {"parents": "parents", "finances": "frais",
-                           "resultats": "bulletins", "assiduite": "presences"}
+    SECTIONS_DU_DOSSIER = {"parents": "parents", "finances": "frais", "cas_social": "frais",
+                           "resultats": "bulletins", "assiduite": "presences",
+                           "sante": "sante"}
 
     def _dossier(self, request, eleve):
         """
@@ -1211,6 +1220,63 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
                              f"{eleve.prenom} {eleve.nom}",
         )
 
+    @extend_schema(request=serializers.CasSocialSerializer, responses=dict)
+    @action(detail=True, methods=["post"], url_path="cas-social")
+    def cas_social(self, request, pk=None):
+        """
+        Statut de cas social : POST /api/eleves/{id}/cas-social/
+
+        Pose (ou retire) la réduction et l'applique aux droits d'inscription
+        et mensualités non encore soldés.
+        """
+        try:
+            eleve = self._eleves_accessibles(request).get(pk=pk)
+        except (models.Eleve.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Élève introuvable."}, status=status.HTTP_404_NOT_FOUND)
+        entree = serializers.CasSocialSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        d = entree.validated_data
+        try:
+            resultat = finances.definir_cas_social(
+                request.user.id_ecole, eleve, d["cas_social"],
+                d.get("taux_reduction_sociale"), d.get("motif_cas_social") or "")
+        except finances.ErreurFinance as exc:
+            raise ValidationError({"detail": str(exc)})
+        journaliser(
+            request, models.JournalActivite.Action.MODIFICATION, entite="eleve", id_entite=eleve.pk,
+            description=(f"Cas social pour {eleve.prenom} {eleve.nom} : {resultat['taux']} % "
+                         f"— {resultat['motif']}" if resultat["cas_social"]
+                         else f"Fin du statut de cas social pour {eleve.prenom} {eleve.nom}"),
+        )
+        return Response(resultat)
+
+    @extend_schema(request=serializers.FicheSanitaireSerializer,
+                   responses=serializers.FicheSanitaireSerializer)
+    @action(detail=True, methods=["get", "put"])
+    def sante(self, request, pk=None):
+        """
+        Fiche sanitaire : GET / PUT /api/eleves/{id}/sante/
+
+        Module « sante » : direction et vie scolaire écrivent, le parent lit
+        celle de son enfant. Elle n'est jamais incluse dans la fiche élève.
+        """
+        try:
+            eleve = self._eleves_accessibles(request).get(pk=pk)
+        except (models.Eleve.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Élève introuvable."}, status=status.HTTP_404_NOT_FOUND)
+        if request.method == "GET":
+            return Response(scolarite.fiche_sanitaire(eleve))
+
+        fiche = models.FicheSanitaire.objects.filter(id_eleve=eleve).first()
+        entree = serializers.FicheSanitaireSerializer(fiche, data=request.data)
+        entree.is_valid(raise_exception=True)
+        entree.save(id_eleve=eleve, id_utilisateur_maj=request.user)
+        # Le contenu n'est pas recopié dans le journal : il est médical.
+        journaliser(request, models.JournalActivite.Action.MODIFICATION, entite="fiche_sanitaire",
+                    id_entite=eleve.pk,
+                    description=f"Mise à jour de la fiche sanitaire de {eleve.prenom} {eleve.nom}")
+        return Response(scolarite.fiche_sanitaire(eleve))
+
     def _eleve_de_lecole(self, request, pk):
         """
         L'élève par son identifiant, dans l'école connectée.
@@ -1370,7 +1436,11 @@ class InscriptionViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, Jo
                 date_inscription=donnees.get("date_inscription"),
                 appliquer=valider,
                 eleves=donnees.get("eleves"),
+                derogation_age=donnees.get("derogation_age", False),
+                utilisateur=request.user,
             )
+        except scolarite.ErreurAge:
+            raise
         except scolarite.ErreurScolarite as exc:
             raise ValidationError({"detail": str(exc)})
 

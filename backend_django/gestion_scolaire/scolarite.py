@@ -36,6 +36,7 @@ from datetime import date
 from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
+from rest_framework.exceptions import APIException
 
 from . import finances, models, photos
 
@@ -103,6 +104,183 @@ def _verifier_ecole(ecole, **objets):
             proprietaire = objet.id_eleve.id_ecole_id
         if proprietaire != ecole.pk:
             raise ErreurScolarite(f"{nom.capitalize()} : cet élément appartient à une autre école.")
+
+
+# ---------------------------------------------------------------------------
+# Âge par niveau
+# ---------------------------------------------------------------------------
+
+# Grille validée avec le client (fichier « Contraintes d'âge par niveau ») :
+# âge minimum et maximum, en années révolues à la date de référence. Elle ne
+# sert qu'à préremplir les niveaux ; chaque école ajuste ensuite les siens.
+GRILLE_AGES = {
+    "petite section": (2, 4), "moyenne section": (3, 5), "grande section": (4, 5),
+    "ci": (5, 7), "cp": (6, 8), "ce1": (7, 9), "ce2": (8, 10), "cm1": (9, 11), "cm2": (10, 12),
+    "6eme": (12, 13), "5eme": (12, 14), "4eme": (13, 15), "3eme": (14, 16),
+    "seconde": (15, 17), "premiere": (16, 19), "terminale": (17, 20),
+}
+
+# Les mêmes niveaux sous les noms qu'on leur donne couramment.
+_SYNONYMES_NIVEAU = {
+    "ps": "petite section", "ms": "moyenne section", "gs": "grande section",
+    "6e": "6eme", "5e": "5eme", "4e": "4eme", "3e": "3eme",
+    "2nde": "seconde", "2nd": "seconde", "1ere": "premiere", "tle": "terminale", "terminal": "terminale",
+}
+
+
+def _cle_niveau(libelle):
+    import unicodedata
+
+    texte = unicodedata.normalize("NFKD", libelle or "").encode("ascii", "ignore").decode()
+    texte = " ".join(texte.lower().replace("-", " ").split())
+    return _SYNONYMES_NIVEAU.get(texte, texte)
+
+
+def fourchette_par_defaut(libelle):
+    """(âge min, âge max) de la grille pour ce libellé, ou `None` s'il n'y figure pas."""
+    return GRILLE_AGES.get(_cle_niveau(libelle))
+
+
+class ControleAge:
+    """Réglage de l'école (paramètre `controle_age_inscription`)."""
+    PREVENIR = "prevenir"
+    BLOQUER = "bloquer"
+    DESACTIVE = "desactive"
+    CHOIX = (PREVENIR, BLOQUER, DESACTIVE)
+
+
+def _parametre(ecole, cle):
+    return (models.ParametreEcole.objects.filter(id_ecole=ecole, cle=cle)
+            .values_list("valeur", flat=True).first())
+
+
+def mode_controle_age(ecole):
+    valeur = (_parametre(ecole, "controle_age_inscription") or "").strip().lower()
+    return valeur if valeur in ControleAge.CHOIX else ControleAge.PREVENIR
+
+
+def date_reference_age(ecole, annee):
+    """
+    Le jour où l'on mesure l'âge, dans l'année civile où commence l'année
+    scolaire. Paramètre `date_reference_age` au format JJ/MM, 31/12 par défaut.
+    """
+    jour, mois = 31, 12
+    valeur = (_parametre(ecole, "date_reference_age") or "").strip()
+    try:
+        j, m = (int(x) for x in valeur.replace("-", "/").split("/")[:2])
+        date(2000, m, j)  # 29/02 accepté, le reste validé
+        jour, mois = j, m
+    except (TypeError, ValueError):
+        pass
+    annee_civile = annee.date_debut.year
+    if (jour, mois) == (29, 2) and not (annee_civile % 4 == 0 and (annee_civile % 100 or annee_civile % 400 == 0)):
+        jour = 28
+    return date(annee_civile, mois, jour)
+
+
+def age_au(date_naissance, reference):
+    """Âge en années révolues."""
+    return (reference.year - date_naissance.year
+            - ((reference.month, reference.day) < (date_naissance.month, date_naissance.day)))
+
+
+def _fourchette_lisible(niveau):
+    if niveau.age_min is not None and niveau.age_max is not None:
+        return f"de {niveau.age_min} à {niveau.age_max} ans"
+    if niveau.age_min is not None:
+        return f"à partir de {niveau.age_min} ans"
+    return f"jusqu'à {niveau.age_max} ans"
+
+
+def controle_age(ecole, classe, date_naissance, prenom=""):
+    """
+    Confronte l'âge de l'élève à la fourchette du niveau de `classe`.
+
+    Renvoie `None` si rien n'est à signaler — contrôle désactivé, classe sans
+    niveau, niveau sans fourchette, âge dans la fourchette — sinon un dict :
+
+    * `code` : `date_naissance_manquante` ou `age_hors_fourchette` ;
+    * `message` : la phrase à montrer telle quelle ;
+    * `bloquant` : vrai si l'école bloque, ou s'il manque la date de naissance
+      (on ne peut rien vérifier : on la demande, quelle que soit l'école).
+    """
+    mode = mode_controle_age(ecole)
+    niveau = classe.id_niveau if classe.id_niveau_id else None
+    if (mode == ControleAge.DESACTIVE or niveau is None
+            or (niveau.age_min is None and niveau.age_max is None)):
+        return None
+
+    qui = prenom.strip() or "L'élève"
+    if date_naissance is None:
+        return {
+            "code": "date_naissance_manquante",
+            "message": f"Renseignez la date de naissance de {qui} : "
+                       f"le niveau {niveau.libelle} accepte {_fourchette_lisible(niveau)}.",
+            "bloquant": True,
+        }
+
+    reference = date_reference_age(ecole, classe.id_annee_scolaire)
+    age = age_au(date_naissance, reference)
+    if ((niveau.age_min is None or age >= niveau.age_min)
+            and (niveau.age_max is None or age <= niveau.age_max)):
+        return None
+    return {
+        "code": "age_hors_fourchette",
+        "message": f"{qui} a {age} ans au {reference:%d/%m/%Y}. "
+                   f"Le niveau {niveau.libelle} accepte {_fourchette_lisible(niveau)}.",
+        "bloquant": mode == ControleAge.BLOQUER,
+        "age": age,
+    }
+
+
+def exiger_age_conforme(ecole, classe, date_naissance, prenom="", derogation=False):
+    """
+    Applique `controle_age` à une inscription individuelle.
+
+    Lève `ErreurAge` quand il faut s'arrêter : date manquante, école qui
+    bloque, ou avertissement que la personne n'a pas encore confirmé. Renvoie
+    le message de la dérogation à inscrire dans l'historique, ou `None`.
+    """
+    alerte = controle_age(ecole, classe, date_naissance, prenom)
+    if alerte is None:
+        return None
+    if alerte["bloquant"] or not derogation:
+        raise ErreurAge(alerte)
+    return alerte["message"]
+
+
+class ErreurAge(ErreurScolarite, APIException):
+    """
+    Âge à vérifier : une réponse 400 dont le `code` dit au client quoi faire.
+
+    * `age_a_confirmer` : avertissement, renvoyer la requête avec
+      `derogation_age` pour passer outre ;
+    * `age_hors_fourchette` : l'école bloque, rien à confirmer ;
+    * `date_naissance_manquante` : la saisir (message sous ce champ).
+
+    `APIException` plutôt que `ValidationError` : levée depuis un serializer,
+    elle traverse `is_valid()` sans être mise en listes, et le corps reste le
+    même quel que soit le chemin d'inscription.
+    """
+    status_code = 400
+
+    def __init__(self, alerte):
+        ErreurScolarite.__init__(self, alerte["message"])
+        self.alerte = alerte
+        if alerte["code"] == "date_naissance_manquante":
+            corps = {"date_naissance": alerte["message"], "code": alerte["code"]}
+        else:
+            corps = {"detail": alerte["message"],
+                     "code": "age_hors_fourchette" if alerte["bloquant"] else "age_a_confirmer"}
+        APIException.__init__(self, corps)
+
+
+def tracer_derogation_age(eleve, classe, date_effet, message, utilisateur=None):
+    """La dérogation reste lisible dans l'historique de l'élève, avec son auteur."""
+    auteur = (f"Confirmée par {utilisateur.prenom} {utilisateur.nom}".strip()
+              if utilisateur is not None and getattr(utilisateur, "is_authenticated", False) else None)
+    return _mouvement(eleve, models.HistoriqueScolaire.TypeEvenement.DEROGATION_AGE, date_effet,
+                      nouvelle=classe, motif=message[:255], commentaire=auteur)
 
 
 def _mouvement(eleve, type_evenement, date_effet, ancienne=None, nouvelle=None,
@@ -246,7 +424,8 @@ def eleves_a_reinscrire(ecole, annee_source, classe_source=None):
 
 @transaction.atomic
 def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=None,
-               date_inscription=None, appliquer=True, eleves=None):
+               date_inscription=None, appliquer=True, eleves=None, derogation_age=False,
+               utilisateur=None):
     """
     Réinscrit en bloc les élèves d'une classe dans une classe de l'année
     suivante.
@@ -266,6 +445,11 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
     restreint donc la réinscription aux identifiants cochés à l'aperçu. Les
     autres restent dans la file « à réinscrire », d'où l'on peut les
     réinscrire ailleurs ou enregistrer leur départ.
+
+    L'aperçu porte, élève par élève, l'alerte d'âge du niveau visé. À la
+    validation, un élève bloqué (date de naissance manquante, ou école qui
+    bloque) arrête tout : on le décoche ou on complète sa fiche. Un simple
+    avertissement exige `derogation_age`, et chaque dérogation est tracée.
     """
     date_inscription = date_inscription or annee_cible.date_debut or date.today()
     _verifier_ecole(ecole, annee_source=annee_source, annee_cible=annee_cible,
@@ -315,6 +499,27 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
     if appliquer and selection is not None and not a_creer:
         raise ErreurScolarite("Aucun élève coché : rien à réinscrire.")
 
+    alertes = {i.id_eleve_id: controle_age(ecole, classe_cible, i.id_eleve.date_naissance,
+                                           i.id_eleve.prenom)
+               for i in inscriptions if i.id_eleve_id not in deja}
+    en_alerte = [e for e in a_creer if alertes.get(e.pk)]
+    if appliquer and en_alerte:
+        bloques = [e for e in en_alerte if alertes[e.pk]["bloquant"]]
+        if bloques:
+            raise ErreurScolarite(
+                f"{len(bloques)} élève(s) ne peuvent pas passer en {classe_cible.nom} : "
+                + " ; ".join(alertes[e.pk]["message"] for e in bloques[:5])
+                + (" …" if len(bloques) > 5 else "")
+                + " Décochez-les ou complétez leur fiche.")
+        if not derogation_age:
+            raise ErreurAge({
+                "code": "age_hors_fourchette",
+                "message": f"{len(en_alerte)} élève(s) hors de la fourchette d'âge : "
+                           + " ; ".join(alertes[e.pk]["message"] for e in en_alerte[:5])
+                           + (" …" if len(en_alerte) > 5 else ""),
+                "bloquant": False,
+            })
+
     # L'effectif visé dépasse-t-il la capacité ? On avertit sans bloquer :
     # une classe surchargée en début d'année est une réalité, pas une erreur
     # de saisie, et la direction préfère être prévenue qu'empêchée.
@@ -337,6 +542,9 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
                 id_annee_scolaire=annee_cible,
                 date_inscription=date_inscription,
             )
+            if alertes.get(eleve.pk):
+                tracer_derogation_age(eleve, classe_cible, date_inscription,
+                                      alertes[eleve.pk]["message"], utilisateur)
             # Même règle qu'à l'inscription : droits et mensualités d'office,
             # et les frais au choix de l'an passé reconduits.
             frais_emis += len(finances.emettre_frais_inscription(
@@ -363,7 +571,9 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
             "nom_complet": f"{i.id_eleve.prenom} {i.id_eleve.nom}".strip(),
             "deja_inscrit": i.id_eleve_id in deja,
             "retenu": retenu(i),
+            "alerte_age": alertes.get(i.id_eleve_id),
         } for i in inscriptions],
+        "alertes_age": sum(1 for e in a_creer if alertes.get(e.pk)),
         "effectif_cible": classe_cible.effectif if appliquer else effectif_vise,
         "avertissement": avertissement,
         "applique": bool(appliquer),
@@ -443,8 +653,8 @@ def eleves_sans_inscription(ecole, annee, classe_source=None, niveau_source=None
 
 
 @transaction.atomic
-@transaction.atomic
-def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None, frais_optionnels=None):
+def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None, frais_optionnels=None,
+                     derogation_age=False, utilisateur=None):
     """
     Réinscrit **un** élève dans une classe de l'année suivante.
 
@@ -456,6 +666,9 @@ def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None, frais_op
     Le dépassement de capacité avertit sans bloquer, comme pour la
     réinscription en masse : une classe surchargée à la rentrée est une
     réalité, pas une faute de saisie.
+
+    L'âge, lui, est contrôlé selon le réglage de l'école : hors fourchette, la
+    réinscription attend la confirmation `derogation_age`, tracée ensuite.
     """
     _verifier_ecole(ecole, eleve=eleve, classe=classe_cible)
 
@@ -494,12 +707,17 @@ def reinscrire_eleve(ecole, eleve, classe_cible, date_inscription=None, frais_op
     elif any(t.id_ecole_id != ecole.pk for t in frais_optionnels):
         raise ErreurScolarite("Ce type de frais appartient à une autre école.")
 
+    derogation = exiger_age_conforme(ecole, classe_cible, eleve.date_naissance, eleve.prenom,
+                                     derogation=derogation_age)
+
     inscription = models.Inscription.objects.create(
         id_eleve=eleve,
         id_classe=classe_cible,
         id_annee_scolaire=annee_cible,
         date_inscription=date_inscription,
     )
+    if derogation:
+        tracer_derogation_age(eleve, classe_cible, date_inscription, derogation, utilisateur)
     recaler_effectif(classe_cible)
     classe_cible.refresh_from_db(fields=["effectif"])
     frais = finances.emettre_frais_inscription(
@@ -597,6 +815,21 @@ def _nom(personne):
     return f"{personne.prenom} {personne.nom}".strip()
 
 
+CHAMPS_SANTE = ("groupe_sanguin", "allergies", "maladies_chroniques", "traitements",
+                "besoins_particuliers", "vaccinations_a_jour", "medecin_nom", "medecin_telephone",
+                "contact_urgence_nom", "contact_urgence_telephone", "remarques")
+
+
+def fiche_sanitaire(eleve):
+    """La fiche de santé, vide (champs à `None`) tant que personne ne l'a remplie."""
+    fiche = models.FicheSanitaire.objects.filter(id_eleve=eleve).select_related("id_utilisateur_maj").first()
+    donnees = {champ: getattr(fiche, champ, None) for champ in CHAMPS_SANTE}
+    donnees["date_maj"] = fiche.date_maj if fiche else None
+    donnees["maj_par"] = (_nom(fiche.id_utilisateur_maj)
+                          if fiche and fiche.id_utilisateur_maj_id else None)
+    return donnees
+
+
 def dossier(ecole, eleve):
     """
     Fiche complète d'un élève, assemblée en une réponse.
@@ -653,6 +886,7 @@ def dossier(ecole, eleve):
         "eleve": {
             "id": eleve.pk,
             "matricule": eleve.matricule,
+            "numero_registre": eleve.numero_registre,
             "nom": eleve.nom,
             "prenom": eleve.prenom,
             "sexe": eleve.get_sexe_display() if eleve.sexe else None,
@@ -668,6 +902,14 @@ def dossier(ecole, eleve):
             "statut": eleve.statut,
             "statut_libelle": eleve.get_statut_display(),
         },
+        # Section financière : la vue la retire à qui ne lit pas les frais.
+        "cas_social": {
+            "actif": eleve.cas_social,
+            "taux": eleve.taux_reduction_sociale,
+            "motif": eleve.motif_cas_social,
+        },
+        # Idem pour la santé, réservée au module « sante ».
+        "sante": fiche_sanitaire(eleve),
         "scolarite_courante": None if courante is None else {
             "id_inscription": courante.pk,
             "classe": courante.id_classe.nom,
@@ -690,6 +932,7 @@ def dossier(ecole, eleve):
             "lien": lien.get_lien_parente_display(),
             "telephone": lien.id_parent.telephone,
             "email": lien.id_parent.email,
+            "adresse": lien.id_parent.adresse,
             "contact_principal": lien.contact_principal,
         } for lien in liens],
         "inscriptions": [{

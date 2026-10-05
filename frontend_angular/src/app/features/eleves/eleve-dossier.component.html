@@ -84,6 +84,10 @@
         } @else if (d.eleve.acces_email) {
           <span style="font-size:12px; color:var(--ink-400);" [title]="d.eleve.acces_email">Accès créé</span>
         }
+        @if (peutModifierEleve() && !identiteOuverte()) {
+          <button type="button" class="btn-ghost" style="padding:6px 12px; font-size:12.5px;"
+                  (click)="ouvrirIdentite()">Modifier</button>
+        }
         <span class="matricule" title="Matricule de l'élève">{{ d.eleve.matricule }}</span>
       </div>
     </div>
@@ -140,6 +144,7 @@
         <div class="mono">{{ d.eleve.date_naissance ? (d.eleve.date_naissance | date:'dd/MM/yyyy') : '—' }}</div>
       </div>
       <div class="field"><label>Adresse</label><div class="mono">{{ d.eleve.adresse ?? '—' }}</div></div>
+      <div class="field"><label>N° de registre</label><div class="mono">{{ d.eleve.numero_registre ?? '—' }}</div></div>
       <div class="field">
         <label>Première inscription</label>
         <div class="mono">{{ d.eleve.date_premiere_inscription ? (d.eleve.date_premiere_inscription | date:'dd/MM/yyyy') : '—' }}</div>
@@ -154,6 +159,36 @@
       </div>
     </div>
     </div>
+    @if (identiteOuverte()) {
+      <form [formGroup]="formIdentite" (ngSubmit)="enregistrerIdentite()"
+            style="margin-top:16px; border-top:1px solid var(--line); padding-top:14px;">
+        <div class="form-grid">
+          <div class="field"><label for="id-nom">Nom</label><input class="input" id="id-nom" formControlName="nom"></div>
+          <div class="field"><label for="id-prenom">Prénom</label><input class="input" id="id-prenom" formControlName="prenom"></div>
+        </div>
+        <div class="form-grid cols-3">
+          <div class="field">
+            <label for="id-naissance">Date de naissance</label>
+            <input class="input" id="id-naissance" type="date" formControlName="date_naissance">
+          </div>
+          <div class="field">
+            <label for="id-sexe">Sexe</label>
+            <select class="input" id="id-sexe" formControlName="sexe">
+              <option value="">—</option><option value="F">Féminin</option><option value="M">Masculin</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="id-registre">N° de registre</label>
+            <input class="input" id="id-registre" formControlName="numero_registre">
+          </div>
+        </div>
+        <div class="field"><label for="id-adresse">Adresse</label><input class="input" id="id-adresse" formControlName="adresse"></div>
+        <div class="form-actions">
+          <button type="button" class="btn-ghost" (click)="identiteOuverte.set(false)">Annuler</button>
+          <button type="submit" class="btn-primary" [disabled]="occupe()">Enregistrer</button>
+        </div>
+      </form>
+    }
   </div>
 
   <!-- Inscrit incomplet : ce qui le tient hors de la classe, et l'exception possible. -->
@@ -376,6 +411,126 @@
   </div>
   }
 
+  <!-- Santé : direction, vie scolaire et famille seulement (module « sante »). -->
+  @if (d.sante; as s) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Santé</div>
+      @if (peutEcrireSante() && !santeOuverte()) {
+        <button type="button" class="panel-link" (click)="ouvrirSante()">{{ santeRenseignee() ? 'Modifier' : 'Renseigner' }}</button>
+      }
+    </div>
+    @if (santeOuverte()) {
+      <form [formGroup]="formSante" (ngSubmit)="enregistrerSante()">
+        <div class="form-grid cols-3">
+          <div class="field">
+            <label for="s-groupe">Groupe sanguin</label>
+            <select class="input" id="s-groupe" formControlName="groupe_sanguin">
+              <option value="">Inconnu</option>
+              @for (g of ['A+','A-','B+','B-','AB+','AB-','O+','O-']; track g) { <option [value]="g">{{ g }}</option> }
+            </select>
+          </div>
+          <div class="field">
+            <label for="s-vaccins">Vaccinations à jour</label>
+            <select class="input" id="s-vaccins" formControlName="vaccinations_a_jour">
+              <option value="">Non renseigné</option><option value="oui">Oui</option><option value="non">Non</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="field"><label for="s-allergies">Allergies</label><textarea class="input" id="s-allergies" rows="2" formControlName="allergies" placeholder="Arachide, pénicilline…"></textarea></div>
+          <div class="field"><label for="s-maladies">Maladies chroniques</label><textarea class="input" id="s-maladies" rows="2" formControlName="maladies_chroniques" placeholder="Asthme, drépanocytose…"></textarea></div>
+          <div class="field"><label for="s-traitements">Traitements en cours</label><textarea class="input" id="s-traitements" rows="2" formControlName="traitements"></textarea></div>
+          <div class="field"><label for="s-besoins">Besoins particuliers</label><textarea class="input" id="s-besoins" rows="2" formControlName="besoins_particuliers" placeholder="Handicap, régime alimentaire…"></textarea></div>
+        </div>
+        <div class="form-grid">
+          <div class="field"><label for="s-medecin">Médecin traitant</label><input class="input" id="s-medecin" formControlName="medecin_nom"></div>
+          <div class="field"><label for="s-medecin-tel">Téléphone du médecin</label><input class="input" id="s-medecin-tel" formControlName="medecin_telephone"></div>
+          <div class="field"><label for="s-urgence">Contact d'urgence</label><input class="input" id="s-urgence" formControlName="contact_urgence_nom"></div>
+          <div class="field"><label for="s-urgence-tel">Téléphone d'urgence</label><input class="input" id="s-urgence-tel" formControlName="contact_urgence_telephone"></div>
+        </div>
+        <div class="field"><label for="s-remarques">Remarques</label><textarea class="input" id="s-remarques" rows="2" formControlName="remarques"></textarea></div>
+        <div class="form-actions">
+          <button type="button" class="btn-ghost" (click)="santeOuverte.set(false)">Annuler</button>
+          <button type="submit" class="btn-primary" [disabled]="occupe()">Enregistrer la fiche</button>
+        </div>
+      </form>
+    } @else if (!santeRenseignee()) {
+      <p class="hint">Aucune information de santé renseignée.</p>
+    } @else {
+      <div class="form-grid">
+        <div class="field"><label>Groupe sanguin</label><div class="mono">{{ s.groupe_sanguin ?? '—' }}</div></div>
+        <div class="field"><label>Vaccinations à jour</label>
+          <div class="mono">{{ s.vaccinations_a_jour === true ? 'Oui' : s.vaccinations_a_jour === false ? 'Non' : '—' }}</div></div>
+        <div class="field"><label>Allergies</label><div [style.color]="s.allergies ? 'var(--red)' : null">{{ s.allergies ?? '—' }}</div></div>
+        <div class="field"><label>Maladies chroniques</label><div>{{ s.maladies_chroniques ?? '—' }}</div></div>
+        <div class="field"><label>Traitements en cours</label><div>{{ s.traitements ?? '—' }}</div></div>
+        <div class="field"><label>Besoins particuliers</label><div>{{ s.besoins_particuliers ?? '—' }}</div></div>
+        <div class="field"><label>Médecin traitant</label><div>{{ s.medecin_nom ?? '—' }} <span class="mono">{{ s.medecin_telephone ?? '' }}</span></div></div>
+        <div class="field"><label>Contact d'urgence</label><div>{{ s.contact_urgence_nom ?? '—' }} <span class="mono">{{ s.contact_urgence_telephone ?? '' }}</span></div></div>
+      </div>
+      @if (s.remarques) { <p style="font-size:13px; margin:8px 0 0;">{{ s.remarques }}</p> }
+      @if (s.date_maj) {
+        <p class="hint" style="margin-top:8px;">Mise à jour le {{ s.date_maj | date:'dd/MM/yyyy' }}@if (s.maj_par) { par {{ s.maj_par }}}.</p>
+      }
+    }
+  </div>
+  }
+
+  <!-- Cas social : réduction appliquée d'office aux droits d'inscription et mensualités. -->
+  @if (d.cas_social; as cs) {
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title" style="display:flex; align-items:center; gap:8px;">
+        Cas social
+        @if (cs.actif) { <span class="chip">−{{ cs.taux | number:'1.0-2' }} %</span> }
+      </div>
+      @if (peutEcrireFrais() && !casSocialOuvert()) {
+        <button type="button" class="panel-link" (click)="ouvrirCasSocial()">{{ cs.actif ? 'Modifier' : 'Déclarer cas social' }}</button>
+      }
+    </div>
+    @if (casSocialOuvert()) {
+      <form [formGroup]="formCasSocial" (ngSubmit)="enregistrerCasSocial(true)">
+        <div class="form-grid">
+          <div class="field">
+            <label for="cs-taux">Réduction (%)</label>
+            <input class="input" id="cs-taux" type="number" min="1" max="100" formControlName="taux" placeholder="50">
+            @if (formCasSocial.controls.taux.touched && formCasSocial.controls.taux.invalid) {
+              <span class="hint hint-error">Entre 1 et 100 %.</span>
+            }
+          </div>
+          <div class="field">
+            <label for="cs-motif">Motif</label>
+            <input class="input" id="cs-motif" formControlName="motif" placeholder="Famille en difficulté, orphelin…">
+            @if (formCasSocial.controls.motif.touched && formCasSocial.controls.motif.invalid) {
+              <span class="hint hint-error">Indiquez le motif.</span>
+            }
+          </div>
+        </div>
+        <p class="hint">
+          S'applique aux droits d'inscription et aux mensualités : celles déjà émises et non soldées,
+          et toutes celles à venir. Les mois déjà réglés et les remises saisies à la main ne changent pas.
+        </p>
+        <div class="form-actions">
+          @if (cs.actif) {
+            <button type="button" class="btn-ghost" style="color:var(--red);" [disabled]="occupe()"
+                    (click)="enregistrerCasSocial(false)">Retirer le statut</button>
+          }
+          <button type="button" class="btn-ghost" (click)="casSocialOuvert.set(false)">Annuler</button>
+          <button type="submit" class="btn-primary" [disabled]="occupe()">Enregistrer</button>
+        </div>
+      </form>
+    } @else if (cs.actif) {
+      <p style="font-size:13px; margin:0;">
+        Réduction de <strong>{{ cs.taux | number:'1.0-2' }} %</strong> sur les droits d'inscription et les mensualités
+        — {{ cs.motif }}.
+      </p>
+    } @else {
+      <p class="hint">L'élève ne bénéficie d'aucune réduction sociale.</p>
+    }
+  </div>
+  }
+
   <!-- Parents -->
   @if (d.parents; as parents) {
   <div class="panel">
@@ -384,7 +539,7 @@
       <p class="hint">Aucun parent rattaché.</p>
     } @else {
       <table class="simple">
-        <thead><tr><th>Nom</th><th>Lien</th><th>Téléphone</th><th>Email</th><th>Contact principal</th></tr></thead>
+        <thead><tr><th>Nom</th><th>Lien</th><th>Téléphone</th><th>Email</th><th>Adresse</th><th>Contact principal</th></tr></thead>
         <tbody>
           @for (p of parents; track p.id) {
             <tr>
@@ -392,6 +547,7 @@
               <td>{{ p.lien }}</td>
               <td class="mono">{{ p.telephone ?? '—' }}</td>
               <td class="mono">{{ p.email ?? '—' }}</td>
+              <td>{{ p.adresse ?? '—' }}</td>
               <td>{{ p.contact_principal ? 'Oui' : '—' }}</td>
             </tr>
           }

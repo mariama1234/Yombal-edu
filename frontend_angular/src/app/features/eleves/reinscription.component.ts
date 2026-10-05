@@ -13,6 +13,7 @@ import {
 import { ScolariteService } from './scolarite.service';
 import { ToastService } from '../../core/services/toast.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
+import { AlerteAge, alerteAge } from './alerte-age';
 
 /**
  * Réinscription d'une classe en bloc — le cas d'exception.
@@ -43,6 +44,8 @@ export class ReinscriptionComponent implements OnInit {
   apercu = signal<ResultatReinscription | null>(null);
   resultat = signal<ResultatReinscription | null>(null);
   erreur = signal<string | null>(null);
+  /** Élèves cochés hors de la fourchette d'âge : l'écran propose de confirmer. */
+  alerte = signal<AlerteAge | null>(null);
   occupe = signal(false);
 
   /** Élèves cochés à l'aperçu : ceux qui suivent la classe. */
@@ -124,7 +127,7 @@ export class ReinscriptionComponent implements OnInit {
     this.form.valueChanges.subscribe(() => this.apercu.set(null));
   }
 
-  private corps(valider: boolean) {
+  private corps(valider: boolean, derogation = false) {
     const v = this.form.getRawValue();
     return {
       id_annee_source: v.id_annee_source,
@@ -135,23 +138,27 @@ export class ReinscriptionComponent implements OnInit {
       // L'aperçu porte sur toute la classe ; la validation, sur les cochés.
       eleves: valider ? this.coches() : null,
       valider,
+      derogation_age: derogation,
     };
   }
 
-  private appeler(valider: boolean, sur: (r: ResultatReinscription) => void): void {
+  private appeler(valider: boolean, sur: (r: ResultatReinscription) => void, derogation = false): void {
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;
     }
     this.occupe.set(true);
     this.erreur.set(null);
-    this.scolarite.reinscrire(this.corps(valider)).subscribe({
+    this.alerte.set(null);
+    this.scolarite.reinscrire(this.corps(valider, derogation)).subscribe({
       next: (r) => {
         sur(r);
         this.occupe.set(false);
       },
       error: (e) => {
-        this.erreur.set(this.message(e));
+        const alerte = alerteAge(e);
+        if (alerte) this.alerte.set(alerte);
+        else this.erreur.set(this.message(e));
         this.occupe.set(false);
       },
     });
@@ -164,12 +171,13 @@ export class ReinscriptionComponent implements OnInit {
     });
   }
 
-  valider(): void {
+  /** `derogation` : renvoi après l'avertissement d'âge, confirmé par la personne. */
+  valider(derogation = false): void {
     this.appeler(true, (r) => {
       this.resultat.set(r);
       this.apercu.set(null);
       this.toast.succes('Réinscription de la classe enregistrée', `${this.coches().length} élève(s) retenu(s).`);
-    });
+    }, derogation);
   }
 
   basculer(id: number): void {
@@ -182,6 +190,17 @@ export class ReinscriptionComponent implements OnInit {
 
   toutDecocher(): void {
     this.coches.set([]);
+  }
+
+  /** Élèves qu'on ne peut pas réinscrire en l'état : date manquante, ou école qui bloque. */
+  decocherBloques(): void {
+    const bloques = new Set((this.apercu()?.eleves ?? []).filter((e) => e.alerte_age?.bloquant).map((e) => e.id));
+    this.coches.update((ids) => ids.filter((id) => !bloques.has(id)));
+  }
+
+  bloquesCoches(): number {
+    const coches = this.coches();
+    return (this.apercu()?.eleves ?? []).filter((e) => e.alerte_age?.bloquant && coches.includes(e.id)).length;
   }
 
   recommencer(): void {

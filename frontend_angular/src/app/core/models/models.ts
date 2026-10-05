@@ -41,7 +41,7 @@ export type Module =
   | 'tableau_de_bord' | 'eleves' | 'inscriptions' | 'parents' | 'classes'
   | 'matieres' | 'emploi_du_temps' | 'presences' | 'notes' | 'bulletins'
   | 'personnel' | 'frais' | 'encaissement' | 'relances' | 'journal_caisse'
-  | 'depenses' | 'types_depenses' | 'budget' | 'types_frais' | 'parametres'
+  | 'depenses' | 'types_depenses' | 'budget' | 'types_frais' | 'parametres' | 'sante'
   | 'annees_scolaires' | 'comptes' | 'communications' | 'documents';
 
 export interface Ecole {
@@ -70,6 +70,9 @@ export interface Niveau {
   libelle: string;
   /** Montant de chaque frais pour ce niveau, par identifiant de type de frais. */
   tarifs?: Record<string, number>;
+  /** Fourchette d'âge admise (années révolues à la date de référence). */
+  age_min?: number | null;
+  age_max?: number | null;
 }
 
 export interface Classe {
@@ -93,6 +96,7 @@ export interface ParentTuteur {
   profession?: string;
   telephone?: string;
   email?: string;
+  adresse?: string;
 }
 
 export interface Eleve {
@@ -176,6 +180,10 @@ export interface EleveInscriptionPayload {
   parent_telephone?: string;
   parent_email?: string;
   parent_lien?: 'pere' | 'mere' | 'tuteur' | 'autre';
+  parent_adresse?: string;
+  numero_registre?: string;
+  /** Âge hors fourchette : la personne a vu l'avertissement et confirme. */
+  derogation_age?: boolean;
   /** Types de frais cochés en plus de l'inscription et des mensualités. */
   frais_optionnels?: number[];
 }
@@ -479,10 +487,29 @@ export interface Bilan {
 // ---------------------------------------------------------------------------
 
 /** Réponse de GET /eleves/{id}/dossier/. */
+/** Fiche sanitaire : GET / PUT /eleves/{id}/sante/ (module « sante »). */
+export interface FicheSante {
+  groupe_sanguin: string | null;
+  allergies: string | null;
+  maladies_chroniques: string | null;
+  traitements: string | null;
+  besoins_particuliers: string | null;
+  vaccinations_a_jour: boolean | null;
+  medecin_nom: string | null;
+  medecin_telephone: string | null;
+  contact_urgence_nom: string | null;
+  contact_urgence_telephone: string | null;
+  remarques: string | null;
+  date_maj?: string | null;
+  maj_par?: string | null;
+}
+
 export interface DossierEleve {
   eleve: {
     id: number;
     matricule: string;
+    /** Numéro du registre matricule tenu par l'école, distinct du matricule. */
+    numero_registre: string | null;
     nom: string;
     prenom: string;
     sexe: string | null;
@@ -521,8 +548,13 @@ export interface DossierEleve {
     lien: string;
     telephone: string | null;
     email: string | null;
+    adresse: string | null;
     contact_principal: boolean;
   }[] | null;
+  /** Statut de cas social ; null pour qui ne lit pas les frais. */
+  cas_social: { actif: boolean; taux: string | number; motif: string | null } | null;
+  /** Fiche sanitaire ; null pour qui n'a pas accès au module « sante ». */
+  sante: FicheSante | null;
   inscriptions: {
     id: number;
     annee: string;
@@ -590,7 +622,11 @@ export interface ResultatReinscription {
     nom_complet: string;
     deja_inscrit: boolean;
     retenu: boolean;
+    /** Âge hors de la fourchette du niveau visé, ou date de naissance manquante. */
+    alerte_age: { code: string; message: string; bloquant: boolean } | null;
   }[];
+  /** Élèves retenus dont l'âge est à vérifier. */
+  alertes_age: number;
   effectif_cible: number;
   avertissement: string | null;
   applique: boolean;

@@ -20,6 +20,7 @@ import {
 } from '../../core/models/models';
 import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
+import { AlerteAge, alerteAge, fourchetteLisible } from './alerte-age';
 
 /** Les montants arrivent de l'API en chaînes décimales (« 30000.00 ») ou vides. */
 function nombre(valeur: unknown): number | null {
@@ -56,6 +57,8 @@ export class EleveFormComponent implements OnInit {
   erreur = signal<string | null>(null);
   /** Renseignée après l'enregistrement : l'écran affiche alors la facture. */
   facture = signal<FactureEleve | null>(null);
+  /** Âge hors de la fourchette du niveau : l'écran propose de confirmer. */
+  alerte = signal<AlerteAge | null>(null);
 
   niveaux = signal<Niveau[]>([]);
   classes = signal<Classe[]>([]);
@@ -74,6 +77,7 @@ export class EleveFormComponent implements OnInit {
     date_naissance: [''],
     sexe: ['F', Validators.required],
     adresse: [''],
+    numero_registre: [''],
 
     // Section 2 — Scolarité : le niveau est obligatoire, il fixe les tarifs.
     id_niveau: ['', Validators.required],
@@ -86,9 +90,12 @@ export class EleveFormComponent implements OnInit {
     parent_lien: ['mere'],
     parent_telephone: [''],
     parent_email: [''],
+    parent_adresse: [''],
   });
 
   niveauChoisi = computed(() => this.niveaux().find((n) => String(n.id) === this.idNiveau()) ?? null);
+  /** « de 12 à 14 ans » pour le niveau choisi, affiché sous la date de naissance. */
+  ageAdmis = computed(() => fourchetteLisible(this.niveauChoisi()));
 
   /**
    * Les frais de l'école au montant du niveau choisi. Le bloc « Frais » —
@@ -184,13 +191,15 @@ export class EleveFormComponent implements OnInit {
     this.fraisCoches.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
   }
 
-  submit(): void {
+  /** `derogation` : renvoi après l'avertissement d'âge, confirmé par la personne. */
+  submit(derogation = false): void {
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;
     }
     this.enregistrement.set(true);
     this.erreur.set(null);
+    this.alerte.set(null);
 
     const v = this.form.getRawValue();
     this.eleveService
@@ -201,6 +210,7 @@ export class EleveFormComponent implements OnInit {
         date_naissance: v.date_naissance || undefined,
         sexe: v.sexe as any,
         adresse: v.adresse || undefined,
+        numero_registre: v.numero_registre || undefined,
         id_classe: +v.id_classe!,
         id_annee_scolaire: +v.id_annee_scolaire!,
         date_inscription: v.date_inscription!,
@@ -208,6 +218,8 @@ export class EleveFormComponent implements OnInit {
         parent_telephone: v.parent_telephone || undefined,
         parent_email: v.parent_email || undefined,
         parent_lien: v.parent_lien as any,
+        parent_adresse: v.parent_adresse || undefined,
+        derogation_age: derogation,
         frais_optionnels: this.fraisCoches(),
       })
       .subscribe({
@@ -223,6 +235,15 @@ export class EleveFormComponent implements OnInit {
         },
         error: (err) => {
           this.enregistrement.set(false);
+          const alerte = alerteAge(err);
+          if (alerte) {
+            this.alerte.set(alerte);
+            if (alerte.code === 'date_naissance_manquante') {
+              this.form.controls.date_naissance.setErrors({ requise: true });
+              this.form.controls.date_naissance.markAsTouched();
+            }
+            return;
+          }
           this.erreur.set(this.message(err));
         },
       });
@@ -241,6 +262,7 @@ export class EleveFormComponent implements OnInit {
     const annee = this.form.controls.id_annee_scolaire.value;
     this.facture.set(null);
     this.erreur.set(null);
+    this.alerte.set(null);
     this.fraisCoches.set([]);
     this.form.reset({
       sexe: 'F',

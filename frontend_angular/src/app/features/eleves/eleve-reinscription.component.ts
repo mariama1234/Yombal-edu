@@ -8,6 +8,7 @@ import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frai
 import { EleveService } from './eleve.service';
 import { ToastService } from '../../core/services/toast.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
+import { AlerteAge, alerteAge } from './alerte-age';
 
 /**
  * Réinscription d'un élève, en une page pré-remplie.
@@ -45,6 +46,8 @@ export class EleveReinscriptionComponent implements OnInit {
   chargement = signal(true);
   occupe = signal(false);
   erreur = signal<string | null>(null);
+  /** Âge hors de la fourchette du niveau visé : l'écran propose de confirmer. */
+  alerte = signal<AlerteAge | null>(null);
   resultat = signal<string | null>(null);
   /** Frais au choix retenus pour la nouvelle année. */
   fraisCoches = signal<number[]>([]);
@@ -114,17 +117,20 @@ export class EleveReinscriptionComponent implements OnInit {
     });
   }
 
-  valider(): void {
+  /** `derogation` : renvoi après l'avertissement d'âge, confirmé par la personne. */
+  valider(derogation = false): void {
     if (this.form.invalid) return this.form.markAllAsTouched();
     const v = this.form.getRawValue();
     this.occupe.set(true);
     this.erreur.set(null);
+    this.alerte.set(null);
 
     this.eleves
       .reinscrire(this.idEleve, {
         id_classe: v.id_classe,
         date_inscription: v.date_inscription || null,
         frais_optionnels: this.fraisCoches(),
+        derogation_age: derogation,
       })
       .subscribe({
         next: (r) => {
@@ -138,7 +144,9 @@ export class EleveReinscriptionComponent implements OnInit {
           this.occupe.set(false);
         },
         error: (e) => {
-          this.erreur.set(this.messageErreur(e));
+          const alerte = alerteAge(e);
+          if (alerte) this.alerte.set(alerte);
+          else this.erreur.set(this.messageErreur(e));
           this.occupe.set(false);
         },
       });

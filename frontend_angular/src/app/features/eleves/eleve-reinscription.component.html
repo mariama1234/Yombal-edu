@@ -38,6 +38,24 @@
   } @else {
 
     @if (erreur()) { <div class="form-error" style="max-width:860px;">{{ erreur() }}</div> }
+    @if (alerte(); as a) {
+  <div class="form-error" style="max-width:860px;">
+    {{ a.message }}
+    @if (a.confirmable) {
+      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="btn-primary" [disabled]="occupe()" (click)="valider(true)">
+          Réinscrire quand même (dérogation notée dans l'historique)
+        </button>
+        <button type="button" class="btn-ghost" (click)="alerte.set(null)">Annuler</button>
+      </div>
+    }
+  </div>
+}
+    @if (alerte()?.code === 'date_naissance_manquante') {
+      <p class="hint" style="max-width:860px;">
+        <a class="panel-link" [routerLink]="['/eleves', idEleve, 'dossier']">Compléter la fiche de l'élève →</a>
+      </p>
+    }
 
     @if (c.deja_inscrit) {
       <div class="panel" style="max-width:860px; border-color:var(--orange-500); color:var(--orange-500); font-size:13px;">
@@ -47,7 +65,7 @@
       </div>
     }
 
-    <form [formGroup]="form" (ngSubmit)="valider()" style="max-width:860px;">
+    <form [formGroup]="form" (ngSubmit)="valider(false)" style="max-width:860px;">
 
       <div class="form-section">
         <div class="form-section-title">{{ c.eleve.nom_complet }}</div>

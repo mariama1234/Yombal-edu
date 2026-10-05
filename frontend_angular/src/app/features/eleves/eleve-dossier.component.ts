@@ -69,6 +69,48 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
   voitNotes = computed(() => this.auth.peutLire('notes'));
   /** Créer le compte de connexion de l'élève : gestion des comptes, donc direction. */
   peutCreerLAcces = computed(() => this.auth.peutEcrire('comptes'));
+  peutEcrireSante = computed(() => this.auth.peutEcrire('sante'));
+  /** Le cas social réduit ce que doit la famille : c'est facturer. */
+  peutEcrireFrais = computed(() => this.auth.peutEcrire('frais'));
+
+  /** Formulaires ouverts sur le dossier. */
+  identiteOuverte = signal(false);
+  santeOuverte = signal(false);
+  casSocialOuvert = signal(false);
+
+  formIdentite = this.fb.group({
+    nom: ['', Validators.required],
+    prenom: ['', Validators.required],
+    date_naissance: [''],
+    sexe: [''],
+    adresse: [''],
+    numero_registre: [''],
+  });
+
+  formSante = this.fb.group({
+    groupe_sanguin: [''],
+    allergies: [''],
+    maladies_chroniques: [''],
+    traitements: [''],
+    besoins_particuliers: [''],
+    vaccinations_a_jour: ['' as '' | 'oui' | 'non'],
+    medecin_nom: [''],
+    medecin_telephone: [''],
+    contact_urgence_nom: [''],
+    contact_urgence_telephone: [''],
+    remarques: [''],
+  });
+
+  formCasSocial = this.fb.group({
+    taux: [null as number | null, [Validators.required, Validators.min(1), Validators.max(100)]],
+    motif: ['', [Validators.required, Validators.minLength(3)]],
+  });
+
+  /** Une fiche sanitaire dont au moins une rubrique est renseignée. */
+  santeRenseignee = computed(() => {
+    const s = this.dossier()?.sante;
+    return !!s && Object.entries(s).some(([cle, v]) => !['date_maj', 'maj_par'].includes(cle) && v !== null && v !== '');
+  });
 
   /** Fenêtre « Créer son accès » ouverte. */
   accesOuvert = signal(false);
@@ -246,6 +288,103 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.libererPhoto();
+  }
+
+  // ---- Identité --------------------------------------------------------
+  ouvrirIdentite(): void {
+    const e = this.dossier()?.eleve;
+    if (!e) return;
+    this.formIdentite.reset({
+      nom: e.nom, prenom: e.prenom, date_naissance: e.date_naissance ?? '',
+      // Le dossier donne le libellé du sexe ; le formulaire, le code.
+      sexe: e.sexe === 'Masculin' ? 'M' : e.sexe === 'Féminin' ? 'F' : '',
+      adresse: e.adresse ?? '', numero_registre: e.numero_registre ?? '',
+    });
+    this.identiteOuverte.set(true);
+  }
+
+  enregistrerIdentite(): void {
+    if (this.formIdentite.invalid) return this.formIdentite.markAllAsTouched();
+    const v = this.formIdentite.getRawValue();
+    this.enregistrer(
+      this.scolarite.modifierEleve(this.idEleve, {
+        nom: v.nom, prenom: v.prenom, date_naissance: v.date_naissance || null,
+        sexe: v.sexe || null, adresse: v.adresse || null, numero_registre: v.numero_registre || null,
+      }),
+      'Identité de l’élève mise à jour.',
+      () => this.identiteOuverte.set(false),
+    );
+  }
+
+  // ---- Santé -----------------------------------------------------------
+  ouvrirSante(): void {
+    const s = this.dossier()?.sante;
+    this.formSante.reset({
+      groupe_sanguin: s?.groupe_sanguin ?? '',
+      allergies: s?.allergies ?? '',
+      maladies_chroniques: s?.maladies_chroniques ?? '',
+      traitements: s?.traitements ?? '',
+      besoins_particuliers: s?.besoins_particuliers ?? '',
+      vaccinations_a_jour: s?.vaccinations_a_jour === true ? 'oui' : s?.vaccinations_a_jour === false ? 'non' : '',
+      medecin_nom: s?.medecin_nom ?? '',
+      medecin_telephone: s?.medecin_telephone ?? '',
+      contact_urgence_nom: s?.contact_urgence_nom ?? '',
+      contact_urgence_telephone: s?.contact_urgence_telephone ?? '',
+      remarques: s?.remarques ?? '',
+    });
+    this.santeOuverte.set(true);
+  }
+
+  enregistrerSante(): void {
+    const v = this.formSante.getRawValue();
+    const corps: Record<string, unknown> = {};
+    for (const [cle, valeur] of Object.entries(v)) corps[cle] = valeur === '' ? null : valeur;
+    corps['vaccinations_a_jour'] = v.vaccinations_a_jour === '' ? null : v.vaccinations_a_jour === 'oui';
+    this.enregistrer(
+      this.scolarite.enregistrerSante(this.idEleve, corps),
+      'Fiche sanitaire enregistrée.',
+      () => this.santeOuverte.set(false),
+    );
+  }
+
+  // ---- Cas social ------------------------------------------------------
+  ouvrirCasSocial(): void {
+    const c = this.dossier()?.cas_social;
+    this.formCasSocial.reset({ taux: c?.actif ? Number(c.taux) : null, motif: c?.motif ?? '' });
+    this.casSocialOuvert.set(true);
+  }
+
+  enregistrerCasSocial(actif: boolean): void {
+    if (actif && this.formCasSocial.invalid) return this.formCasSocial.markAllAsTouched();
+    const v = this.formCasSocial.getRawValue();
+    this.enregistrer(
+      this.scolarite.definirCasSocial(this.idEleve, actif
+        ? { cas_social: true, taux_reduction_sociale: v.taux, motif_cas_social: v.motif }
+        : { cas_social: false }),
+      actif ? 'Cas social enregistré : la réduction s’applique aux frais non soldés.'
+            : 'Statut de cas social retiré.',
+      () => this.casSocialOuvert.set(false),
+    );
+  }
+
+  /** Enregistre, recharge le dossier et referme le formulaire. */
+  private enregistrer(appel: ReturnType<ScolariteService['modifierEleve']>, succes: string,
+                      apres: () => void): void {
+    this.occupe.set(true);
+    this.erreur.set(null);
+    appel.subscribe({
+      next: () => {
+        this.occupe.set(false);
+        apres();
+        this.toast.succes(succes);
+        this.charger();
+      },
+      error: (e) => {
+        this.erreur.set(this.messageErreur(e));
+        this.occupe.set(false);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      },
+    });
   }
 
   ouvrir(mouvement: Mouvement): void {

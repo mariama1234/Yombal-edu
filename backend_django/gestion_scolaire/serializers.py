@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
-from . import finances, justificatifs, models
+from . import finances, justificatifs, models, scolarite
 from .permissions import ROLES_DIRECTION, peut_lire
 
 Utilisateur = get_user_model()
@@ -349,6 +349,22 @@ class NiveauSerializer(serializers.ModelSerializer):
     def get_tarifs(self, obj) -> dict:
         return {str(t.id_type_frais_id): finances.montant_json(t.montant) for t in obj.tarifs.all()}
 
+    def validate(self, attrs):
+        age_min = attrs.get("age_min", getattr(self.instance, "age_min", None))
+        age_max = attrs.get("age_max", getattr(self.instance, "age_max", None))
+        if age_min is not None and age_max is not None and age_min > age_max:
+            raise serializers.ValidationError(
+                {"age_max": "L'âge maximal doit être supérieur ou égal à l'âge minimal."})
+        return attrs
+
+    def create(self, validated_data):
+        """Un niveau connu de la grille naît avec sa fourchette d'âge, modifiable ensuite."""
+        if validated_data.get("age_min") is None and validated_data.get("age_max") is None:
+            fourchette = scolarite.fourchette_par_defaut(validated_data.get("libelle"))
+            if fourchette:
+                validated_data["age_min"], validated_data["age_max"] = fourchette
+        return super().create(validated_data)
+
 
 class ClasseSerializer(serializers.ModelSerializer):
     niveau_libelle = serializers.CharField(source="id_niveau.libelle", read_only=True, allow_null=True)
@@ -481,7 +497,26 @@ class EleveSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
     class Meta:
         model = models.Eleve
         fields = "__all__"
-        read_only_fields = ["id_ecole"]
+        # Le cas social touche à ce que doit la famille : il passe par
+        # l'action dédiée (droit d'écrire les frais), pas par la fiche.
+        read_only_fields = ["id_ecole", "cas_social", "taux_reduction_sociale", "motif_cas_social"]
+
+    def validate_numero_registre(self, valeur):
+        return (valeur or "").strip() or None
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        requete = self.context.get("request")
+        numero = attrs.get("numero_registre")
+        if numero and requete is not None:
+            doublons = models.Eleve.objects.filter(id_ecole_id=requete.user.id_ecole_id,
+                                                   numero_registre=numero)
+            if self.instance is not None:
+                doublons = doublons.exclude(pk=self.instance.pk)
+            if doublons.exists():
+                raise serializers.ValidationError(
+                    {"numero_registre": "Un élève porte déjà ce numéro de registre dans votre école."})
+        return attrs
 
     def get_nom_complet(self, obj):
         return f"{obj.prenom} {obj.nom}".strip()
@@ -535,6 +570,8 @@ class EleveInscriptionSerializer(serializers.Serializer):
     sexe = serializers.ChoiceField(choices=models.Eleve.Sexe.choices, required=False, allow_null=True)
     adresse = serializers.CharField(max_length=255, required=False, allow_blank=True)
     photo_url = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    numero_registre = serializers.CharField(max_length=50, required=False, allow_blank=True,
+                                            allow_null=True)
 
     # Section "Scolarité"
     id_classe = serializers.PrimaryKeyRelatedField(queryset=models.Classe.objects.all())
@@ -546,6 +583,11 @@ class EleveInscriptionSerializer(serializers.Serializer):
     parent_telephone = serializers.CharField(max_length=30, required=False, allow_blank=True)
     parent_email = serializers.EmailField(required=False, allow_blank=True)
     parent_lien = serializers.ChoiceField(choices=models.EleveParent.LienParente.choices, required=False)
+    parent_adresse = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+    # Âge hors de la fourchette du niveau : la personne a vu l'avertissement
+    # et confirme. Sans effet quand l'école bloque.
+    derogation_age = serializers.BooleanField(required=False, default=False)
 
     # Section "Frais" : inscription et mensualités sont émises d'office ; ces
     # types-là s'y ajoutent (transport, demi-pension, fournitures…).
@@ -574,6 +616,17 @@ class EleveInscriptionSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"frais_optionnels": "Ce type de frais n'appartient pas à votre école."}
             )
+
+        attrs["numero_registre"] = (attrs.get("numero_registre") or "").strip() or None
+        if (attrs["numero_registre"] and models.Eleve.objects
+                .filter(id_ecole=ecole, numero_registre=attrs["numero_registre"]).exists()):
+            raise serializers.ValidationError(
+                {"numero_registre": "Un élève porte déjà ce numéro de registre dans votre école."})
+
+        # `ErreurAge` traverse `is_valid()` et devient une réponse 400.
+        attrs["_derogation_age"] = scolarite.exiger_age_conforme(
+            ecole, classe, attrs.get("date_naissance"), attrs.get("prenom", ""),
+            derogation=attrs.get("derogation_age", False))
         return attrs
 
     @transaction.atomic
@@ -591,6 +644,7 @@ class EleveInscriptionSerializer(serializers.Serializer):
             sexe=validated_data.get("sexe"),
             adresse=validated_data.get("adresse", ""),
             photo_url=validated_data.get("photo_url", ""),
+            numero_registre=validated_data.get("numero_registre"),
             date_premiere_inscription=validated_data["date_inscription"],
         )
 
@@ -600,6 +654,11 @@ class EleveInscriptionSerializer(serializers.Serializer):
             id_annee_scolaire=validated_data["id_annee_scolaire"],
             date_inscription=validated_data["date_inscription"],
         )
+        if validated_data.get("_derogation_age"):
+            requete = self.context.get("request")
+            scolarite.tracer_derogation_age(
+                eleve, validated_data["id_classe"], validated_data["date_inscription"],
+                validated_data["_derogation_age"], getattr(requete, "user", None))
 
         # C'est cette liste que la famille règle ensuite à la caisse.
         finances.emettre_frais_inscription(
@@ -615,6 +674,7 @@ class EleveInscriptionSerializer(serializers.Serializer):
                 prenom=nom_complet[0] if len(nom_complet) > 1 else "",
                 telephone=validated_data.get("parent_telephone", ""),
                 email=validated_data.get("parent_email", ""),
+                adresse=validated_data.get("parent_adresse") or None,
             )
             models.EleveParent.objects.create(
                 id_eleve=eleve,
@@ -630,9 +690,32 @@ class EleveInscriptionSerializer(serializers.Serializer):
 
 
 class InscriptionSerializer(serializers.ModelSerializer):
+    derogation_age = serializers.BooleanField(write_only=True, required=False, default=False)
+
     class Meta:
         model = models.Inscription
         fields = "__all__"
+
+    def validate(self, attrs):
+        """Même contrôle d'âge qu'à l'inscription par le formulaire, à la création."""
+        attrs = super().validate(attrs)
+        derogation = attrs.pop("derogation_age", False)
+        if self.instance is None and attrs.get("id_classe") and attrs.get("id_eleve"):
+            eleve, classe = attrs["id_eleve"], attrs["id_classe"]
+            attrs["_derogation_age"] = scolarite.exiger_age_conforme(
+                classe.id_ecole, classe, eleve.date_naissance, eleve.prenom,
+                derogation=derogation)
+        return attrs
+
+    def create(self, validated_data):
+        message = validated_data.pop("_derogation_age", None)
+        inscription = super().create(validated_data)
+        if message:
+            requete = self.context.get("request")
+            scolarite.tracer_derogation_age(inscription.id_eleve, inscription.id_classe,
+                                            inscription.date_inscription, message,
+                                            getattr(requete, "user", None))
+        return inscription
 
 
 # ---------- Mouvements de l'élève (changement de classe, radiation,
@@ -704,6 +787,7 @@ class ReinscriptionEleveSerializer(serializers.Serializer):
     # reconduits ; liste vide : aucun.
     frais_optionnels = serializers.PrimaryKeyRelatedField(
         queryset=models.TypeFrais.objects.all(), many=True, required=False)
+    derogation_age = serializers.BooleanField(required=False, default=False)
 
 
 class ReinscriptionSerializer(serializers.Serializer):
@@ -723,6 +807,29 @@ class ReinscriptionSerializer(serializers.Serializer):
     eleves = serializers.ListField(child=serializers.IntegerField(), required=False,
                                    allow_null=True)
     valider = serializers.BooleanField(default=False)
+    derogation_age = serializers.BooleanField(required=False, default=False)
+
+
+class CasSocialSerializer(serializers.Serializer):
+    """Entrée de POST /api/eleves/{id}/cas-social/."""
+    cas_social = serializers.BooleanField()
+    taux_reduction_sociale = serializers.DecimalField(max_digits=5, decimal_places=2,
+                                                      required=False, allow_null=True)
+    motif_cas_social = serializers.CharField(max_length=255, required=False, allow_blank=True,
+                                             allow_null=True)
+
+
+class FicheSanitaireSerializer(serializers.ModelSerializer):
+    maj_par = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.FicheSanitaire
+        exclude = ["id", "id_eleve"]
+        read_only_fields = ["date_maj", "id_utilisateur_maj"]
+
+    def get_maj_par(self, obj) -> str | None:
+        u = obj.id_utilisateur_maj
+        return f"{u.prenom} {u.nom}".strip() if u else None
 
 
 # ---------- Module pédagogique ----------

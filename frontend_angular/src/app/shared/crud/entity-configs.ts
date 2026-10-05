@@ -60,12 +60,23 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     description:
       'Les niveaux d’enseignement de l’école — CI, CP, CE1, 6ème… Une classe se '
       + 'rattache à un niveau, qui sert aussi à filtrer les listes.',
-    columns: [{ key: 'libelle', label: 'Niveau' }],
+    columns: [
+      { key: 'libelle', label: 'Niveau' },
+      { key: 'age_min', label: 'Âge min.', type: 'number' },
+      { key: 'age_max', label: 'Âge max.', type: 'number' },
+    ],
     fields: [
       {
         key: 'libelle', label: 'Libellé du niveau', type: 'text', required: true, placeholder: '6ème',
         aide: 'Les montants des frais pour ce niveau se règlent dans Finances → Tarifs par niveau.',
       },
+      {
+        key: 'age_min', label: 'Âge minimal (ans)', type: 'number',
+        aide: 'Âge de l’élève à la date de référence de l’année (31/12 par défaut, '
+          + 'réglable dans Paramètres). Vide : pas de limite. Un niveau connu (CI, 6ème…) '
+          + 'est prérempli à sa création.',
+      },
+      { key: 'age_max', label: 'Âge maximal (ans)', type: 'number' },
     ],
   },
 
@@ -139,6 +150,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'profession', label: 'Profession', type: 'text' },
       { key: 'telephone', label: 'Téléphone', type: 'tel', required: true },
       { key: 'email', label: 'E-mail', type: 'email' },
+      { key: 'adresse', label: 'Adresse', type: 'text', span2: true, placeholder: 'Quartier, rue, ville' },
     ],
   },
 

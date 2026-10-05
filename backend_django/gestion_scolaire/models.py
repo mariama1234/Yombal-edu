@@ -199,12 +199,26 @@ class Eleve(models.Model):
     photo_url = models.CharField(max_length=255, blank=True, null=True)
     date_premiere_inscription = models.DateField(blank=True, null=True)
     statut = models.CharField(max_length=20, choices=Statut.choices, default=Statut.ACTIF)
+    # Numéro du registre matricule tenu à la main par l'école, distinct du
+    # matricule que le logiciel attribue. Facultatif ; vide, il vaut NULL pour
+    # que la contrainte d'unicité laisse passer tous les élèves non numérotés.
+    numero_registre = models.CharField(max_length=50, blank=True, null=True)
+    # Cas social : la réduction s'applique d'office aux droits d'inscription et
+    # aux mensualités, sous forme de remise (voir `finances.remise_sociale`).
+    # Elle ne se modifie que par l'action dédiée, réservée à qui écrit les frais.
+    cas_social = models.BooleanField(default=False)
+    taux_reduction_sociale = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        validators=[MinValueValidator(Decimal("0"))])
+    motif_cas_social = models.CharField(max_length=255, blank=True, null=True)
 
     class Meta:
         db_table = "eleve"
         ordering = ["nom", "prenom"]
         constraints = [
-            models.UniqueConstraint(fields=["id_ecole", "matricule"], name="uq_eleve_matricule_ecole")
+            models.UniqueConstraint(fields=["id_ecole", "matricule"], name="uq_eleve_matricule_ecole"),
+            models.UniqueConstraint(fields=["id_ecole", "numero_registre"],
+                                    name="uq_eleve_registre_ecole"),
         ]
 
     def __str__(self):
@@ -220,6 +234,7 @@ class ParentTuteur(models.Model):
     profession = models.CharField(max_length=100, blank=True, null=True)
     telephone = models.CharField(max_length=30, blank=True, null=True)
     email = models.EmailField(max_length=150, blank=True, null=True)
+    adresse = models.CharField(max_length=255, blank=True, null=True)
 
     class Meta:
         db_table = "parent_tuteur"
@@ -260,11 +275,56 @@ class DossierAdministratif(models.Model):
         ordering = ["-date_ajout"]
 
 
+class FicheSanitaire(models.Model):
+    """
+    Informations de santé de l'élève, une fiche par élève.
+
+    Table à part plutôt que colonnes de `Eleve` : la fiche élève se lit par
+    tout le personnel (caissier, enseignants), la fiche sanitaire par la
+    direction, la vie scolaire et la famille seulement (module « sante »).
+    Séparée, elle ne peut pas fuiter par un serializer qui sort `__all__`.
+    """
+
+    class GroupeSanguin(models.TextChoices):
+        A_POS = "A+", "A+"
+        A_NEG = "A-", "A-"
+        B_POS = "B+", "B+"
+        B_NEG = "B-", "B-"
+        AB_POS = "AB+", "AB+"
+        AB_NEG = "AB-", "AB-"
+        O_POS = "O+", "O+"
+        O_NEG = "O-", "O-"
+
+    id_eleve = models.OneToOneField(Eleve, on_delete=models.CASCADE, related_name="fiche_sanitaire",
+                                    db_column="id_eleve")
+    groupe_sanguin = models.CharField(max_length=3, choices=GroupeSanguin.choices, blank=True, null=True)
+    allergies = models.TextField(blank=True, null=True)
+    maladies_chroniques = models.TextField(blank=True, null=True)
+    traitements = models.TextField(blank=True, null=True)
+    besoins_particuliers = models.TextField(blank=True, null=True)
+    vaccinations_a_jour = models.BooleanField(blank=True, null=True)
+    medecin_nom = models.CharField(max_length=150, blank=True, null=True)
+    medecin_telephone = models.CharField(max_length=30, blank=True, null=True)
+    contact_urgence_nom = models.CharField(max_length=150, blank=True, null=True)
+    contact_urgence_telephone = models.CharField(max_length=30, blank=True, null=True)
+    remarques = models.TextField(blank=True, null=True)
+    date_maj = models.DateTimeField(auto_now=True)
+    id_utilisateur_maj = models.ForeignKey(Utilisateur, on_delete=models.SET_NULL, null=True, blank=True,
+                                           related_name="+", db_column="id_utilisateur_maj")
+
+    class Meta:
+        db_table = "fiche_sanitaire"
+
+
 class Niveau(models.Model):
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="niveaux", db_column="id_ecole")
     libelle = models.CharField(max_length=50)
     # Les montants des frais pour ce niveau vivent dans la grille des tarifs
     # (`TarifNiveau`), un par type de frais.
+    # Fourchette d'âge admise, en années révolues à la date de référence de
+    # l'année scolaire. Vide d'un côté : pas de limite de ce côté-là.
+    age_min = models.PositiveSmallIntegerField(blank=True, null=True)
+    age_max = models.PositiveSmallIntegerField(blank=True, null=True)
 
     class Meta:
         db_table = "niveau"
@@ -412,6 +472,8 @@ class HistoriqueScolaire(models.Model):
         CHANGEMENT_CLASSE = "changement_classe", "Changement de classe"
         RADIATION = "radiation", "Radiation"
         TRANSFERT = "transfert", "Transfert"
+        # Inscription confirmée malgré un âge hors de la fourchette du niveau.
+        DEROGATION_AGE = "derogation_age", "Dérogation d'âge"
 
     id_eleve = models.ForeignKey(Eleve, on_delete=models.CASCADE, related_name="historique", db_column="id_eleve")
     type_evenement = models.CharField(max_length=25, choices=TypeEvenement.choices)

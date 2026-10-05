@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { DossierEleve, ReleveNotes, ResultatReinscription } from '../../core/models/models';
+import { DossierEleve, FicheSante, ReleveNotes, ResultatReinscription } from '../../core/models/models';
 
 type Filtres = Record<string, string | number | boolean | null | undefined>;
 
@@ -31,6 +31,21 @@ export class ScolariteService {
   // ---- Dossier ---------------------------------------------------------
   dossier(idEleve: number | string): Observable<DossierEleve> {
     return this.http.get<DossierEleve>(`${this.base}/eleves/${idEleve}/dossier/`);
+  }
+
+  /** Identité de l'élève : nom, date de naissance, n° de registre… */
+  modifierEleve(idEleve: number | string, corps: Record<string, unknown>): Observable<unknown> {
+    return this.http.patch(`${this.base}/eleves/${idEleve}/`, corps);
+  }
+
+  enregistrerSante(idEleve: number | string, corps: Partial<FicheSante>): Observable<FicheSante> {
+    return this.http.put<FicheSante>(`${this.base}/eleves/${idEleve}/sante/`, corps);
+  }
+
+  /** Pose ou retire le statut de cas social ; la remise suit sur les frais non soldés. */
+  definirCasSocial(idEleve: number | string, corps: Record<string, unknown>):
+      Observable<{ frais_modifies: number }> {
+    return this.http.post<{ frais_modifies: number }>(`${this.base}/eleves/${idEleve}/cas-social/`, corps);
   }
 
   releve(idEleve: number | string, idPeriode: number): Observable<ReleveNotes> {
