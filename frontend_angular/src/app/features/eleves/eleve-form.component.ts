@@ -14,6 +14,7 @@ import {
   AnneeScolaire,
   Classe,
   FactureEleve,
+  FicheSante,
   Niveau,
   Paginated,
   TypeFrais,
@@ -21,6 +22,7 @@ import {
 import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 import { AlerteAge, alerteAge, fourchetteLisible } from './alerte-age';
+import { AlerteAgeDialogComponent } from './alerte-age-dialog.component';
 
 /** Les montants arrivent de l'API en chaînes décimales (« 30000.00 ») ou vides. */
 function nombre(valeur: unknown): number | null {
@@ -42,7 +44,8 @@ function nombre(valeur: unknown): number | null {
 @Component({
   selector: 'app-eleve-form',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent, SiAccesDirective],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent, SiAccesDirective,
+            AlerteAgeDialogComponent],
   templateUrl: './eleve-form.component.html',
 })
 export class EleveFormComponent implements OnInit {
@@ -74,7 +77,8 @@ export class EleveFormComponent implements OnInit {
     // Section 1 — Informations de l'élève
     nom: ['', Validators.required],
     prenom: ['', Validators.required],
-    date_naissance: [''],
+    // Exigée : l'âge se contrôle par rapport au niveau.
+    date_naissance: ['', Validators.required],
     sexe: ['F', Validators.required],
     adresse: [''],
     numero_registre: [''],
@@ -85,13 +89,31 @@ export class EleveFormComponent implements OnInit {
     id_annee_scolaire: ['', Validators.required],
     date_inscription: [new Date().toISOString().slice(0, 10), Validators.required],
 
-    // Section 3 — Parent / tuteur
-    parent_nom_complet: [''],
+    // Section 2 — Parent / tuteur : on ne passe pas à la caisse sans savoir
+    // qui joindre.
+    parent_nom_complet: ['', Validators.required],
     parent_lien: ['mere'],
-    parent_telephone: [''],
+    parent_telephone: ['', Validators.required],
     parent_email: [''],
     parent_adresse: [''],
+    parent_profession: [''],
+
+    // Section 3 — Santé : facultative rubrique par rubrique.
+    sante_groupe_sanguin: [''],
+    sante_allergies: [''],
+    sante_maladies_chroniques: [''],
+    sante_traitements: [''],
+    sante_besoins_particuliers: [''],
+    sante_vaccinations_a_jour: ['' as '' | 'oui' | 'non'],
+    sante_medecin_nom: [''],
+    sante_medecin_telephone: [''],
+    sante_contact_urgence_nom: [''],
+    sante_contact_urgence_telephone: [''],
+    sante_remarques: [''],
   });
+
+  /** Remplir la fiche sanitaire relève du module « sante ». */
+  peutSaisirSante = computed(() => this.auth.peutEcrire('sante'));
 
   niveauChoisi = computed(() => this.niveaux().find((n) => String(n.id) === this.idNiveau()) ?? null);
   /** « de 12 à 14 ans » pour le niveau choisi, affiché sous la date de naissance. */
@@ -195,6 +217,9 @@ export class EleveFormComponent implements OnInit {
   submit(derogation = false): void {
     if (this.form.invalid) {
       this.form.markAllAsTouched();
+      this.erreur.set('Complétez les champs obligatoires : date de naissance, niveau, classe, '
+        + 'nom et téléphone du parent.');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     this.enregistrement.set(true);
@@ -219,6 +244,8 @@ export class EleveFormComponent implements OnInit {
         parent_email: v.parent_email || undefined,
         parent_lien: v.parent_lien as any,
         parent_adresse: v.parent_adresse || undefined,
+        parent_profession: v.parent_profession || undefined,
+        sante: this.peutSaisirSante() ? this.ficheSante() : undefined,
         derogation_age: derogation,
         frais_optionnels: this.fraisCoches(),
       })
@@ -249,6 +276,28 @@ export class EleveFormComponent implements OnInit {
       });
   }
 
+  /**
+   * « Annuler l'inscription » dans la pop-up d'âge : rien n'a été enregistré.
+   * La saisie reste en place, pour choisir une classe d'un autre niveau sans
+   * tout retaper.
+   */
+  annulerInscription(): void {
+    this.alerte.set(null);
+    this.toast.info('Inscription annulée', 'Rien n’a été enregistré. Vous pouvez choisir une autre classe.');
+  }
+
+  /** Les rubriques de santé saisies, sans préfixe ; les vides ne partent pas. */
+  private ficheSante(): Partial<FicheSante> {
+    const v = this.form.getRawValue() as Record<string, unknown>;
+    const fiche: Record<string, unknown> = {};
+    for (const [cle, valeur] of Object.entries(v)) {
+      if (!cle.startsWith('sante_') || valeur === '' || valeur === null) continue;
+      fiche[cle.slice('sante_'.length)] = valeur;
+    }
+    if ('vaccinations_a_jour' in fiche) fiche['vaccinations_a_jour'] = fiche['vaccinations_a_jour'] === 'oui';
+    return fiche as Partial<FicheSante>;
+  }
+
   telechargerFacture(): void {
     const f = this.facture();
     if (!f) return;
@@ -267,6 +316,7 @@ export class EleveFormComponent implements OnInit {
     this.form.reset({
       sexe: 'F',
       parent_lien: 'mere',
+      sante_vaccinations_a_jour: '',
       id_annee_scolaire: annee,
       date_inscription: new Date().toISOString().slice(0, 10),
     });

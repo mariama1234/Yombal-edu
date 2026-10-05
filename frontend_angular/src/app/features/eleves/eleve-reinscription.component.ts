@@ -9,6 +9,7 @@ import { EleveService } from './eleve.service';
 import { ToastService } from '../../core/services/toast.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 import { AlerteAge, alerteAge } from './alerte-age';
+import { AlerteAgeDialogComponent } from './alerte-age-dialog.component';
 
 /**
  * Réinscription d'un élève, en une page pré-remplie.
@@ -30,7 +31,7 @@ import { AlerteAge, alerteAge } from './alerte-age';
 @Component({
   selector: 'app-eleve-reinscription',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent, SiAccesDirective],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, ChoixFraisComponent, SiAccesDirective, AlerteAgeDialogComponent],
   templateUrl: './eleve-reinscription.component.html',
 })
 export class EleveReinscriptionComponent implements OnInit {
@@ -48,6 +49,8 @@ export class EleveReinscriptionComponent implements OnInit {
   erreur = signal<string | null>(null);
   /** Âge hors de la fourchette du niveau visé : l'écran propose de confirmer. */
   alerte = signal<AlerteAge | null>(null);
+  /** Pop-up « date manquante » ; une fois fermée, le lien vers le dossier reste affiché. */
+  alerteDateOuverte = signal(true);
   resultat = signal<string | null>(null);
   /** Frais au choix retenus pour la nouvelle année. */
   fraisCoches = signal<number[]>([]);
@@ -145,11 +148,19 @@ export class EleveReinscriptionComponent implements OnInit {
         },
         error: (e) => {
           const alerte = alerteAge(e);
-          if (alerte) this.alerte.set(alerte);
-          else this.erreur.set(this.messageErreur(e));
+          if (alerte) {
+            this.alerte.set(alerte);
+            this.alerteDateOuverte.set(true);
+          } else this.erreur.set(this.messageErreur(e));
           this.occupe.set(false);
         },
       });
+  }
+
+  /** « Annuler » dans la pop-up d'âge : rien n'a été enregistré. */
+  annulerInscription(): void {
+    if (this.alerte()?.code !== 'date_naissance_manquante') this.alerte.set(null);
+    else this.alerteDateOuverte.set(false);
   }
 
   basculerFrais(id: number): void {

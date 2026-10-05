@@ -14,6 +14,7 @@ import { ScolariteService } from './scolarite.service';
 import { ToastService } from '../../core/services/toast.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 import { AlerteAge, alerteAge } from './alerte-age';
+import { AlerteAgeDialogComponent } from './alerte-age-dialog.component';
 
 /**
  * Réinscription d'une classe en bloc — le cas d'exception.
@@ -29,7 +30,7 @@ import { AlerteAge, alerteAge } from './alerte-age';
 @Component({
   selector: 'app-reinscription',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, SiAccesDirective],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, SiAccesDirective, AlerteAgeDialogComponent],
   templateUrl: './reinscription.component.html',
 })
 export class ReinscriptionComponent implements OnInit {
@@ -186,6 +187,11 @@ export class ReinscriptionComponent implements OnInit {
 
   toutCocher(): void {
     this.coches.set((this.apercu()?.eleves ?? []).filter((e) => !e.deja_inscrit).map((e) => e.id));
+  }
+
+  /** « Annuler » dans la pop-up d'âge : rien n'a été enregistré, l'aperçu reste. */
+  annulerInscription(): void {
+    this.alerte.set(null);
   }
 
   toutDecocher(): void {

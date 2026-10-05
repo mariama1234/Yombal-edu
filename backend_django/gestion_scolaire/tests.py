@@ -6532,3 +6532,28 @@ class TestCasSocial(BaseDossierFinancier):
         caissier = self._compte("caisse@a.sn", self.ecole, "caissier")
         self.assertEqual(self._poser(client=self._client(caissier.email)).status_code, 403)
         self.assertEqual(self._poser(client=self.client_autre).status_code, 404)
+
+
+class TestSanteALInscription(InscriptionParFormulaire, BaseAPI):
+    """La fiche sanitaire se remplit au formulaire d'inscription, avant la caisse."""
+
+    def test_la_fiche_est_creee_avec_lelement(self):
+        r = self._inscrire(sante={"allergies": "Arachide", "groupe_sanguin": "O+",
+                                  "contact_urgence_telephone": "770000000"},
+                           parent_nom_complet="Awa Ndiaye", parent_profession="Commerçante")
+        self.assertEqual(r.status_code, 201, r.content)
+        fiche = models.FicheSanitaire.objects.get(id_eleve_id=r.data["id"])
+        self.assertEqual((fiche.allergies, fiche.groupe_sanguin), ("Arachide", "O+"))
+        self.assertEqual(fiche.id_utilisateur_maj, self.admin)
+        self.assertEqual(models.ParentTuteur.objects.get(nom="Ndiaye").profession, "Commerçante")
+
+    def test_une_fiche_vide_ne_cree_rien(self):
+        r = self._inscrire(sante={"allergies": "", "remarques": None})
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertFalse(models.FicheSanitaire.objects.exists())
+
+    def test_une_rubrique_invalide_bloque_linscription(self):
+        r = self._inscrire(sante={"groupe_sanguin": "Z+"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sante", r.data)
+        self.assertFalse(models.Eleve.objects.filter(nom="Ndiaye").exists())

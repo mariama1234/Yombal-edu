@@ -7,7 +7,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
 from . import finances, justificatifs, models, scolarite
-from .permissions import ROLES_DIRECTION, peut_lire
+from .permissions import ROLES_DIRECTION, peut_ecrire, peut_lire
 
 Utilisateur = get_user_model()
 
@@ -584,6 +584,12 @@ class EleveInscriptionSerializer(serializers.Serializer):
     parent_email = serializers.EmailField(required=False, allow_blank=True)
     parent_lien = serializers.ChoiceField(choices=models.EleveParent.LienParente.choices, required=False)
     parent_adresse = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    parent_profession = serializers.CharField(max_length=100, required=False, allow_blank=True)
+
+    # Section "Santé" : la fiche sanitaire se remplit à l'inscription, avant le
+    # passage en caisse ; le dossier de l'élève sert ensuite à la compléter.
+    # Mêmes rubriques que PUT /eleves/{id}/sante/.
+    sante = serializers.DictField(required=False, allow_null=True)
 
     # Âge hors de la fourchette du niveau : la personne a vu l'avertissement
     # et confirme. Sans effet quand l'école bloque.
@@ -617,6 +623,8 @@ class EleveInscriptionSerializer(serializers.Serializer):
                 {"frais_optionnels": "Ce type de frais n'appartient pas à votre école."}
             )
 
+        attrs["sante"] = self._valider_sante(attrs.get("sante"))
+
         attrs["numero_registre"] = (attrs.get("numero_registre") or "").strip() or None
         if (attrs["numero_registre"] and models.Eleve.objects
                 .filter(id_ecole=ecole, numero_registre=attrs["numero_registre"]).exists()):
@@ -628,6 +636,26 @@ class EleveInscriptionSerializer(serializers.Serializer):
             ecole, classe, attrs.get("date_naissance"), attrs.get("prenom", ""),
             derogation=attrs.get("derogation_age", False))
         return attrs
+
+    def _valider_sante(self, sante):
+        """
+        Les rubriques renseignées de la fiche, validées comme la fiche elle-même,
+        ou `None` si rien n'a été saisi. Écrire la santé relève du module
+        « sante » : qui inscrit sans y avoir droit ne peut pas la remplir.
+        """
+        if not sante:
+            return None
+        entree = FicheSanitaireSerializer(data=sante)
+        if not entree.is_valid():
+            raise serializers.ValidationError({"sante": entree.errors})
+        donnees = {c: v for c, v in entree.validated_data.items() if v not in (None, "")}
+        if not donnees:
+            return None
+        requete = self.context.get("request")
+        if requete is not None and not peut_ecrire(requete.user, "sante"):
+            raise serializers.ValidationError(
+                {"sante": "Votre profil ne peut pas renseigner la fiche sanitaire."})
+        return donnees
 
     @transaction.atomic
     def create(self, validated_data):
@@ -654,6 +682,11 @@ class EleveInscriptionSerializer(serializers.Serializer):
             id_annee_scolaire=validated_data["id_annee_scolaire"],
             date_inscription=validated_data["date_inscription"],
         )
+        if validated_data.get("sante"):
+            requete = self.context.get("request")
+            models.FicheSanitaire.objects.create(
+                id_eleve=eleve, id_utilisateur_maj=getattr(requete, "user", None),
+                **validated_data["sante"])
         if validated_data.get("_derogation_age"):
             requete = self.context.get("request")
             scolarite.tracer_derogation_age(
@@ -675,6 +708,7 @@ class EleveInscriptionSerializer(serializers.Serializer):
                 telephone=validated_data.get("parent_telephone", ""),
                 email=validated_data.get("parent_email", ""),
                 adresse=validated_data.get("parent_adresse") or None,
+                profession=validated_data.get("parent_profession") or None,
             )
             models.EleveParent.objects.create(
                 id_eleve=eleve,

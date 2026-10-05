@@ -39,17 +39,10 @@
 
     @if (erreur()) { <div class="form-error" style="max-width:860px;">{{ erreur() }}</div> }
     @if (alerte(); as a) {
-  <div class="form-error" style="max-width:860px;">
-    {{ a.message }}
-    @if (a.confirmable) {
-      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
-        <button type="button" class="btn-primary" [disabled]="occupe()" (click)="valider(true)">
-          Réinscrire quand même (dérogation notée dans l'historique)
-        </button>
-        <button type="button" class="btn-ghost" (click)="alerte.set(null)">Annuler</button>
-      </div>
-    }
-  </div>
+  @if (a.code !== 'date_naissance_manquante' || alerteDateOuverte()) {
+  <app-alerte-age-dialog [alerte]="a" [occupe]="occupe()" libelleConfirmer="Le réinscrire quand même"
+                         (confirmer)="valider(true)" (annuler)="annulerInscription()"></app-alerte-age-dialog>
+  }
 }
     @if (alerte()?.code === 'date_naissance_manquante') {
       <p class="hint" style="max-width:860px;">

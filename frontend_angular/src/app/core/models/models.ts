@@ -181,7 +181,10 @@ export interface EleveInscriptionPayload {
   parent_email?: string;
   parent_lien?: 'pere' | 'mere' | 'tuteur' | 'autre';
   parent_adresse?: string;
+  parent_profession?: string;
   numero_registre?: string;
+  /** Fiche sanitaire remplie à l'inscription (rubriques renseignées seulement). */
+  sante?: Partial<FicheSante>;
   /** Âge hors fourchette : la personne a vu l'avertissement et confirme. */
   derogation_age?: boolean;
   /** Types de frais cochés en plus de l'inscription et des mensualités. */

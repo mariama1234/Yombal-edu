@@ -1,7 +1,8 @@
 <div class="page-head">
   <div>
     <h1>Inscrire un élève</h1>
-    <p>Renseigne les informations de l'élève, choisis les frais : la facture est générée à l'enregistrement.</p>
+    <p>Toutes les informations de l'élève, de sa famille et sa fiche sanitaire, puis les frais :
+      la facture est générée à l'enregistrement, avant le passage en caisse.</p>
   </div>
   <a class="btn-ghost" routerLink="/eleves">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -13,19 +14,8 @@
   <div class="form-error" style="max-width:820px;">{{ erreur() }}</div>
 }
 @if (alerte(); as a) {
-  <div class="form-error" style="max-width:820px;">
-    {{ a.message }}
-    @if (a.confirmable) {
-      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
-        <button type="button" class="btn-primary" [disabled]="enregistrement()" (click)="submit(true)">
-          Inscrire quand même (dérogation notée dans l'historique)
-        </button>
-        <button type="button" class="btn-ghost" (click)="alerte.set(null)">Corriger</button>
-      </div>
-    } @else if (a.code === 'age_hors_fourchette') {
-      <div style="margin-top:6px;">L'école n'accepte pas d'inscription hors de la fourchette d'âge : choisissez un autre niveau.</div>
-    }
-  </div>
+  <app-alerte-age-dialog [alerte]="a" [occupe]="enregistrement()"
+                         (confirmer)="submit(true)" (annuler)="annulerInscription()"></app-alerte-age-dialog>
 }
 
 @if (facture(); as f) {
@@ -97,7 +87,7 @@
           <div class="field">
             <label for="date_naissance">Date de naissance</label>
             <input class="input" id="date_naissance" type="date" formControlName="date_naissance">
-            @if (form.controls.date_naissance.hasError('requise')) {
+            @if (form.controls.date_naissance.touched && form.controls.date_naissance.invalid) {
               <span class="hint hint-error">Obligatoire pour contrôler l'âge du niveau choisi.</span>
             } @else if (ageAdmis()) {
               <span class="hint">{{ niveauChoisi()?.libelle }} : {{ ageAdmis() }}.</span>
@@ -127,6 +117,118 @@
           </div>
         </div>
       </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Parent / Tuteur</div>
+        <div class="form-section-sub">Contact principal à joindre pour cet élève.</div>
+
+        <div class="form-grid">
+          <div class="field">
+            <label for="parent_nom_complet">Nom complet</label>
+            <input class="input" id="parent_nom_complet" formControlName="parent_nom_complet" placeholder="Awa Diagne">
+            @if (form.controls.parent_nom_complet.touched && form.controls.parent_nom_complet.invalid) {
+              <span class="hint hint-error">Indiquez le nom du parent ou tuteur.</span>
+            }
+          </div>
+          <div class="field">
+            <label for="parent_lien">Lien de parenté</label>
+            <select class="input" id="parent_lien" formControlName="parent_lien">
+              <option value="mere">Mère</option>
+              <option value="pere">Père</option>
+              <option value="tuteur">Tuteur</option>
+              <option value="autre">Autre</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="parent_telephone">Téléphone</label>
+            <input class="input" id="parent_telephone" formControlName="parent_telephone" placeholder="+221 77 000 00 00">
+            @if (form.controls.parent_telephone.touched && form.controls.parent_telephone.invalid) {
+              <span class="hint hint-error">Un numéro pour joindre la famille.</span>
+            }
+          </div>
+          <div class="field">
+            <label for="parent_email">E-mail <span class="hint">(optionnel)</span></label>
+            <input class="input" id="parent_email" type="email" formControlName="parent_email">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="parent_adresse">Adresse du parent</label>
+            <input class="input" id="parent_adresse" formControlName="parent_adresse" placeholder="Quartier, rue, ville">
+          </div>
+          <div class="field">
+            <label for="parent_profession">Profession <span class="hint">(optionnel)</span></label>
+            <input class="input" id="parent_profession" formControlName="parent_profession">
+          </div>
+        </div>
+      </div>
+
+      @if (peutSaisirSante()) {
+      <div class="form-section">
+        <div class="form-section-title">Santé</div>
+        <div class="form-section-sub">
+          Fiche sanitaire de l'élève. Laissez vide ce qui ne s'applique pas ; elle se complète
+          ensuite depuis le dossier.
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="sante_groupe_sanguin">Groupe sanguin</label>
+            <select class="input" id="sante_groupe_sanguin" formControlName="sante_groupe_sanguin">
+              <option value="">Inconnu</option>
+              @for (g of ['A+','A-','B+','B-','AB+','AB-','O+','O-']; track g) { <option [value]="g">{{ g }}</option> }
+            </select>
+          </div>
+          <div class="field">
+            <label for="sante_vaccinations">Vaccinations à jour</label>
+            <select class="input" id="sante_vaccinations" formControlName="sante_vaccinations_a_jour">
+              <option value="">Non renseigné</option><option value="oui">Oui</option><option value="non">Non</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="sante_allergies">Allergies</label>
+            <textarea class="input" id="sante_allergies" rows="2" formControlName="sante_allergies" placeholder="Arachide, pénicilline…"></textarea>
+          </div>
+          <div class="field">
+            <label for="sante_maladies">Maladies chroniques</label>
+            <textarea class="input" id="sante_maladies" rows="2" formControlName="sante_maladies_chroniques" placeholder="Asthme, drépanocytose…"></textarea>
+          </div>
+          <div class="field">
+            <label for="sante_traitements">Traitements en cours</label>
+            <textarea class="input" id="sante_traitements" rows="2" formControlName="sante_traitements"></textarea>
+          </div>
+          <div class="field">
+            <label for="sante_besoins">Besoins particuliers</label>
+            <textarea class="input" id="sante_besoins" rows="2" formControlName="sante_besoins_particuliers" placeholder="Handicap, régime alimentaire…"></textarea>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="sante_medecin">Médecin traitant</label>
+            <input class="input" id="sante_medecin" formControlName="sante_medecin_nom">
+          </div>
+          <div class="field">
+            <label for="sante_medecin_tel">Téléphone du médecin</label>
+            <input class="input" id="sante_medecin_tel" formControlName="sante_medecin_telephone">
+          </div>
+          <div class="field">
+            <label for="sante_urgence">Contact d'urgence</label>
+            <input class="input" id="sante_urgence" formControlName="sante_contact_urgence_nom" placeholder="Si différent du parent">
+          </div>
+          <div class="field">
+            <label for="sante_urgence_tel">Téléphone d'urgence</label>
+            <input class="input" id="sante_urgence_tel" formControlName="sante_contact_urgence_telephone">
+          </div>
+        </div>
+        <div class="field">
+          <label for="sante_remarques">Remarques</label>
+          <textarea class="input" id="sante_remarques" rows="2" formControlName="sante_remarques"></textarea>
+        </div>
+      </div>
+      }
 
       <div class="form-section">
         <div class="form-section-title">Scolarité</div>
@@ -191,41 +293,6 @@
           [niveau]="niveauChoisi()?.libelle ?? null"
           (basculer)="basculerFrais($event)"
           (toutDecocher)="fraisCoches.set([])"></app-choix-frais>
-      </div>
-
-      <div class="form-section">
-        <div class="form-section-title">Parent / Tuteur</div>
-        <div class="form-section-sub">Contact principal à joindre pour cet élève (optionnel).</div>
-
-        <div class="form-grid">
-          <div class="field">
-            <label for="parent_nom_complet">Nom complet</label>
-            <input class="input" id="parent_nom_complet" formControlName="parent_nom_complet" placeholder="Awa Diagne">
-          </div>
-          <div class="field">
-            <label for="parent_lien">Lien de parenté</label>
-            <select class="input" id="parent_lien" formControlName="parent_lien">
-              <option value="mere">Mère</option>
-              <option value="pere">Père</option>
-              <option value="tuteur">Tuteur</option>
-              <option value="autre">Autre</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-grid">
-          <div class="field">
-            <label for="parent_telephone">Téléphone</label>
-            <input class="input" id="parent_telephone" formControlName="parent_telephone" placeholder="+221 77 000 00 00">
-          </div>
-          <div class="field">
-            <label for="parent_email">E-mail <span class="hint">(optionnel)</span></label>
-            <input class="input" id="parent_email" type="email" formControlName="parent_email">
-          </div>
-        </div>
-        <div class="field">
-          <label for="parent_adresse">Adresse du parent <span class="hint">(optionnel)</span></label>
-          <input class="input" id="parent_adresse" formControlName="parent_adresse" placeholder="Quartier, rue, ville">
-        </div>
       </div>
 
       <div class="form-actions">

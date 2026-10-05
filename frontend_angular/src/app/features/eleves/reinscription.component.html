@@ -48,17 +48,8 @@
 
     @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
 @if (alerte(); as a) {
-  <div class="form-error">
-    {{ a.message }}
-    @if (a.confirmable) {
-      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
-        <button type="button" class="btn-primary" [disabled]="occupe()" (click)="valider(true)">
-          Réinscrire quand même (dérogations notées dans l'historique)
-        </button>
-        <button type="button" class="btn-ghost" (click)="alerte.set(null)">Annuler</button>
-      </div>
-    }
-  </div>
+  <app-alerte-age-dialog [alerte]="a" [occupe]="occupe()" libelleConfirmer="Les réinscrire quand même"
+                         (confirmer)="valider(true)" (annuler)="annulerInscription()"></app-alerte-age-dialog>
 }
 
     <div class="form-grid">
