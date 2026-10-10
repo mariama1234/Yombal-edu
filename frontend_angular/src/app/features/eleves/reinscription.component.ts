@@ -45,6 +45,9 @@ export class ReinscriptionComponent implements OnInit {
   apercu = signal<ResultatReinscription | null>(null);
   resultat = signal<ResultatReinscription | null>(null);
   erreur = signal<string | null>(null);
+  /** Dates de naissance saisies dans l'aperçu, par élève, avant envoi. */
+  dates = signal<Record<number, string>>({});
+  nbDates = computed(() => Object.values(this.dates()).filter(Boolean).length);
   /** Élèves cochés hors de la fourchette d'âge : l'écran propose de confirmer. */
   alerte = signal<AlerteAge | null>(null);
   occupe = signal(false);
@@ -187,6 +190,38 @@ export class ReinscriptionComponent implements OnInit {
 
   toutCocher(): void {
     this.coches.set((this.apercu()?.eleves ?? []).filter((e) => !e.deja_inscrit).map((e) => e.id));
+  }
+
+  saisirDate(id: number, valeur: string): void {
+    this.dates.update((d) => ({ ...d, [id]: valeur }));
+  }
+
+  /**
+   * Enregistre les dates saisies dans l'aperçu, puis recalcule l'aperçu sans
+   * toucher aux cases cochées : les élèves complétés passent alors au vert,
+   * ou tombent sur l'avertissement d'âge.
+   */
+  enregistrerDates(): void {
+    const eleves = Object.entries(this.dates()).filter(([, d]) => d)
+      .map(([id, date_naissance]) => ({ id: +id, date_naissance }));
+    if (!eleves.length) return;
+    this.occupe.set(true);
+    this.erreur.set(null);
+    this.http.post<{ modifies: number }>(`${environment.apiUrl}/eleves/fiches/`, { eleves }).subscribe({
+      next: (r) => {
+        this.toast.succes(`${r.modifies} date(s) de naissance enregistrée(s)`);
+        this.dates.set({});
+        const coches = this.coches();
+        this.appeler(false, (a) => {
+          this.apercu.set(a);
+          this.coches.set(coches);
+        });
+      },
+      error: (e) => {
+        this.erreur.set(this.message(e));
+        this.occupe.set(false);
+      },
+    });
   }
 
   /** « Annuler » dans la pop-up d'âge : rien n'a été enregistré, l'aperçu reste. */

@@ -75,6 +75,11 @@ export const routes: Routes = [
         data: { module: 'inscriptions', ecriture: true },
         loadComponent: () => import('./features/eleves/reinscription.component').then((m) => m.ReinscriptionComponent),
       },
+      {
+        path: 'eleves/fiches',
+        data: { module: 'eleves', ecriture: true },
+        loadComponent: () => import('./features/eleves/completer-fiches.component').then((m) => m.CompleterFichesComponent),
+      },
       // Après les routes fixes : sinon « importer » serait pris pour un id.
       {
         path: 'eleves/:id/dossier',

@@ -1,0 +1,83 @@
+<div class="page-head">
+  <div>
+    <h1>Compléter les fiches</h1>
+    <p>
+      Date de naissance, sexe et n° de registre de toute une classe, en un envoi. La date de naissance
+      est indispensable au contrôle de l'âge à l'inscription et à la réinscription.
+    </p>
+  </div>
+  <a class="btn-ghost" routerLink="/eleves">Retour aux élèves</a>
+</div>
+
+@if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
+
+<div class="panel">
+  <div class="form-grid">
+    <div class="field">
+      <label for="classe">Classe</label>
+      <select class="input" id="classe" [ngModel]="idClasse()" (ngModelChange)="choisirClasse($event ? +$event : null)">
+        <option [ngValue]="null">Choisir une classe…</option>
+        @for (g of groupes(); track g.id) {
+          <optgroup [label]="g.libelle">
+            @for (c of g.classes; track c.id) { <option [ngValue]="c.id">{{ c.nom }}</option> }
+          </optgroup>
+        }
+      </select>
+    </div>
+    @if (lignes().length) {
+      <div class="field" style="justify-content:flex-end;">
+        <label class="checkbox" style="display:flex; align-items:center; gap:8px; font-size:13px;">
+          <input type="checkbox" [checked]="seulementIncompletes()" (change)="seulementIncompletes.set(!seulementIncompletes())">
+          Seulement les fiches incomplètes ({{ nbIncompletes() }} sur {{ lignes().length }})
+        </label>
+      </div>
+    }
+  </div>
+</div>
+
+@if (chargement()) {
+  <div class="panel"><p class="hint">Chargement…</p></div>
+} @else if (idClasse() && lignes().length === 0) {
+  <div class="panel"><p class="hint">Aucun élève dans cette classe.</p></div>
+} @else if (lignes().length) {
+  <div class="panel">
+    @if (visibles().length === 0) {
+      <p class="hint">Toutes les fiches de cette classe sont complètes.</p>
+    } @else {
+      <table class="simple">
+        <thead>
+          <tr><th>Élève</th><th>Matricule</th><th>Date de naissance</th><th>Sexe</th><th>N° de registre</th></tr>
+        </thead>
+        <tbody>
+          @for (l of visibles(); track l.id) {
+            <tr [style.background]="changee(l) ? 'var(--surface-2, rgba(255,165,0,0.06))' : null">
+              <td><a class="panel-link" [routerLink]="['/eleves', l.id, 'dossier']">{{ l.nom_complet }}</a></td>
+              <td class="mono">{{ l.matricule }}</td>
+              <td>
+                <input class="input" type="date" style="min-width:150px;" [attr.aria-label]="'Date de naissance de ' + l.nom_complet"
+                       [ngModel]="l.saisie.date_naissance" (ngModelChange)="modifier(l, 'date_naissance', $event)">
+              </td>
+              <td>
+                <select class="input" [attr.aria-label]="'Sexe de ' + l.nom_complet"
+                        [ngModel]="l.saisie.sexe" (ngModelChange)="modifier(l, 'sexe', $event)">
+                  <option value="">—</option><option value="F">F</option><option value="M">M</option>
+                </select>
+              </td>
+              <td>
+                <input class="input" style="max-width:140px;" [attr.aria-label]="'N° de registre de ' + l.nom_complet"
+                       [ngModel]="l.saisie.numero_registre" (ngModelChange)="modifier(l, 'numero_registre', $event)">
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+
+    <div class="form-actions">
+      <a class="btn-ghost" routerLink="/eleves" [queryParams]="{ vue: 'a_reinscrire' }">Élèves à réinscrire</a>
+      <button type="button" class="btn-primary" [disabled]="occupe() || modifiees().length === 0" (click)="enregistrer()">
+        {{ occupe() ? 'Enregistrement…' : 'Enregistrer ' + modifiees().length + ' fiche(s)' }}
+      </button>
+    </div>
+  </div>
+}

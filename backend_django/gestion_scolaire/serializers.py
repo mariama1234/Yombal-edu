@@ -844,6 +844,20 @@ class ReinscriptionSerializer(serializers.Serializer):
     derogation_age = serializers.BooleanField(required=False, default=False)
 
 
+class LigneFicheSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    date_naissance = serializers.DateField(required=False, allow_null=True)
+    sexe = serializers.ChoiceField(choices=models.Eleve.Sexe.choices, required=False,
+                                   allow_null=True, allow_blank=True)
+    numero_registre = serializers.CharField(max_length=50, required=False, allow_null=True,
+                                            allow_blank=True)
+
+
+class CompletionFichesSerializer(serializers.Serializer):
+    """Entrée de POST /api/eleves/fiches/ : plusieurs élèves en un envoi."""
+    eleves = LigneFicheSerializer(many=True)
+
+
 class CasSocialSerializer(serializers.Serializer):
     """Entrée de POST /api/eleves/{id}/cas-social/."""
     cas_social = serializers.BooleanField()

@@ -815,6 +815,93 @@ def _nom(personne):
     return f"{personne.prenom} {personne.nom}".strip()
 
 
+# ---------------------------------------------------------------------------
+# Compléter les fiches (élèves importés sans date de naissance)
+# ---------------------------------------------------------------------------
+
+def fiches_de_classe(ecole, classe):
+    """
+    Les élèves d'une classe, avec ce qui manque à leur fiche.
+
+    Les listes importées ne portent ni date de naissance ni sexe : sans date,
+    l'âge ne se contrôle pas et la réinscription s'arrête. Cet écran permet de
+    compléter une classe entière d'un coup plutôt qu'un dossier à la fois.
+    Toute classe de l'école, y compris d'une année passée : c'est souvent à la
+    rentrée, depuis la classe de l'an dernier, qu'on s'aperçoit du manque.
+    """
+    _verifier_ecole(ecole, classe=classe)
+    inscriptions = (models.Inscription.objects
+                    .filter(id_classe=classe).filter(INSCRIPTIONS_VIVES)
+                    .select_related("id_eleve").order_by("id_eleve__nom", "id_eleve__prenom"))
+    return [{
+        "id": i.id_eleve_id,
+        "matricule": i.id_eleve.matricule,
+        "nom_complet": _nom(i.id_eleve),
+        "date_naissance": i.id_eleve.date_naissance,
+        "sexe": i.id_eleve.sexe,
+        "numero_registre": i.id_eleve.numero_registre,
+        "incomplete": i.id_eleve.date_naissance is None or not i.id_eleve.sexe,
+    } for i in inscriptions]
+
+
+CHAMPS_COMPLETABLES = ("date_naissance", "sexe", "numero_registre")
+
+
+@transaction.atomic
+def completer_fiches(ecole, lignes):
+    """
+    Enregistre en une fois la date de naissance, le sexe et le n° de registre
+    de plusieurs élèves. Seuls les champs présents dans une ligne changent.
+
+    Tout ou rien : une date impossible ou un n° de registre déjà pris refuse
+    l'envoi entier, avec le nom de l'élève, plutôt que d'en garder la moitié.
+    """
+    if not lignes:
+        raise ErreurScolarite("Aucune fiche à enregistrer.")
+    ids = [l["id"] for l in lignes]
+    eleves = {e.pk: e for e in models.Eleve.objects.filter(id_ecole=ecole, pk__in=ids)}
+    if len(eleves) != len(set(ids)):
+        raise ErreurScolarite("Un des élèves n'appartient pas à votre école.")
+
+    aujourdhui = timezone.localdate()
+    registres = {}
+    for ligne in lignes:
+        eleve = eleves[ligne["id"]]
+        naissance = ligne.get("date_naissance")
+        if naissance is not None and not (date(aujourdhui.year - 40, 1, 1) <= naissance < aujourdhui):
+            raise ErreurScolarite(f"{_nom(eleve)} : date de naissance invraisemblable "
+                                  f"({naissance:%d/%m/%Y}).")
+        if "numero_registre" in ligne:
+            numero = (ligne["numero_registre"] or "").strip() or None
+            ligne["numero_registre"] = numero
+            if numero:
+                if numero in registres:
+                    raise ErreurScolarite(f"N° de registre {numero} saisi deux fois "
+                                          f"({registres[numero]} et {_nom(eleve)}).")
+                registres[numero] = _nom(eleve)
+    pris = dict(models.Eleve.objects.filter(id_ecole=ecole, numero_registre__in=list(registres))
+                .exclude(pk__in=ids).values_list("numero_registre", "nom"))
+    if pris:
+        numero = next(iter(pris))
+        raise ErreurScolarite(f"Le n° de registre {numero} est déjà porté par un autre élève.")
+    # Deux élèves du lot peuvent échanger leurs numéros : on libère d'abord.
+    if registres:
+        models.Eleve.objects.filter(
+            pk__in=[l["id"] for l in lignes if "numero_registre" in l]).update(numero_registre=None)
+
+    modifies = 0
+    for ligne in lignes:
+        eleve = eleves[ligne["id"]]
+        champs = [c for c in CHAMPS_COMPLETABLES if c in ligne]
+        avant = {c: getattr(eleve, c) for c in champs}
+        for c in champs:
+            setattr(eleve, c, ligne[c] or None)
+        if champs:
+            eleve.save(update_fields=champs)
+        modifies += any(avant[c] != getattr(eleve, c) for c in champs)
+    return {"modifies": modifies}
+
+
 CHAMPS_SANTE = ("groupe_sanguin", "allergies", "maladies_chroniques", "traitements",
                 "besoins_particuliers", "vaccinations_a_jour", "medecin_nom", "medecin_telephone",
                 "contact_urgence_nom", "contact_urgence_telephone", "remarques")

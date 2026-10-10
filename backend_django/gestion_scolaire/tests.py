@@ -6557,3 +6557,70 @@ class TestSanteALInscription(InscriptionParFormulaire, BaseAPI):
         self.assertEqual(r.status_code, 400)
         self.assertIn("sante", r.data)
         self.assertFalse(models.Eleve.objects.filter(nom="Ndiaye").exists())
+
+
+class TestCompleterLesFiches(BaseFinances):
+    """Élèves importés sans date de naissance : on complète une classe d'un coup."""
+
+    URL = "/api/eleves/fiches/"
+
+    def test_la_classe_liste_ce_qui_manque(self):
+        r = self.client.get(self.URL, {"classe": self.classe.pk})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(len(r.data["eleves"]), 3)
+        self.assertTrue(all(e["incomplete"] for e in r.data["eleves"]))
+
+    def test_enregistre_plusieurs_eleves_en_un_envoi(self):
+        a, b, _ = self.eleves
+        r = self.client.post(self.URL, {"eleves": [
+            {"id": a.pk, "date_naissance": "2014-03-02", "sexe": "F", "numero_registre": "R-1"},
+            {"id": b.pk, "date_naissance": "2013-11-20"},
+        ]}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.data["modifies"], 2)
+        a.refresh_from_db()
+        b.refresh_from_db()
+        self.assertEqual((a.date_naissance, a.sexe, a.numero_registre), (date(2014, 3, 2), "F", "R-1"))
+        self.assertEqual(b.date_naissance, date(2013, 11, 20))
+
+    def test_tout_ou_rien(self):
+        a, b, _ = self.eleves
+        r = self.client.post(self.URL, {"eleves": [
+            {"id": a.pk, "date_naissance": "2014-03-02"},
+            {"id": b.pk, "date_naissance": "2099-01-01"},
+        ]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Nom2", str(r.data))
+        a.refresh_from_db()
+        self.assertIsNone(a.date_naissance)
+
+    def test_numero_de_registre_en_double(self):
+        a, b, c = self.eleves
+        c.numero_registre = "R-9"
+        c.save()
+        r = self.client.post(self.URL, {"eleves": [{"id": a.pk, "numero_registre": "R-9"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post(self.URL, {"eleves": [{"id": a.pk, "numero_registre": "R-5"},
+                                                    {"id": b.pk, "numero_registre": "R-5"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_deux_eleves_peuvent_echanger_leurs_numeros(self):
+        a, b, _ = self.eleves
+        a.numero_registre, b.numero_registre = "R-1", "R-2"
+        a.save()
+        b.save()
+        r = self.client.post(self.URL, {"eleves": [{"id": a.pk, "numero_registre": "R-2"},
+                                                    {"id": b.pk, "numero_registre": "R-1"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+
+    def test_isolation_et_droits(self):
+        intrus = models.Eleve.objects.create(id_ecole=self.autre, matricule="B-1", nom="X", prenom="Y")
+        r = self.client.post(self.URL, {"eleves": [{"id": intrus.pk, "date_naissance": "2014-01-01"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.client_autre.get(self.URL, {"classe": self.classe.pk}).status_code, 400)
+        prof = self._client(self.enseignant_user.email)
+        self.assertEqual(prof.get(self.URL, {"classe": self.classe.pk}).status_code, 403)

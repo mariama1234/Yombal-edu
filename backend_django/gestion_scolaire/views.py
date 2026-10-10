@@ -562,6 +562,9 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
         # facturer, comme ajouter un frais.
         "cas_social": "frais",
         "sante": "sante",
+        # Compléter les fiches, c'est modifier des élèves : le module élèves,
+        # en écriture même pour afficher l'écran de saisie.
+        "fiches": ("eleves", ECRITURE),
         # Ajouter des frais, c'est facturer : cela relève des frais élèves,
         # pas de l'encaissement. Un caissier encaisse ce qui est dû, il ne
         # décide pas de ce que la famille doit.
@@ -1219,6 +1222,33 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
             lambda eleve, d: f"Retrait de l'autorisation d'entrer en classe de "
                              f"{eleve.prenom} {eleve.nom}",
         )
+
+    @extend_schema(request=serializers.CompletionFichesSerializer, responses=dict)
+    @action(detail=False, methods=["get", "post"])
+    def fiches(self, request):
+        """
+        Compléter les fiches d'une classe :
+        GET  /api/eleves/fiches/?classe=   les élèves et ce qui leur manque ;
+        POST /api/eleves/fiches/           {eleves: [{id, date_naissance, sexe, numero_registre}]}
+        """
+        ecole = request.user.id_ecole
+        if request.method == "GET":
+            classe = _reference(models.Classe, request.query_params.get("classe"), ecole, "classe")
+            if classe is None:
+                raise ValidationError({"classe": "Choisissez une classe."})
+            return Response({"classe": classe.nom, "eleves": scolarite.fiches_de_classe(ecole, classe)})
+
+        entree = serializers.CompletionFichesSerializer(data=request.data)
+        entree.is_valid(raise_exception=True)
+        lignes = [dict(l) for l in entree.validated_data["eleves"]]
+        try:
+            resultat = scolarite.completer_fiches(ecole, lignes)
+        except scolarite.ErreurScolarite as exc:
+            raise ValidationError({"detail": str(exc)})
+        if resultat["modifies"]:
+            journaliser(request, models.JournalActivite.Action.MODIFICATION, entite="eleve",
+                        description=f"Fiches complétées pour {resultat['modifies']} élève(s)")
+        return Response(resultat)
 
     @extend_schema(request=serializers.CasSocialSerializer, responses=dict)
     @action(detail=True, methods=["post"], url_path="cas-social")

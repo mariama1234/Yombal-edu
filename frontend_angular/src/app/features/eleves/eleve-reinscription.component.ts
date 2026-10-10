@@ -6,6 +6,7 @@ import { AnneeScolaireService } from '../../core/services/annee-scolaire.service
 import { ContexteReinscription } from '../../core/models/models';
 import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
 import { EleveService } from './eleve.service';
+import { ScolariteService } from './scolarite.service';
 import { ToastService } from '../../core/services/toast.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 import { AlerteAge, alerteAge } from './alerte-age';
@@ -39,6 +40,7 @@ export class EleveReinscriptionComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private eleves = inject(EleveService);
+  private scolarite = inject(ScolariteService);
   private toast = inject(ToastService);
   annees = inject(AnneeScolaireService);
 
@@ -155,6 +157,27 @@ export class EleveReinscriptionComponent implements OnInit {
           this.occupe.set(false);
         },
       });
+  }
+
+  /**
+   * Date saisie dans la pop-up : elle s'enregistre sur la fiche, puis la
+   * réinscription reprend — et peut alors tomber sur l'avertissement d'âge.
+   */
+  enregistrerDate(date: string): void {
+    if (!date) return;
+    this.occupe.set(true);
+    this.scolarite.modifierEleve(this.idEleve, { date_naissance: date }).subscribe({
+      next: () => {
+        this.occupe.set(false);
+        this.alerte.set(null);
+        this.valider(false);
+      },
+      error: (e) => {
+        this.occupe.set(false);
+        this.alerte.set(null);
+        this.erreur.set(this.messageErreur(e));
+      },
+    });
   }
 
   /** « Annuler » dans la pop-up d'âge : rien n'a été enregistré. */

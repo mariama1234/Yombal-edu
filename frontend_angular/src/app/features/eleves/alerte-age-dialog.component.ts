@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Component, ElementRef, EventEmitter, Input, Output, viewChild } from '@angular/core';
 import { AlerteAge } from './alerte-age';
 
 /**
@@ -31,6 +31,11 @@ import { AlerteAge } from './alerte-age';
           <p class="hint" style="margin:0 0 16px;">
             L'école n'accepte pas d'inscription hors de la fourchette d'âge : choisissez une classe d'un autre niveau.
           </p>
+        } @else if (saisieDate) {
+          <div class="field" style="margin:0 0 16px;">
+            <label for="date-manquante">Date de naissance</label>
+            <input #date class="input" id="date-manquante" type="date" (input)="dateValide = !!date.value">
+          </div>
         } @else {
           <p class="hint" style="margin:0 0 16px;">Renseignez la date de naissance, puis recommencez.</p>
         }
@@ -39,6 +44,11 @@ import { AlerteAge } from './alerte-age';
           @if (alerte.confirmable) {
             <button type="button" class="btn-primary" [disabled]="occupe" (click)="confirmer.emit()">
               {{ occupe ? 'Inscription…' : libelleConfirmer }}
+            </button>
+          } @else if (saisieDate && alerte.code === 'date_naissance_manquante') {
+            <button type="button" class="btn-primary" [disabled]="occupe || !dateValide"
+                    (click)="dateSaisie.emit(champDate()?.nativeElement?.value)">
+              {{ occupe ? 'Enregistrement…' : 'Enregistrer la date et continuer' }}
             </button>
           }
         </div>
@@ -52,6 +62,14 @@ export class AlerteAgeDialogComponent {
   @Input() libelleConfirmer = "L'inscrire quand même";
   @Output() confirmer = new EventEmitter<void>();
   @Output() annuler = new EventEmitter<void>();
+  /**
+   * Date manquante : propose de la saisir dans la pop-up même. Utile à la
+   * réinscription, où les élèves importés n'ont souvent pas de date.
+   */
+  @Input() saisieDate = false;
+  @Output() dateSaisie = new EventEmitter<string>();
+  champDate = viewChild<ElementRef<HTMLInputElement>>('date');
+  dateValide = false;
 
   titre(): string {
     return this.alerte.code === 'date_naissance_manquante'
