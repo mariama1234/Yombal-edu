@@ -1,4 +1,3 @@
-import re
 from decimal import Decimal
 
 from rest_framework import serializers
@@ -6,54 +5,10 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
-from . import finances, justificatifs, models, scolarite
+from . import finances, justificatifs, matricules, models, scolarite
 from .permissions import ROLES_DIRECTION, peut_ecrire, peut_lire
 
 Utilisateur = get_user_model()
-
-
-def prochain_matricule(ecole, annee):
-    """
-    Matricule suivant pour une école et une année données, au format
-    PREFIXE-ANNEE-0001.
-
-    La numérotation est propre à chaque école — un compteur global ferait
-    dépendre les matricules d'une école de ceux des autres. Elle repose sur
-    le plus grand numéro déjà attribué et non sur un décompte, pour qu'une
-    suppression au milieu de la liste ne provoque pas de collision.
-
-    Limite assumée : supprimer le dernier élève inscrit libère son numéro,
-    qui sera réattribué. Tenir une séquence persistante coûterait une table
-    de plus pour un cas qui ne devrait pas se produire — un départ se
-    matérialise par `statut` (radié, transféré, diplômé), pas par une
-    suppression de ligne, qui effacerait au passage notes et paiements.
-    """
-    prefixe = (
-        models.ParametreEcole.objects
-        .filter(id_ecole=ecole, cle="prefixe_matricule")
-        .values_list("valeur", flat=True)
-        .first()
-    ) or "ELV"
-
-    debut = re.sub(r"\D", "", annee.libelle)[:4] or str(annee.date_debut.year)
-    base = f"{prefixe}-{debut}-"
-
-    # select_for_update sérialise les inscriptions simultanées dans la même
-    # école, sinon deux requêtes concurrentes calculeraient le même numéro.
-    existants = (
-        models.Eleve.objects
-        .select_for_update()
-        .filter(id_ecole=ecole, matricule__startswith=base)
-        .values_list("matricule", flat=True)
-    )
-
-    dernier = 0
-    for matricule in existants:
-        suffixe = matricule[len(base):]
-        if suffixe.isdigit():
-            dernier = max(dernier, int(suffixe))
-
-    return f"{base}{dernier + 1:04d}"
 
 
 # ---------- Auth / utilisateur ----------
@@ -237,8 +192,9 @@ class EcoleSerializer(serializers.ModelSerializer):
         model = models.Ecole
         fields = "__all__"
         # Le règlement de l'abonnement aussi : une école ne se déclare pas payée.
+        # Le code ouvre les matricules : c'est la plateforme qui l'attribue.
         read_only_fields = ["plan_abonnement", "statut", "date_activation", "date_creation",
-                            "abonnement_paye", "date_paiement"]
+                            "abonnement_paye", "date_paiement", "code_ecole"]
 
 
 # ---------- Module élèves ----------
@@ -566,8 +522,9 @@ class EleveInscriptionSerializer(serializers.Serializer):
     id_ecole = serializers.PrimaryKeyRelatedField(queryset=models.Ecole.objects.all())
     nom = serializers.CharField(max_length=100)
     prenom = serializers.CharField(max_length=100)
-    date_naissance = serializers.DateField(required=False, allow_null=True)
-    sexe = serializers.ChoiceField(choices=models.Eleve.Sexe.choices, required=False, allow_null=True)
+    # Exigés : le matricule en reprend le genre et l'année de naissance.
+    date_naissance = serializers.DateField()
+    sexe = serializers.ChoiceField(choices=models.Eleve.Sexe.choices)
     adresse = serializers.CharField(max_length=255, required=False, allow_blank=True)
     photo_url = serializers.CharField(max_length=255, required=False, allow_blank=True)
     numero_registre = serializers.CharField(max_length=50, required=False, allow_blank=True,
@@ -659,8 +616,10 @@ class EleveInscriptionSerializer(serializers.Serializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        matricule = prochain_matricule(
-            validated_data["id_ecole"], validated_data["id_annee_scolaire"]
+        matricule = matricules.composer(
+            validated_data["id_ecole"].code_ecole,
+            matricules.prochain_numero(validated_data["id_ecole"]),
+            validated_data["sexe"], validated_data["date_naissance"],
         )
 
         eleve = models.Eleve.objects.create(

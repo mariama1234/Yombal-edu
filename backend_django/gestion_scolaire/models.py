@@ -28,6 +28,10 @@ class Ecole(models.Model):
         RESILIE = "resilie", "Résilié"
 
     nom = models.CharField(max_length=150)
+    # Ouvre le matricule de chaque élève (voir `matricules.py`). Majuscules et
+    # chiffres seulement : le tiret sépare les parties du matricule. Proposé
+    # d'après le nom quand on ne le donne pas.
+    code_ecole = models.CharField(max_length=10, unique=True)
     adresse = models.CharField(max_length=255, blank=True, null=True)
     telephone = models.CharField(max_length=30, blank=True, null=True)
     email = models.EmailField(max_length=150, blank=True, null=True)
@@ -44,6 +48,15 @@ class Ecole(models.Model):
     class Meta:
         db_table = "ecole"
         ordering = ["nom"]
+
+    def save(self, *args, **kwargs):
+        from . import matricules
+
+        self.code_ecole = matricules.normaliser_code(self.code_ecole)
+        if not self.code_ecole:
+            pris = set(Ecole.objects.exclude(pk=self.pk).values_list("code_ecole", flat=True))
+            self.code_ecole = matricules.code_depuis_nom(self.nom, pris)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.nom
@@ -220,6 +233,20 @@ class Eleve(models.Model):
             models.UniqueConstraint(fields=["id_ecole", "numero_registre"],
                                     name="uq_eleve_registre_ecole"),
         ]
+
+    def save(self, *args, **kwargs):
+        """
+        Tient la fin du matricule (genre, année de naissance) à jour de la
+        fiche, quel que soit l'écran qui la corrige. Le numéro ne change pas.
+        """
+        from . import matricules
+
+        corrige = matricules.ajuster(self.matricule, self.sexe, self.date_naissance)
+        if corrige != self.matricule:
+            self.matricule = corrige
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = {*kwargs["update_fields"], "matricule"}
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.prenom} {self.nom} ({self.matricule})"

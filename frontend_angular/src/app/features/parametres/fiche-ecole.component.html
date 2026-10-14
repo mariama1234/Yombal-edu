@@ -41,6 +41,16 @@
         </div>
 
         <div class="field span-2">
+          <label for="code_ecole">Code de l'école</label>
+          <input class="input" id="code_ecole" type="text" [value]="e.code_ecole" readonly disabled>
+          <span class="hint">
+            Ouvre le matricule de chaque élève : {{ e.code_ecole }}-00001-1-15
+            (numéro d'arrivée, 1 garçon ou 2 fille, année de naissance).
+            Pour le changer, adressez-vous à YombalEdu.
+          </span>
+        </div>
+
+        <div class="field span-2">
           <label for="adresse">Adresse</label>
           <input class="input" id="adresse" type="text" formControlName="adresse" placeholder="Rue 12, Dakar">
         </div>

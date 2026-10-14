@@ -390,7 +390,7 @@
             <div class="field" style="flex:1; min-width:220px; margin:0;">
               <label for="matricule">Matricule de l'élève</label>
               <input class="input mono" id="matricule" name="matricule" [(ngModel)]="matricule"
-                     placeholder="ELV-2026-0001" autocomplete="off">
+                     placeholder="Ex. MIC-00001-2-13" autocomplete="off">
             </div>
             <button type="submit" class="btn-ghost" [disabled]="occupe()">
               {{ occupe() && !facture() ? 'Recherche…' : 'Rechercher' }}

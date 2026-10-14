@@ -27,6 +27,7 @@ class Command(BaseCommand):
         ecole, _ = models.Ecole.objects.get_or_create(
             nom="École MIC CITE",
             defaults={
+                "code_ecole": "MIC",
                 "adresse": "Dakar, Sénégal",
                 "telephone": "+221 33 000 00 00",
                 "email": "contact@miccite.sn",
@@ -93,9 +94,9 @@ class Command(BaseCommand):
         )
 
         eleves = [
-            ("MIC-2026-001", "Ba", "Aïssatou", "F", date(2013, 4, 12)),
-            ("MIC-2026-002", "Fall", "Ibrahima", "M", date(2013, 9, 3)),
-            ("MIC-2026-003", "Sarr", "Mariama", "F", date(2014, 1, 25)),
+            ("MIC-00001-2-13", "Ba", "Aïssatou", "F", date(2013, 4, 12)),
+            ("MIC-00002-1-13", "Fall", "Ibrahima", "M", date(2013, 9, 3)),
+            ("MIC-00003-2-14", "Sarr", "Mariama", "F", date(2014, 1, 25)),
         ]
         for matricule, nom, prenom, sexe, naissance in eleves:
             eleve, cree = models.Eleve.objects.get_or_create(
@@ -178,7 +179,7 @@ class Command(BaseCommand):
             )
 
         inscrits = list(
-            models.Eleve.objects.filter(id_ecole=ecole, matricule__startswith="MIC-2026-")
+            models.Eleve.objects.filter(id_ecole=ecole, matricule__startswith="MIC-0000")
             .order_by("matricule")
         )
         # Les valeurs sont choisies pour donner un classement net (14,50 /

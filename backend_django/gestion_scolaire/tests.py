@@ -139,6 +139,7 @@ class TestIsolationMultiEcoles(BaseAPI):
             "id_ecole": self.autre.pk,          # tentative d'injection
             "nom": "Fall", "prenom": "Moussa",
             "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "sexe": "F", "date_naissance": "2013-05-10",
             "date_inscription": "2026-10-01",
         }, format="json")
         self.assertEqual(r.status_code, 201, r.content)
@@ -155,6 +156,7 @@ class TestIsolationMultiEcoles(BaseAPI):
         )
         r = self.client.post("/api/eleves/inscrire/", {
             "nom": "X", "prenom": "Y", "id_classe": classe_b.pk,
+            "sexe": "F", "date_naissance": "2013-05-10",
             "id_annee_scolaire": self.annee.pk, "date_inscription": "2026-10-01",
         }, format="json")
         self.assertEqual(r.status_code, 400, r.content)
@@ -658,21 +660,61 @@ class TestCoefficientsEtAffectations(BaseAPI):
 
 
 class TestParcoursEleve(BaseAPI):
-    def _inscrire(self, nom="Fall", prenom="Moussa"):
+    def _inscrire(self, nom="Fall", prenom="Moussa", sexe="F", naissance="2013-05-10"):
         r = self.client.post("/api/eleves/inscrire/", {
             "nom": nom, "prenom": prenom, "id_classe": self.classe.pk,
-            "id_annee_scolaire": self.annee.pk, "date_inscription": "2026-10-01",
+            "id_annee_scolaire": self.annee.pk,
+            "sexe": sexe, "date_naissance": naissance,
+            "date_inscription": "2026-10-01",
         }, format="json")
         self.assertEqual(r.status_code, 201, r.content)
         return models.Eleve.objects.get(pk=r.data["id"])
 
-    def test_matricules_numerotes_par_ecole(self):
-        models.ParametreEcole.objects.create(
-            id_ecole=self.ecole, cle="prefixe_matricule", libelle="Préfixe", valeur="MIC")
-        premier = self._inscrire("Ba", "Aïssatou")
-        second = self._inscrire("Sarr", "Mariama")
-        self.assertEqual(premier.matricule, "MIC-2026-0001")
-        self.assertEqual(second.matricule, "MIC-2026-0002")
+    def test_matricule_code_numero_genre_annee(self):
+        self.ecole.code_ecole = "MIC"
+        self.ecole.save()
+        premier = self._inscrire("Ba", "Aïssatou", "F", "2013-05-10")
+        second = self._inscrire("Fall", "Ibrahima", "M", "2012-11-02")
+        self.assertEqual(premier.matricule, "MIC-00001-2-13")
+        self.assertEqual(second.matricule, "MIC-00002-1-12")
+
+    def test_numero_continue_d_une_annee_sur_l_autre(self):
+        """Le numéro est chronologique dans l'école : il ne repart pas à 1 chaque année."""
+        self.ecole.code_ecole = "MIC"
+        self.ecole.save()
+        models.Eleve.objects.create(id_ecole=self.ecole, matricule="MIC-00041-1-12",
+                                    nom="Ancien", prenom="Élève")
+        # Un ancien matricule n'entre pas dans le décompte.
+        models.Eleve.objects.create(id_ecole=self.ecole, matricule="MIC-2025-0099",
+                                    nom="Très", prenom="Ancien")
+        self.assertEqual(self._inscrire().matricule, "MIC-00042-2-13")
+
+    def test_sexe_et_naissance_exiges_a_l_inscription(self):
+        r = self.client.post("/api/eleves/inscrire/", {
+            "nom": "Ba", "prenom": "Awa", "id_classe": self.classe.pk,
+            "id_annee_scolaire": self.annee.pk, "date_inscription": "2026-10-01",
+        }, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("sexe", r.data)
+        self.assertIn("date_naissance", r.data)
+
+    def test_corriger_la_fiche_met_a_jour_la_fin_du_matricule(self):
+        self.ecole.code_ecole = "MIC"
+        self.ecole.save()
+        eleve = self._inscrire(sexe="F", naissance="2013-05-10")
+        r = self.client.patch(f"/api/eleves/{eleve.pk}/",
+                              {"sexe": "M", "date_naissance": "2014-01-20"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        eleve.refresh_from_db()
+        self.assertEqual(eleve.matricule, "MIC-00001-1-14", "le numéro reste, la fin suit la fiche")
+
+    def test_un_ancien_matricule_n_est_pas_retouche(self):
+        eleve = models.Eleve.objects.create(id_ecole=self.ecole, matricule="ELV-2025-0001",
+                                            nom="Ba", prenom="Awa")
+        eleve.sexe, eleve.date_naissance = "F", date(2013, 5, 10)
+        eleve.save()
+        eleve.refresh_from_db()
+        self.assertEqual(eleve.matricule, "ELV-2025-0001")
 
     def test_numerotation_independante_entre_ecoles(self):
         """Le compteur est propre à chaque école, jamais global."""
@@ -689,11 +731,12 @@ class TestParcoursEleve(BaseAPI):
 
         r = self.client_autre.post("/api/eleves/inscrire/", {
             "nom": "Ndiaye", "prenom": "Fatou", "id_classe": classe_b.pk,
+            "sexe": "F", "date_naissance": "2013-05-10",
             "id_annee_scolaire": annee_b.pk, "date_inscription": "2026-10-01",
         }, format="json")
         self.assertEqual(r.status_code, 201, r.content)
-        self.assertTrue(
-            models.Eleve.objects.get(pk=r.data["id"]).matricule.endswith("0001"),
+        self.assertIn(
+            "-00001-", models.Eleve.objects.get(pk=r.data["id"]).matricule,
             "la première élève de l'école B doit porter le numéro 1",
         )
 
@@ -712,6 +755,7 @@ class TestParcoursEleve(BaseAPI):
             "nom": "Ba", "prenom": "Aïssatou",
             "id_classe": self.classe.pk,            # relève de 2026-2027
             "id_annee_scolaire": annee_suivante.pk,  # mais on vise 2027-2028
+            "sexe": "F", "date_naissance": "2013-05-10",
             "date_inscription": "2027-10-01",
         }, format="json")
 
@@ -1387,13 +1431,25 @@ class TestImportEleves(BaseAPI):
         self.assertEqual(eleve.prenom, "Ibrahima")
         self.assertEqual(eleve.date_premiere_inscription, self.annee.date_debut)
 
-    def test_matricules_au_format_prefixe_annee_sequence(self):
-        models.ParametreEcole.objects.create(
-            id_ecole=self.ecole, cle="prefixe_matricule", libelle="Préfixe", valeur="MIC")
+    def test_matricules_au_format_code_numero_genre_annee(self):
+        """Les listes n'ont pas de date de naissance : l'année vaut 00 en attendant la fiche."""
+        self.ecole.code_ecole = "MIC"
+        self.ecole.save()
         self._importer()
         matricules = sorted(models.Eleve.objects.filter(id_ecole=self.ecole)
                             .values_list("matricule", flat=True))
-        self.assertEqual(matricules, ["MIC-2026-0001", "MIC-2026-0002"])
+        self.assertEqual([m[:10] for m in matricules], ["MIC-00001-", "MIC-00002-"])
+        self.assertTrue(all(m.endswith("-00") for m in matricules), matricules)
+
+    def test_completer_la_fiche_d_un_eleve_importe_corrige_son_matricule(self):
+        self.ecole.code_ecole = "MIC"
+        self.ecole.save()
+        self._importer()
+        eleve = models.Eleve.objects.filter(id_ecole=self.ecole).order_by("matricule").first()
+        scolarite.completer_fiches(self.ecole, [
+            {"id": eleve.pk, "sexe": "M", "date_naissance": date(2017, 3, 4)}])
+        eleve.refresh_from_db()
+        self.assertEqual(eleve.matricule, "MIC-00001-1-17")
 
     def test_second_import_ne_duplique_pas(self):
         self._importer()
@@ -2369,7 +2425,7 @@ class TestSeedDemo(TestCase):
         # Aïssatou : maths (8/10 → 16, coef 1 ; 15/20, coef 3) = 15,25 sur coef 4 ;
         # français 13 sur coef 2 → (15,25×4 + 13×2) / 6 = 14,50
         premiere = models.Bulletin.objects.get(
-            id_eleve__matricule="MIC-2026-001", id_classe=classe)
+            id_eleve__matricule="MIC-00001-2-13", id_classe=classe)
         self.assertEqual(premiere.moyenne_generale, Decimal("14.50"))
         self.assertEqual(premiere.rang_classe, 1)
 
@@ -2504,6 +2560,7 @@ class TestMouvementsEleve(BaseScolarite):
         r = self.client.post("/api/eleves/inscrire/", {
             "nom": "Diop", "prenom": "Awa", "id_classe": self.classe.pk,
             "id_annee_scolaire": self.annee.pk,
+            "sexe": "F", "date_naissance": "2013-05-10",
             "date_inscription": self.annee.date_debut.isoformat(),
         }, format="json")
         self.assertEqual(r.status_code, 201, r.content)
@@ -4935,6 +4992,7 @@ class TestFraisALInscription(BaseAPI):
         return self.client.post("/api/eleves/inscrire/", {
             "id_ecole": self.ecole.pk, "nom": "Ndiaye", "prenom": "Fatou",
             "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "sexe": "F", "date_naissance": "2013-05-10",
             "date_inscription": date_inscription, **extra,
         }, format="json")
 
@@ -5198,6 +5256,7 @@ class TestGuichetParMatricule(BaseAPI):
         reponse = self.client.post("/api/eleves/inscrire/", {
             "id_ecole": self.ecole.pk, "nom": "Ndiaye", "prenom": "Fatou",
             "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "sexe": "F", "date_naissance": "2013-05-10",
             "date_inscription": "2026-10-01"}, format="json")
         self.assertEqual(reponse.status_code, 201, reponse.content)
         self.eleve = models.Eleve.objects.get(pk=reponse.data["id"])
@@ -5341,6 +5400,7 @@ class TestEncaissementParFraisCoches(BaseAPI):
         reponse = self.client.post("/api/eleves/inscrire/", {
             "id_ecole": self.ecole.pk, "nom": "Ndiaye", "prenom": "Fatou",
             "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "sexe": "F", "date_naissance": "2013-05-10",
             "date_inscription": "2026-10-01", "frais_optionnels": [self.transport.pk],
         }, format="json")
         self.assertEqual(reponse.status_code, 201, reponse.content)
@@ -5407,6 +5467,7 @@ class TestTypesDeFraisLibres(BaseAPI):
         reponse = self.client.post("/api/eleves/inscrire/", {
             "id_ecole": self.ecole.pk, "nom": "Diallo", "prenom": "Moussa",
             "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "sexe": "F", "date_naissance": "2013-05-10",
             "date_inscription": "2026-10-01", "frais_optionnels": [repas.data["id"]],
         }, format="json")
         self.assertEqual(reponse.status_code, 201, reponse.content)
@@ -6156,6 +6217,20 @@ class TestPlateformeSuperAdmin(BaseAPI):
         self.assertEqual(client.get("/api/auth/moi/").data["acces"]["parametres"], "ecriture")
         self.assertEqual(len(self.resultats(client.get("/api/eleves/"))), 0)
 
+    def test_code_ecole_saisi_ou_tire_du_nom(self):
+        self.assertEqual(self._creer_ecole(code_ecole="pins-01").status_code, 201)
+        self.assertEqual(models.Ecole.objects.get(nom="École Les Pins").code_ecole, "PINS01")
+        r = self._creer_ecole(nom="Collège Sainte-Thérèse", admin={
+            "nom": "Ba", "prenom": "Awa", "email": "awa@ct.sn", "password": "Motdepasse!2026"})
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["code_ecole"], "COLLEG")
+
+    def test_code_ecole_deja_pris_ou_invalide_refuse(self):
+        pris = self._creer_ecole(code_ecole=self.ecole.code_ecole)
+        self.assertEqual(pris.status_code, 400)
+        self.assertIn("code_ecole", pris.data)
+        self.assertIn("code_ecole", self._creer_ecole(code_ecole="X").data)
+
     def test_une_ecole_sans_administrateur_est_refusee(self):
         r = self.plateforme.post("/api/plateforme/ecoles/", {"nom": "Sans compte"}, format="json")
         self.assertEqual(r.status_code, 400)
@@ -6251,6 +6326,7 @@ class InscriptionParFormulaire:
         return self.client.post("/api/eleves/inscrire/", {
             "id_ecole": self.ecole.pk, "nom": "Ndiaye", "prenom": "Fatou",
             "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "sexe": "F", "date_naissance": "2013-05-10",
             "date_inscription": date_inscription, **extra,
         }, format="json")
 
@@ -6301,9 +6377,8 @@ class TestControleAgeInscription(InscriptionParFormulaire, BaseAPI):
         self.assertEqual(self._inscrire(date_naissance="2009-03-01").status_code, 201)
 
     def test_sans_date_de_naissance_on_la_demande(self):
-        reponse = self._inscrire()
+        reponse = self._inscrire(date_naissance=None)
         self.assertEqual(reponse.status_code, 400, reponse.content)
-        self.assertEqual(reponse.data["code"], "date_naissance_manquante")
         self.assertIn("date_naissance", reponse.data)
 
     def test_classe_sans_niveau_pas_de_controle(self):

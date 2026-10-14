@@ -47,6 +47,8 @@ export type Module =
 export interface Ecole {
   id: number;
   nom: string;
+  /** Ouvre le matricule des élèves ; attribué par la plateforme. */
+  code_ecole: string;
   adresse?: string;
   telephone?: string;
   email?: string;
@@ -1234,6 +1236,7 @@ export interface AdminEcole {
 export interface EcolePlateforme {
   id: number;
   nom: string;
+  code_ecole: string;
   adresse: string | null;
   telephone: string | null;
   email: string | null;

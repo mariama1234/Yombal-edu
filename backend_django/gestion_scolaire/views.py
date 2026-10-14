@@ -1073,7 +1073,7 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
     @action(detail=False, methods=["get"], url_path="par-matricule")
     def par_matricule(self, request):
         """
-        Guichet : GET /api/eleves/par-matricule/?matricule=ELV-2026-0001
+        Guichet : GET /api/eleves/par-matricule/?matricule=MIC-00001-2-13
 
         La caissière saisit le matricule imprimé sur la facture ; l'écran
         affiche l'élève, sa classe et ce qu'il reste à payer.

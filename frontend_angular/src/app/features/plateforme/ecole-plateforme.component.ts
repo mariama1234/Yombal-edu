@@ -58,10 +58,20 @@ import { PlateformeService } from './plateforme.service';
               @if (erreurs()['nom']) { <span class="hint hint-error">{{ erreurs()['nom'] }}</span> }
             </div>
             <div class="field">
+              <label for="code_ecole">Code de l'école</label>
+              <input class="input" id="code_ecole" formControlName="code_ecole" maxlength="10"
+                     placeholder="Ex. PINS" style="text-transform:uppercase;">
+              @if (erreurs()['code_ecole']) {
+                <span class="hint hint-error">{{ erreurs()['code_ecole'] }}</span>
+              } @else {
+                <span class="hint">Ouvre chaque matricule : {{ apercuMatricule() }}.@if (!ecole()) { Vide, il est tiré du nom.}</span>
+              }
+            </div>
+            <div class="field">
               <label for="telephone">Téléphone</label>
               <input class="input" id="telephone" type="tel" formControlName="telephone" placeholder="+221 …">
             </div>
-            <div class="field">
+            <div class="field span-2">
               <label for="email">E-mail de l'école</label>
               <input class="input" id="email" type="email" formControlName="email" placeholder="contact@ecole.sn">
               @if (erreurs()['email']) { <span class="hint hint-error">{{ erreurs()['email'] }}</span> }
@@ -243,6 +253,7 @@ export class EcolePlateformeComponent implements OnInit {
 
   form = this.fb.group({
     nom: ['', Validators.required],
+    code_ecole: [''],
     telephone: [''],
     email: [''],
     adresse: [''],
@@ -272,6 +283,12 @@ export class EcolePlateformeComponent implements OnInit {
     { valeur: 'standard', libelle: 'Standard', description: 'Élèves, pédagogie et finances.' },
     { valeur: 'pro', libelle: 'Pro', description: 'Tous les modules, accompagnement inclus.' },
   ];
+
+  /** Le premier matricule de l'école, pour montrer ce que le code y devient. */
+  apercuMatricule(): string {
+    const code = (this.form.controls.code_ecole.value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return `${code || 'CODE'}-00001-1-15`;
+  }
 
   initiale(nom: string): string {
     // « École MIC CITE » → « M » : le mot « École » n'aide pas à reconnaître.
@@ -316,7 +333,7 @@ export class EcolePlateformeComponent implements OnInit {
   private remplir(e: EcolePlateforme): void {
     this.ecole.set(e);
     this.form.patchValue({
-      nom: e.nom, telephone: e.telephone ?? '', email: e.email ?? '', adresse: e.adresse ?? '',
+      nom: e.nom, code_ecole: e.code_ecole, telephone: e.telephone ?? '', email: e.email ?? '', adresse: e.adresse ?? '',
       plan_abonnement: e.plan_abonnement, statut: e.statut,
       abonnement_paye: e.abonnement_paye, date_paiement: e.date_paiement ?? '',
     });

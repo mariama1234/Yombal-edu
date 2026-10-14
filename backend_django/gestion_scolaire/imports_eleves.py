@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 from django.db import transaction
 
-from . import models
+from . import matricules, models
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -396,13 +396,6 @@ def analyser_fichier(nom_fichier, contenu, classe_defaut=""):
 # Construction du plan d'import
 # ---------------------------------------------------------------------------
 
-def _prefixe_matricule(ecole):
-    parametre = (models.ParametreEcole.objects
-                 .filter(id_ecole=ecole, cle="prefixe_matricule")
-                 .values_list("valeur", flat=True).first())
-    return (_nettoyer(parametre) or "ELV").upper()
-
-
 def _capacite_defaut(ecole):
     valeur = (models.ParametreEcole.objects
               .filter(id_ecole=ecole, cle="capacite_classe_defaut")
@@ -415,30 +408,24 @@ def _capacite_defaut(ecole):
 
 class _Compteur:
     """
-    Distribue les matricules `PREFIXE-ANNEE-0001` sans trou ni collision.
+    Distribue les matricules `CODE-00001-G-AA` sans trou ni collision.
 
-    Le compteur démarre au-dessus du plus grand numéro déjà attribué pour
-    l'école et l'année : reprendre à 1 entrerait en conflit avec la contrainte
-    d'unicité `(id_ecole, matricule)` dès le deuxième import.
+    Le compteur démarre au-dessus du plus grand numéro déjà attribué dans
+    l'école : reprendre à 1 entrerait en conflit avec la contrainte d'unicité
+    `(id_ecole, matricule)` dès le deuxième import. Les listes n'ont pas de
+    date de naissance : l'année vaut 00 jusqu'à ce que la fiche soit complétée.
     """
 
-    def __init__(self, ecole, annee_debut):
-        self.prefixe = f"{_prefixe_matricule(ecole)}-{annee_debut}-"
-        existants = (models.Eleve.objects
-                     .filter(id_ecole=ecole, matricule__startswith=self.prefixe)
-                     .values_list("matricule", flat=True))
-        self.dernier = 0
-        for matricule in existants:
-            suffixe = matricule[len(self.prefixe):]
-            if suffixe.isdigit():
-                self.dernier = max(self.dernier, int(suffixe))
+    def __init__(self, ecole):
+        self.code = ecole.code_ecole
         self.pris = set(models.Eleve.objects.filter(id_ecole=ecole)
                         .values_list("matricule", flat=True))
+        self.dernier = matricules.dernier_numero(self.pris)
 
-    def suivant(self):
+    def suivant(self, sexe=""):
         while True:
             self.dernier += 1
-            candidat = f"{self.prefixe}{self.dernier:04d}"
+            candidat = matricules.composer(self.code, self.dernier, sexe, None)
             if candidat not in self.pris:
                 self.pris.add(candidat)
                 return candidat
@@ -466,8 +453,7 @@ def construire_plan(ecole, annee, lignes):
     perdait quatorze élèves réels. Deux fois le même nom dans la *même*
     classe reste un doublon : c'est le cas du fichier réimporté.
     """
-    annee_debut = annee.date_debut.year
-    compteur = _Compteur(ecole, annee_debut)
+    compteur = _Compteur(ecole)
 
     # Élèves déjà en base, avec la ou les classes où ils sont inscrits cette
     # année — un élève sans inscription apparaît avec un ensemble vide.
@@ -533,7 +519,7 @@ def construire_plan(ecole, annee, lignes):
             entrees.append(entree)
             continue
 
-        matricule = compteur.reserver(ligne.matricule) or compteur.suivant()
+        matricule = compteur.reserver(ligne.matricule) or compteur.suivant(ligne.sexe)
         entree["matricule"] = matricule
         vus_dans_le_fichier[identite + (cle_classe,)] = ligne.source
 

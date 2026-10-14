@@ -24,8 +24,6 @@ PARAMETRES = [
      "Apparaît sur les bulletins et les documents officiels."),
     ("langue_documents", "Langue des documents", "fr", P.TypeValeur.TEXTE, P.Categorie.GENERAL,
      "Langue des bulletins et reçus générés."),
-    ("prefixe_matricule", "Préfixe des matricules", "ELV", P.TypeValeur.TEXTE, P.Categorie.GENERAL,
-     "Les matricules sont composés ainsi : PREFIXE-ANNEE-0001."),
 
     # --- Scolarité ---
     ("capacite_classe_defaut", "Capacité par défaut d'une classe", "40",

@@ -18,7 +18,7 @@ from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from . import models
+from . import matricules, models
 from .audit import journaliser
 from .permissions import ROLES_DIRECTION, EstSuperAdmin
 
@@ -83,14 +83,36 @@ class EcolePlateformeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = models.Ecole
-        fields = ["id", "nom", "adresse", "telephone", "email", "plan_abonnement", "plan_libelle",
+        fields = ["id", "nom", "code_ecole", "adresse", "telephone", "email", "plan_abonnement", "plan_libelle",
                   "abonnement_paye", "date_paiement", "statut", "statut_libelle",
                   "date_activation", "date_creation", "nb_utilisateurs", "nb_eleves",
                   "admins", "admin"]
         read_only_fields = ["id", "date_creation"]
+        # Facultatif : sans code saisi, `Ecole.save` en tire un du nom.
+        extra_kwargs = {"code_ecole": {"required": False, "allow_blank": True, "validators": []}}
 
     def get_admins(self, obj) -> list:
         return AdminEcoleSerializer(getattr(obj, "comptes_direction", []), many=True).data
+
+    def validate_code_ecole(self, valeur):
+        """
+        Le code ouvre chaque matricule de l'école. Le modifier ne touche pas
+        aux matricules déjà attribués, seulement aux suivants.
+        """
+        code = matricules.normaliser_code(valeur)
+        if not code:
+            if self.instance is not None:
+                raise serializers.ValidationError("Le code de l'école ne peut pas être vide.")
+            return ""
+        if not matricules.code_valide(code):
+            raise serializers.ValidationError(
+                f"De 2 à {matricules.CODE_LONGUEUR_MAX} lettres ou chiffres, sans espace ni tiret.")
+        autres = models.Ecole.objects.filter(code_ecole=code)
+        if self.instance is not None:
+            autres = autres.exclude(pk=self.instance.pk)
+        if autres.exists():
+            raise serializers.ValidationError("Ce code est déjà pris par une autre école.")
+        return code
 
     def validate(self, attrs):
         if self.instance is None and "admin" not in attrs:
