@@ -4,3 +4,34 @@
   color: var(--ink-400, #9aa3ad);
   cursor: not-allowed;
 }
+
+// Champ mot de passe avec bouton « afficher / masquer » (l'œil).
+.champ-mdp {
+  position: relative;
+
+  .input {
+    width: 100%;
+    padding-right: 44px; // place pour le bouton
+  }
+
+  .bascule-mdp {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ink-400);
+    cursor: pointer;
+
+    &:hover { color: var(--ink-600); }
+    &:focus-visible { outline: 2px solid var(--navy-800); outline-offset: 1px; }
+  }
+}

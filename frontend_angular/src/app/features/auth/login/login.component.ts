@@ -16,6 +16,8 @@ export class LoginComponent {
   private fb = inject(FormBuilder);
   loading = signal(false);
   erreur = signal<string | null>(null);
+  // L'œil du champ : montre en clair ce qui est tapé, pour vérifier sa saisie.
+  voirMotDePasse = signal(false);
   // Vide tant que le site de présentation n'est pas déployé : le lien reste
   // affiché mais inactif.
   landingUrl = environment.landingUrl;
