@@ -260,9 +260,14 @@ table.simple tr:hover td{background:var(--bg);}
    et s'ouvre au milieu pour laisser voir l'écran. */
 .login-screen{display:grid;grid-template-columns:1fr 1fr;min-height:100vh;background:var(--navy-950);}
 @media (max-width:860px){
-  /* Sans panneau de gauche, la photo repasse en fond d'écran, sous la carte. */
-  .login-screen{grid-template-columns:1fr;background:var(--navy-950) url('/assets/arriereplan.jpg') center/contain no-repeat;}
-  .login-side{display:none;}
+  /* La photo passe en bandeau en haut (une seule fois), le formulaire dessous.
+     Plus de photo sur .login-screen ni sous la carte : finie la surimpression. */
+  .login-screen{grid-template-columns:1fr;grid-template-rows:auto 1fr;background:var(--navy-950);}
+  .login-side{padding:26px 24px 22px;min-height:190px;justify-content:flex-end;gap:16px;
+    background:linear-gradient(180deg, rgba(11,29,51,0.55) 0%, rgba(11,29,51,0) 40%, rgba(11,29,51,0.9) 100%),
+      var(--navy-950) url('/assets/arriereplan.jpg') center/cover no-repeat;}
+  .login-side-quote p{font-size:19px;margin-bottom:8px;}
+  .login-orbit{display:none;}
 }
 .login-side{background:linear-gradient(180deg, rgba(11,29,51,0.94) 0%, rgba(11,29,51,0.35) 24%, rgba(18,42,72,0) 38%, rgba(18,42,72,0) 64%, rgba(27,58,99,0.55) 78%, rgba(11,29,51,0.94) 100%), var(--navy-950) url('/assets/arriereplan.jpg') left center/contain no-repeat;color:#fff;padding:56px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;}
 .login-side-top{display:flex;align-items:center;gap:10px;}
@@ -274,11 +279,12 @@ table.simple tr:hover td{background:var(--bg);}
 .login-orbit{position:absolute;right:-60px;bottom:-60px;width:280px;height:280px;border-radius:50%;border:1.5px solid rgba(255,255,255,0.08);}
 .login-form-wrap{display:flex;align-items:center;justify-content:center;padding:40px 24px;background:rgba(255,255,255,0.94);backdrop-filter:blur(10px);}
 .login-card{width:100%;max-width:380px;}
-/* Sur mobile le panneau de gauche disparaît : le formulaire redevient une
-   carte posée sur la photo. */
+/* Sous le bandeau, le formulaire est posé sur un fond clair uni. La marque
+   figure déjà dans le bandeau : on ne la répète pas dans la carte. */
 @media (max-width:860px){
-  .login-form-wrap{background:rgba(11,29,51,0.55);backdrop-filter:none;}
-  .login-card{background:var(--surface);border-radius:var(--radius);padding:26px 22px;box-shadow:0 18px 40px rgba(11,29,51,0.35);}
+  .login-form-wrap{background:var(--surface);backdrop-filter:none;align-items:flex-start;padding:30px 24px 40px;}
+  .login-card{background:transparent;border-radius:0;padding:0;box-shadow:none;}
+  .login-card-brand{display:none;}
 }
 .login-card-brand{display:flex;align-items:center;gap:10px;margin-bottom:34px;}
 .login-card h1{font-size:23px;font-weight:600;margin:0 0 6px;}
