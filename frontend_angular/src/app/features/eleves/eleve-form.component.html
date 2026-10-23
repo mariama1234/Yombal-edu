@@ -1,5 +1,6 @@
 <div class="page-head">
   <div>
+    <p class="module-eyebrow">Élèves &amp; familles</p>
     <h1>Inscrire un élève</h1>
     <p>Toutes les informations de l'élève, de sa famille et sa fiche sanitaire, puis les frais :
       la facture est générée à l'enregistrement, avant le passage en caisse.</p>
@@ -122,7 +123,44 @@
         <div class="form-section-title">Parent / Tuteur</div>
         <div class="form-section-sub">Contact principal à joindre pour cet élève.</div>
 
+        <!-- Un frère ou une sœur est déjà inscrit : on rattache l'élève au même
+             parent plutôt que d'en créer un second, identique. -->
+        <div class="field" style="margin-bottom:14px;">
+          <label for="recherche_parent">Parent déjà enregistré ? <span class="hint">(frère ou sœur déjà inscrit)</span></label>
+          @if (parentExistant(); as p) {
+            <div class="choix-liste">
+              <div class="choix-ligne" style="cursor:default;">
+                <span>
+                  <strong>{{ p.prenom }} {{ p.nom }}</strong>
+                  @if (p.telephone) { · {{ p.telephone }} }
+                  @if (p.enfants_noms) { <span class="hint"> — parent de {{ p.enfants_noms }}</span> }
+                </span>
+                <button type="button" class="panel-link" (click)="oublierParent()">Saisir un autre parent</button>
+              </div>
+            </div>
+          } @else {
+            <input class="input" id="recherche_parent" type="search" autocomplete="off"
+                   placeholder="Nom ou téléphone du parent…"
+                   [value]="rechercheParent()" (input)="chercherParent($any($event.target).value)">
+            @if (parentsTrouves().length) {
+              <div class="choix-liste" role="listbox" aria-label="Parents trouvés">
+                @for (p of parentsTrouves(); track p.id) {
+                  <button type="button" class="choix-ligne" role="option" (click)="choisirParent(p)">
+                    <span><strong>{{ p.prenom }} {{ p.nom }}</strong> @if (p.telephone) { · {{ p.telephone }} }</span>
+                    @if (p.enfants_noms) { <span class="hint">parent de {{ p.enfants_noms }}</span> }
+                  </button>
+                }
+              </div>
+            } @else if (rechercheParent().trim().length >= 2) {
+              <span class="hint">Aucun parent trouvé : saisissez-le ci-dessous.</span>
+            } @else {
+              <span class="hint">Sinon, saisissez un nouveau parent ci-dessous.</span>
+            }
+          }
+        </div>
+
         <div class="form-grid">
+          @if (!parentExistant()) {
           <div class="field">
             <label for="parent_nom_complet">Nom complet</label>
             <input class="input" id="parent_nom_complet" formControlName="parent_nom_complet" placeholder="Awa Diagne">
@@ -130,6 +168,7 @@
               <span class="hint hint-error">Indiquez le nom du parent ou tuteur.</span>
             }
           </div>
+          }
           <div class="field">
             <label for="parent_lien">Lien de parenté</label>
             <select class="input" id="parent_lien" formControlName="parent_lien">
@@ -140,6 +179,7 @@
             </select>
           </div>
         </div>
+        @if (!parentExistant()) {
         <div class="form-grid">
           <div class="field">
             <label for="parent_telephone">Téléphone</label>
@@ -163,6 +203,7 @@
             <input class="input" id="parent_profession" formControlName="parent_profession">
           </div>
         </div>
+        }
       </div>
 
       @if (peutSaisirSante()) {

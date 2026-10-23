@@ -65,6 +65,11 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
   // Ce que le profil peut faire depuis le dossier (matrice des autorisations).
   peutModifierEleve = computed(() => this.auth.peutEcrire('eleves'));
   peutInscrire = computed(() => this.auth.peutEcrire('inscriptions'));
+  /**
+   * La direction autorise l'entrée en classe même sans droits d'inscription
+   * réglés ; les autres profils attendent le règlement (le serveur l'exige).
+   */
+  estDirection = this.auth.estDirection;
   voitCaisse = computed(() => this.auth.peutLire('journal_caisse'));
   voitNotes = computed(() => this.auth.peutLire('notes'));
   /** Créer le compte de connexion de l'élève : gestion des comptes, donc direction. */

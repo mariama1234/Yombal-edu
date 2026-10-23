@@ -39,6 +39,7 @@ from django.utils import timezone
 from rest_framework.exceptions import APIException
 
 from . import finances, models, photos
+from .permissions import ROLES_DIRECTION
 
 
 class ErreurScolarite(Exception):
@@ -759,13 +760,19 @@ def _droits_regles(inscription):
     return reste is not None and reste <= 0
 
 
+def est_direction(utilisateur):
+    """Administrateur, directeur ou responsable administratif."""
+    return getattr(utilisateur, "role", None) in ROLES_DIRECTION
+
+
 def autoriser_en_classe(ecole, eleve, motif, utilisateur=None):
     """
     Exception : un inscrit incomplet est autorisé à suivre les cours.
 
     Le cas visé est celui d'une famille en difficulté passagère : les droits
     d'inscription sont réglés, le premier mois ne l'est pas encore. Sans droits
-    réglés, pas d'exception — ce serait une inscription gratuite.
+    réglés, seule la direction peut accorder l'exception : c'est elle qui
+    répond d'une inscription dont rien n'est encore encaissé.
 
     L'inscription garde son statut « Inscrit incomplet » : l'autorisation ne
     vaut pas règlement, et la confirmation viendra d'elle-même au paiement.
@@ -779,9 +786,10 @@ def autoriser_en_classe(ecole, eleve, motif, utilisateur=None):
     if inscription.statut != models.Inscription.Statut.EN_ATTENTE:
         raise ErreurScolarite(
             f"{_nom(eleve)} est déjà inscrit : aucune autorisation n'est nécessaire.")
-    if not _droits_regles(inscription):
+    if not _droits_regles(inscription) and not est_direction(utilisateur):
         raise ErreurScolarite(
-            "Les droits d'inscription doivent être réglés avant d'autoriser l'entrée en classe.")
+            "Les droits d'inscription doivent être réglés avant d'autoriser l'entrée en classe. "
+            "Sans ce règlement, seule la direction peut l'autoriser.")
     motif = (motif or "").strip()
     if len(motif) < 3:
         raise ErreurScolarite("Indiquez le motif de l'autorisation.")

@@ -1238,8 +1238,8 @@ class TestFinances(BaseAPI):
         type_depense = models.TypeDepense.objects.create(
             id_ecole=self.ecole, libelle="Loyer")
         r = self.client.post("/api/depenses/", {
-            "id_type_depense": type_depense.pk, "motif": "Loyer novembre",
-            "montant": "150000.00", "date_depense": "2026-11-05",
+            "id_type_depense": type_depense.pk, "motif": "Loyer octobre",
+            "montant": "150000.00", "date_depense": "2026-10-05",
         }, format="json")
         self.assertEqual(r.status_code, 201, r.content)
         self.assertEqual(r.data["id_ecole"], self.ecole.pk)
@@ -3561,7 +3561,9 @@ class TestEncaissementDepuisLeDossier(BaseDossierFinancier):
         """Le mois passe de « non payé » à « payé » sans second appel."""
         avant = self.client.get(f"/api/eleves/{self.eleve.pk}/finances/")
         octobre = [m for m in avant.data["echeancier"] if m["mois"] == "2026-10"][0]
-        self.assertEqual(octobre["statut"], "non_paye")
+        # L'écran lit l'horloge réelle : passé le 5 octobre, le mois impayé
+        # est « en retard ». Les deux disent « pas encore réglé ».
+        self.assertIn(octobre["statut"], ("non_paye", "en_retard"))
 
         reponse = self._encaisser(montant="25000")
         octobre = [m for m in reponse.data["situation"]["echeancier"]
@@ -4324,9 +4326,19 @@ class TestAutorisationEnClasse(BaseDossierFinancier):
         return [e["id"] for e in self.resultats(reponse)]
 
     def test_refusee_tant_que_les_droits_ne_sont_pas_regles(self):
-        self.assertEqual(self._autoriser().status_code, 400)
+        # La vie scolaire inscrit, mais n'accorde pas d'exception sans droits réglés.
+        secretaire = self._compte("secretaire@a.sn", self.ecole, "secretaire")
+        self.assertEqual(self._autoriser(self._client(secretaire.email)).status_code, 400)
         self.inscription.refresh_from_db()
         self.assertFalse(self.inscription.autorise_en_classe)
+
+    def test_la_direction_autorise_meme_sans_droits_regles(self):
+        reponse = self._autoriser()
+        self.assertEqual(reponse.status_code, 200, reponse.content)
+        self.inscription.refresh_from_db()
+        self.assertTrue(self.inscription.autorise_en_classe)
+        self.assertEqual(self.inscription.statut, "en_attente")
+        self.assertEqual(self.inscription.id_utilisateur_autorisation, self.admin)
 
     def test_lautorisation_laisse_linscription_incomplete(self):
         self._payer(self.droits, 50000)
@@ -4858,8 +4870,8 @@ class TestCorbeille(BaseAPI):
             id_type_depense=loyer, id_ecole=self.ecole, id_annee_scolaire=self.annee,
             categorie="Charges fixes", montant_prevu=Decimal("500000"))
         reponse = self.client.post("/api/depenses/", {
-            "motif": "Loyer de novembre", "id_type_depense": loyer.pk,
-            "montant": "150000", "date_depense": "2026-11-05",
+            "motif": "Loyer d'octobre", "id_type_depense": loyer.pk,
+            "montant": "150000", "date_depense": "2026-10-05",
         }, format="json")
         self.assertEqual(reponse.status_code, 201, reponse.content)
         pk = reponse.data["id"]
@@ -6699,3 +6711,185 @@ class TestCompleterLesFiches(BaseFinances):
         self.assertEqual(self.client_autre.get(self.URL, {"classe": self.classe.pk}).status_code, 400)
         prof = self._client(self.enseignant_user.email)
         self.assertEqual(prof.get(self.URL, {"classe": self.classe.pk}).status_code, 403)
+
+
+class TestRetoursPremierDeploiement(BaseFinances):
+    """Les remarques notées après le premier déploiement, une par une."""
+
+    # ---- Remarque 1 : l'année scolaire ----
+
+    def _annee(self, libelle, debut, fin, statut="archivee"):
+        return self.client.post("/api/annees-scolaires/", {
+            "libelle": libelle, "date_debut": debut, "date_fin": fin, "statut": statut,
+        }, format="json")
+
+    def test_libelle_inverse_refuse(self):
+        r = self._annee("2028-2027", "2027-10-01", "2028-07-31")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("libelle", r.data)
+
+    def test_dates_hors_du_libelle_refusees(self):
+        r = self._annee("2027-2028", "2022-10-12", "2028-07-12")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("date_debut", r.data)
+        r = self._annee("2027-2028", "2027-10-01", "2029-07-31")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("date_fin", r.data)
+
+    def test_annees_qui_se_chevauchent_refusees(self):
+        # 2026-2027 court du 01/10/2026 au 31/07/2027.
+        r = self._annee("2025-2026", "2025-10-01", "2026-10-15")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("2026-2027", str(r.data["date_debut"]))
+
+    def test_annee_suivante_acceptee(self):
+        r = self._annee("2027-2028", "2027-10-01", "2028-07-31", statut="active")
+        self.assertEqual(r.status_code, 201, r.content)
+
+    def test_archiver_une_ancienne_annee_reste_possible(self):
+        ancienne = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="Année 2019", statut="active",
+            date_debut=date(2019, 10, 1), date_fin=date(2020, 7, 31))
+        r = self.client.patch(f"/api/annees-scolaires/{ancienne.pk}/",
+                              {"statut": "archivee"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+
+    # ---- Remarques 2 et 3 : âges et capacités ----
+
+    def test_age_negatif_refuse(self):
+        r = self.client.post("/api/niveaux/", {"libelle": "CP", "age_min": 8, "age_max": -10},
+                             format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("age_max", r.data)
+
+    def test_capacite_negative_ou_nulle_refusee(self):
+        for capacite in (-7, 0):
+            r = self.client.post("/api/classes/", {
+                "nom": "CI A", "id_annee_scolaire": self.annee.pk, "capacite_max": capacite,
+            }, format="json")
+            self.assertEqual(r.status_code, 400, r.content)
+            self.assertIn("capacite_max", r.data)
+
+    # ---- Remarque 4 : la fréquence des frais ----
+
+    def test_frequence_choisie_dans_la_liste(self):
+        r = self.client.post("/api/types-frais/", {
+            "libelle": "Cantine", "montant_defaut": "5000", "frequence": "mensuelle",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["frequence"], "Mensuelle")
+        r = self.client.post("/api/types-frais/", {
+            "libelle": "Transport", "montant_defaut": "5000", "frequence": "par semaine",
+        }, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("frequence", r.data)
+
+    def test_montant_par_defaut_negatif_refuse(self):
+        r = self.client.post("/api/types-frais/", {
+            "libelle": "Tenue", "montant_defaut": "-100",
+        }, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+
+    # ---- Remarque 6 : le nom de l'école dans le menu ----
+
+    def test_le_profil_porte_le_nom_de_l_ecole(self):
+        self.assertEqual(self.client.get("/api/auth/moi/").data["ecole_nom"], "École A")
+        self.assertEqual(self.client_autre.get("/api/auth/moi/").data["ecole_nom"], "École B")
+
+    # ---- Remarque 8 : pas de paiement daté dans le futur ----
+
+    def test_paiement_dans_le_futur_refuse(self):
+        frais = models.FraisEleve.objects.create(
+            id_eleve=self.eleves[0], id_type_frais=self.type_frais,
+            id_annee_scolaire=self.annee, montant_du=25000)
+        demain = timezone.localdate() + timedelta(days=1)
+        r = self.client.post("/api/paiements/", {
+            "id_frais_eleve": frais.pk, "montant": "1000", "methode": "especes",
+            "date_paiement": f"{demain.isoformat()}T12:00:00",
+        }, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("date_paiement", r.data)
+        r = self.client.post("/api/paiements/encaisser/", {
+            "id_eleve": self.eleves[0].pk, "montant": "1000", "methode": "especes",
+            "date_paiement": f"{demain.isoformat()}T12:00:00",
+        }, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+        # Plus tard dans la journée reste accepté : seul le jour compte.
+        r = self.client.post("/api/paiements/", {
+            "id_frais_eleve": frais.pk, "montant": "1000", "methode": "especes",
+            "date_paiement": f"{timezone.localdate().isoformat()}T23:59:00",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+
+    # ---- Remarque 9 : plusieurs enfants pour un parent ----
+
+    def test_inscription_rattachee_a_un_parent_existant(self):
+        parent = models.ParentTuteur.objects.create(
+            id_ecole=self.ecole, nom="Diop", prenom="Awa", telephone="770000000")
+        models.EleveParent.objects.create(id_eleve=self.eleves[0], id_parent=parent,
+                                          lien_parente="mere", contact_principal=True)
+        r = self.client.post("/api/eleves/inscrire/", {
+            "nom": "Diop", "prenom": "Fatimata", "id_classe": self.classe.pk,
+            "id_annee_scolaire": self.annee.pk, "sexe": "F", "date_naissance": "2014-03-02",
+            "date_inscription": "2026-10-01", "id_parent": parent.pk, "parent_lien": "mere",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(models.ParentTuteur.objects.filter(id_ecole=self.ecole).count(), 1,
+                         "le parent est rattaché, pas recréé")
+
+        fiche = self.client.get(f"/api/parents/{parent.pk}/").data
+        self.assertEqual(sorted(e["id_eleve"] for e in fiche["enfants"]),
+                         sorted([self.eleves[0].pk, r.data["id"]]))
+        self.assertIn("Fatimata Diop", fiche["enfants_noms"])
+
+    def test_parent_d_une_autre_ecole_refuse(self):
+        etranger = models.ParentTuteur.objects.create(id_ecole=self.autre, nom="X", prenom="Y")
+        r = self.client.post("/api/eleves/inscrire/", {
+            "nom": "Ba", "prenom": "Awa", "id_classe": self.classe.pk,
+            "id_annee_scolaire": self.annee.pk, "sexe": "F", "date_naissance": "2014-03-02",
+            "date_inscription": "2026-10-01", "id_parent": etranger.pk,
+        }, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertFalse(models.EleveParent.objects.filter(id_parent=etranger).exists())
+
+    def test_recherche_d_un_parent_par_telephone(self):
+        models.ParentTuteur.objects.create(id_ecole=self.ecole, nom="Sow", prenom="Ali",
+                                           telephone="776543210")
+        models.ParentTuteur.objects.create(id_ecole=self.autre, nom="Sow", prenom="Ali",
+                                           telephone="776543210")
+        trouves = self.resultats(self.client.get("/api/parents/", {"search": "7765"}))
+        self.assertEqual([p["nom"] for p in trouves], ["Sow"])
+
+    # ---- Remarque 10 : budget, dépenses, trésorerie ----
+
+    def test_budget_negatif_refuse(self):
+        r = self.client.post(f"/api/types-depenses/?id_annee_scolaire={self.annee.pk}", {
+            "libelle": "Informatique", "budget_alloue": "-65",
+        }, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("budget_alloue", r.data)
+
+    def _depenser(self, montant, jour=None):
+        return self.client.post("/api/depenses/", {
+            "id_type_depense": self.type_depense.pk, "motif": "Achat",
+            "montant": montant, "date_depense": (jour or timezone.localdate()).isoformat(),
+        }, format="json")
+
+    def test_depense_negative_ou_nulle_refusee(self):
+        for montant in ("-7", "0"):
+            r = self._depenser(montant)
+            self.assertEqual(r.status_code, 400, r.content)
+            self.assertIn("montant", r.data)
+        self.assertFalse(models.JournalCaisse.objects.filter(id_ecole=self.ecole).exists())
+
+    def test_depense_dans_le_futur_refusee(self):
+        r = self._depenser("1000", timezone.localdate() + timedelta(days=1))
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("date_depense", r.data)
+
+    def test_une_depense_fait_baisser_la_tresorerie(self):
+        def tresorerie():
+            return Decimal(str(self.client.get("/api/finances/bilan/").data["tresorerie"]["total"]))
+        avant = tresorerie()
+        self.assertEqual(self._depenser("7000").status_code, 201)
+        self.assertEqual(tresorerie(), avant - Decimal("7000"))

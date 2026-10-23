@@ -5,6 +5,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FraisEleve, Paiement } from '../../core/models/models';
 import { FinanceService } from './finance.service';
 import { ToastService } from '../../core/services/toast.service';
+import { dateDuJour, instantDuPaiement, pasDansLeFutur } from '../../shared/dates';
 
 @Component({
   selector: 'app-paiement-form',
@@ -35,7 +36,9 @@ export class PaiementFormComponent implements OnInit {
   form = this.fb.group({
     montant: [0, [Validators.required, Validators.min(1)]],
     methode: ['especes', Validators.required],
-    date_paiement: [''],
+    // Le jour même par défaut ; un règlement reçu un autre jour se date de
+    // ce jour-là, jamais d'un jour à venir.
+    date_paiement: [dateDuJour(), pasDansLeFutur],
     reference_transaction: [''],
     commentaire: [''],
   });
@@ -51,8 +54,11 @@ export class PaiementFormComponent implements OnInit {
     });
   }
 
+  /** Borne haute du sélecteur : aujourd'hui. */
+  readonly aujourdhui = dateDuJour();
+
   submit(): void {
-    if (this.form.invalid || !this.frais()) return;
+    if (this.form.invalid || !this.frais()) return this.form.markAllAsTouched();
     this.enregistrement.set(true);
     this.erreur.set(null);
 
@@ -62,9 +68,9 @@ export class PaiementFormComponent implements OnInit {
         id_frais_eleve: this.frais()!.id,
         montant: v.montant,
         methode: v.methode,
-        // Le champ HTML rend « 2026-10-05 » ; l'API attend un instant. Omis,
-        // le serveur date le paiement de maintenant.
-        date_paiement: v.date_paiement ? `${v.date_paiement}T12:00:00` : undefined,
+        // Le champ HTML rend « 2026-10-05 » ; l'API attend un instant. Omis
+        // (aujourd'hui), le serveur date le paiement de maintenant.
+        date_paiement: instantDuPaiement(v.date_paiement),
         reference_transaction: v.reference_transaction || undefined,
         commentaire: v.commentaire || undefined,
       })

@@ -18,7 +18,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'annees-scolaires',
     titre: 'Années scolaires',
     titreSingulier: 'une année scolaire',
-    eyebrow: 'Administration',
+    eyebrow: 'Organisation scolaire',
     description:
       'Ouvre une nouvelle année, ou archive celle qui vient de s’achever. Classes, '
       + 'inscriptions, notes et frais sont tous rattachés à une année : c’est ce qui '
@@ -30,7 +30,11 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'statut', label: 'Statut', type: 'badge' },
     ],
     fields: [
-      { key: 'libelle', label: 'Libellé', type: 'text', required: true, placeholder: '2026-2027' },
+      {
+        key: 'libelle', label: 'Libellé', type: 'text', required: true, placeholder: '2026-2027',
+        aide: 'Deux années qui se suivent : le premier jour tombe dans la première, '
+            + 'le dernier dans la seconde. Deux années de l’école ne se chevauchent pas.',
+      },
       { key: 'date_debut', label: 'Premier jour', type: 'date', required: true },
       { key: 'date_fin', label: 'Dernier jour', type: 'date', required: true },
       {
@@ -56,7 +60,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'niveaux',
     titre: 'Niveaux',
     titreSingulier: 'un niveau',
-    eyebrow: 'Administration',
+    eyebrow: 'Organisation scolaire',
     description:
       'Les niveaux d’enseignement de l’école — CI, CP, CE1, 6ème… Une classe se '
       + 'rattache à un niveau, qui sert aussi à filtrer les listes.',
@@ -71,12 +75,12 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
         aide: 'Les montants des frais pour ce niveau se règlent dans Finances → Tarifs par niveau.',
       },
       {
-        key: 'age_min', label: 'Âge minimal (ans)', type: 'number',
+        key: 'age_min', label: 'Âge minimal (ans)', type: 'number', min: 0,
         aide: 'Âge de l’élève à la date de référence de l’année (31/12 par défaut, '
           + 'réglable dans Paramètres). Vide : pas de limite. Un niveau connu (CI, 6ème…) '
           + 'est prérempli à sa création.',
       },
-      { key: 'age_max', label: 'Âge maximal (ans)', type: 'number' },
+      { key: 'age_max', label: 'Âge maximal (ans)', type: 'number', min: 0 },
     ],
   },
 
@@ -88,7 +92,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'salles',
     titre: 'Salles',
     titreSingulier: 'une salle',
-    eyebrow: 'Administration',
+    eyebrow: 'Organisation scolaire',
     description:
       'Les salles de cours, avec leur capacité. L’emploi du temps refuse d’y placer '
       + 'deux séances sur le même créneau.',
@@ -98,7 +102,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     ],
     fields: [
       { key: 'nom', label: 'Nom de la salle', type: 'text', required: true, placeholder: 'Salle 1' },
-      { key: 'capacite', label: 'Capacité (places)', type: 'number' },
+      { key: 'capacite', label: 'Capacité (places)', type: 'number', min: 1 },
     ],
   },
 
@@ -130,19 +134,22 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
   parents: {
     key: 'parents',
     acces: { role: 'parent' },
+    enfants: true,
     suite: [
       { label: 'Élèves', chemin: '/eleves', module: 'eleves' },
     ],
     endpoint: 'parents',
     titre: 'Parents & tuteurs',
-    titreSingulier: 'un contact',
-    eyebrow: 'Général',
-    description: 'Contacts responsables des élèves.',
+    titreSingulier: 'un parent ou tuteur',
+    eyebrow: 'Élèves & familles',
+    description: 'Les parents et tuteurs des élèves. Un même parent peut avoir plusieurs enfants '
+      + 'à l’école : ouvrez sa fiche pour les voir, ou lui en rattacher un autre.',
     columns: [
       { key: 'nom', label: 'Nom' },
       { key: 'prenom', label: 'Prénom' },
       { key: 'telephone', label: 'Téléphone' },
       { key: 'email', label: 'E-mail' },
+      { key: 'enfants_noms', label: 'Enfants' },
     ],
     fields: [
       { key: 'nom', label: 'Nom', type: 'text', required: true },
@@ -178,7 +185,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'enseignants',
     titre: 'Enseignants & personnel',
     titreSingulier: 'un enseignant',
-    eyebrow: 'Gestion',
+    eyebrow: 'Pédagogie',
     description: 'Équipe pédagogique de l\u2019école.',
     columns: [
       { key: 'matricule', label: 'Matricule' },
@@ -223,7 +230,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
         key: 'statut', label: 'Type', type: 'select', required: true,
         options: [{ value: 'absent', label: 'Absent' }, { value: 'retard', label: 'Retard' }],
       },
-      { key: 'date_absence', label: 'Date et heure', type: 'date', required: true },
+      { key: 'date_absence', label: 'Date', type: 'date', required: true, defaut: 'aujourdhui', pasDansLeFutur: true },
       { key: 'justifiee', label: 'Absence justifiée', type: 'checkbox' },
       { key: 'motif', label: 'Motif', type: 'textarea', span2: true },
     ],
@@ -263,8 +270,8 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
         ],
       },
       { key: 'date_evaluation', label: "Date de l'épreuve", type: 'date', required: true },
-      { key: 'bareme', label: 'Barème (note maximale)', type: 'number', required: true, placeholder: '20' },
-      { key: 'coefficient', label: 'Coefficient dans la matière', type: 'number', required: true, placeholder: '1' },
+      { key: 'bareme', label: 'Barème (note maximale)', type: 'number', required: true, placeholder: '20', min: 1 },
+      { key: 'coefficient', label: 'Coefficient dans la matière', type: 'number', required: true, placeholder: '1', min: 0 },
     ],
   },
 
@@ -293,7 +300,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'id_evaluation', label: 'Évaluation', type: 'select', required: true, optionsEndpoint: 'evaluations', optionsLabelKey: 'type' },
       // Le barème appartient à l'évaluation : la note se saisit telle qu'elle
       // est portée sur la copie, la conversion sur 20 est faite au calcul.
-      { key: 'valeur', label: 'Note (dans le barème de l’évaluation)', type: 'number', required: true },
+      { key: 'valeur', label: 'Note (dans le barème de l’évaluation)', type: 'number', required: true, min: 0 },
       { key: 'appreciation', label: 'Appréciation', type: 'textarea', span2: true },
     ],
   },
@@ -343,11 +350,12 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'classes',
     titre: 'Classes',
     titreSingulier: 'une classe',
-    eyebrow: 'Pédagogie',
+    eyebrow: 'Organisation scolaire',
     filtres: [
       { param: 'id_niveau', tous: 'Tous les niveaux', optionsEndpoint: 'niveaux', optionsLabelKey: 'libelle', obligatoire: true },
     ],
-    description: 'Classes actives de l\u2019établissement.',
+    description: 'Les classes de l’année affichée en haut, rangées par niveau, avec leur effectif '
+      + 'et leur capacité.',
     columns: [
       { key: 'nom', label: 'Classe' },
       { key: 'niveau_libelle', label: 'Niveau' },
@@ -358,7 +366,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'nom', label: 'Nom de la classe', type: 'text', required: true, placeholder: '6ème A' },
       { key: 'id_niveau', label: 'Niveau (facultatif)', type: 'select', optionsEndpoint: 'niveaux', optionsLabelKey: 'libelle' },
       { key: 'id_annee_scolaire', label: 'Année scolaire', type: 'select', required: true, optionsEndpoint: 'annees-scolaires', optionsLabelKey: 'libelle' },
-      { key: 'capacite_max', label: 'Capacité maximale', type: 'number', required: true },
+      { key: 'capacite_max', label: 'Capacité maximale (places)', type: 'number', required: true, min: 1 },
       { key: 'id_enseignant_principal', label: 'Professeur principal', type: 'select', optionsEndpoint: 'enseignants', optionsLabelKey: 'matricule' },
     ],
   },
@@ -371,7 +379,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'types-frais',
     titre: 'Types de frais',
     titreSingulier: 'un type de frais',
-    eyebrow: 'Gestion financière',
+    eyebrow: 'Finances',
     description:
       'Les frais de votre établissement, sous le nom que vous leur donnez. La nature '
       + 'dit comment le logiciel les traite : les frais d’inscription et la mensualité '
@@ -397,12 +405,19 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
         ],
       },
       {
-        key: 'montant_defaut', label: 'Montant par défaut (F CFA)', type: 'number', required: true,
+        key: 'montant_defaut', label: 'Montant par défaut (F CFA)', type: 'number', required: true, min: 0,
         aide: 'Pour l’inscription et la mensualité, le tarif du niveau prime s’il est renseigné.',
       },
       {
-        key: 'frequence', label: 'Fréquence', type: 'text', placeholder: 'Mensuelle, Unique…',
-        aide: 'Un frais dont la fréquence contient « mensuel » est présenté par mois.',
+        key: 'frequence', label: 'Fréquence de paiement', type: 'select',
+        aide: 'Un frais mensuel est présenté et réglé mois par mois.',
+        // Mêmes valeurs que `TypeFraisSerializer.FREQUENCES` côté serveur.
+        options: [
+          { value: 'Unique', label: 'Unique (une seule fois)' },
+          { value: 'Mensuelle', label: 'Mensuelle (chaque mois)' },
+          { value: 'Trimestrielle', label: 'Trimestrielle (chaque trimestre)' },
+          { value: 'Annuelle', label: 'Annuelle (une fois par an)' },
+        ],
       },
     ],
   },
@@ -421,7 +436,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     // se fixe, et le mot manquait au menu pour qu'on l'y cherche.
     titre: 'Catégories & budgets',
     titreSingulier: 'une catégorie',
-    eyebrow: 'Gestion financière',
+    eyebrow: 'Finances',
     description: 'Postes de charge de l’école : loyer, salaires, fournitures, transport… Chacun porte '
       + 'l’enveloppe de l’année affichée en haut de l’écran, que les dépenses consomment au fur et à mesure. '
       + 'Changez d’année pour voir ou fixer celle d’un autre exercice.',
@@ -438,7 +453,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     fields: [
       { key: 'libelle', label: 'Libellé', type: 'text', required: true, placeholder: 'Loyer' },
       {
-        key: 'budget_alloue', label: 'Budget alloué (F CFA)', type: 'number',
+        key: 'budget_alloue', label: 'Budget alloué (F CFA)', type: 'number', min: 0,
         aide: 'Enveloppe de ce poste pour l’année affichée en haut de l’écran — une autre année '
             + 'a la sienne. Le disponible ne se saisit pas : il se déduit des dépenses enregistrées.',
       },
@@ -453,8 +468,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'depenses',
     titre: 'Dépenses',
     titreSingulier: 'une dépense',
-    eyebrow: 'Gestion financière',
-    description: 'Dépenses de l\u2019école, catégorisées.',
+    eyebrow: 'Finances',
+    description: 'Chaque sortie d’argent de l’école, rangée par catégorie : elle est débitée de la '
+      + 'caisse et consomme le budget de sa catégorie.',
     columns: [
       { key: 'date_depense', label: 'Date', type: 'date' },
       { key: 'categorie', label: 'Catégorie' },
@@ -477,8 +493,8 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
         aide: 'Ce qui reste sur le budget de la catégorie pour l’année affichée en haut. '
             + 'Le montant saisi s’en retranche au fur et à mesure de la frappe.',
       },
-      { key: 'montant', label: 'Montant (F CFA)', type: 'number', required: true },
-      { key: 'date_depense', label: 'Date', type: 'date', required: true, defaut: 'aujourdhui' },
+      { key: 'montant', label: 'Montant (F CFA)', type: 'number', required: true, min: 1 },
+      { key: 'date_depense', label: 'Date', type: 'date', required: true, defaut: 'aujourdhui', pasDansLeFutur: true },
       { key: 'motif', label: 'Motif', type: 'text', required: true, span2: true },
       {
         key: 'justificatif', label: 'Justificatif', type: 'fichier', span2: true,
@@ -496,7 +512,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'communications',
     titre: 'Communications',
     titreSingulier: 'une communication',
-    eyebrow: 'Gestion',
+    eyebrow: 'Communication & documents',
     description: 'Annonces et messages aux familles. Une communication se prépare en brouillon, puis s’envoie : les destinataires sont alors calculés à partir de la cible et du canal choisis.',
     columns: [
       { key: 'objet', label: 'Objet' },
@@ -560,7 +576,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'documents',
     titre: 'Documents & rapports',
     titreSingulier: 'un document',
-    eyebrow: 'Gestion',
+    eyebrow: 'Communication & documents',
     description: 'Pièces de l’établissement et des dossiers élèves. La visibilité détermine qui voit le document dans son espace.',
     columns: [
       { key: 'titre', label: 'Titre' },
@@ -692,7 +708,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'periodes',
     titre: 'Périodes scolaires',
     titreSingulier: 'une période',
-    eyebrow: 'Pédagogie',
+    eyebrow: 'Organisation scolaire',
     description: 'Trimestres ou semestres de l’année. Les évaluations et les bulletins s’y rattachent.',
     columns: [
       { key: 'libelle', label: 'Période' },
@@ -728,7 +744,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'id_matiere', label: 'Matière', type: 'select', required: true, optionsEndpoint: 'matieres', optionsLabelKey: 'nom' },
       { key: 'id_classe', label: 'Classe', type: 'select', required: true, optionsEndpoint: 'classes', optionsLabelKey: 'nom' },
       { key: 'id_annee_scolaire', label: 'Année scolaire', type: 'select', required: true, optionsEndpoint: 'annees-scolaires', optionsLabelKey: 'libelle' },
-      { key: 'coefficient', label: 'Coefficient', type: 'number', required: true, placeholder: '4' },
+      { key: 'coefficient', label: 'Coefficient', type: 'number', required: true, placeholder: '4', min: 0 },
     ],
   },
 
@@ -754,7 +770,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'id_matiere', label: 'Matière', type: 'select', required: true, optionsEndpoint: 'matieres', optionsLabelKey: 'nom' },
       { key: 'id_classe', label: 'Classe', type: 'select', required: true, optionsEndpoint: 'classes', optionsLabelKey: 'nom' },
       { key: 'id_annee_scolaire', label: 'Année scolaire', type: 'select', required: true, optionsEndpoint: 'annees-scolaires', optionsLabelKey: 'libelle' },
-      { key: 'volume_horaire', label: 'Volume horaire hebdomadaire', type: 'number' },
+      { key: 'volume_horaire', label: 'Volume horaire hebdomadaire', type: 'number', min: 0 },
     ],
   },
 
@@ -783,7 +799,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'recus',
     titre: 'Reçus',
     titreSingulier: '',
-    eyebrow: 'Gestion',
+    eyebrow: 'Finances',
     description: 'Reçus émis automatiquement à chaque encaissement. Consultation seule : un reçu ne se modifie pas.',
     lectureSeule: true,
     columns: [

@@ -4,7 +4,9 @@
       <div class="brand-mark"><img src="assets/logo-yombaledu.png" alt="YombalEdu"></div>
       <div>
         <div class="brand-name">YombalEdu</div>
-        <div class="brand-sub">École MIC CITE</div>
+        @if (auth.currentUser()?.ecole_nom; as ecole) {
+          <div class="brand-sub">{{ ecole }}</div>
+        }
       </div>
       <button type="button" class="sidebar-fermer" aria-label="Fermer le menu" (click)="menuOuvert.set(false)">✕</button>
     </div>

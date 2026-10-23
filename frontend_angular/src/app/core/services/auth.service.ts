@@ -1,9 +1,10 @@
-import { Injectable, computed, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { Observable, tap } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { Module, Utilisateur } from '../models/models';
+import { AnneeScolaireService } from './annee-scolaire.service';
 
 interface TokenResponse {
   access: string;
@@ -37,6 +38,8 @@ export class AuthService {
 
   /** Administrateur, directeur ou responsable administratif. */
   readonly estDirection = computed(() => this.currentUser()?.profil === 'direction');
+
+  private annees = inject(AnneeScolaireService);
 
   constructor(private http: HttpClient, private router: Router) {}
 
@@ -101,6 +104,7 @@ export class AuthService {
     localStorage.removeItem(this.ACCESS_KEY);
     localStorage.removeItem(this.REFRESH_KEY);
     this.currentUser.set(null);
+    this.annees.vider();
     this.router.navigate(['/connexion']);
   }
 }

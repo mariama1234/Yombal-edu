@@ -10,6 +10,7 @@ import {
 } from '../../core/models/models';
 import { FinanceService } from '../finances/finance.service';
 import { ToastService } from '../../core/services/toast.service';
+import { dateDuJour, instantDuPaiement, pasDansLeFutur } from '../../shared/dates';
 import { AuthService } from '../../core/services/auth.service';
 import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
 
@@ -103,10 +104,14 @@ export class EleveFinancesComponent implements OnInit {
     { value: 'carte_bancaire', label: 'Carte bancaire' },
   ];
 
+  /** Borne haute du sélecteur de date du paiement : aujourd'hui. */
+  readonly aujourdhui = dateDuJour();
+
   formPaiement = this.fb.group({
     montant: [null as number | null, [Validators.required, Validators.min(1)]],
     methode: ['especes' as MethodePaiement, Validators.required],
-    date_paiement: [''],
+    // Le jour même par défaut ; jamais un jour à venir.
+    date_paiement: [dateDuJour(), pasDansLeFutur],
     reference_transaction: [''],
     commentaire: [''],
   });
@@ -185,7 +190,7 @@ export class EleveFinancesComponent implements OnInit {
     this.message.set(null);
     this.erreur.set(null);
     this.fraisCoches.set([]);
-    this.formPaiement.reset({ methode: 'especes', date_paiement: '',
+    this.formPaiement.reset({ methode: 'especes', date_paiement: dateDuJour(),
                               reference_transaction: '', commentaire: '' });
   }
 
@@ -226,8 +231,9 @@ export class EleveFinancesComponent implements OnInit {
         montant: v.montant,
         methode: v.methode,
         frais: this.fraisCoches().length ? this.fraisCoches() : null,
-        // Le champ HTML rend « 2026-10-05 » ; l'API attend un instant.
-        date_paiement: v.date_paiement ? `${v.date_paiement}T12:00:00` : null,
+        // Le champ HTML rend « 2026-10-05 » ; l'API attend un instant. Omis
+        // (aujourd'hui), le serveur date le paiement de maintenant.
+        date_paiement: instantDuPaiement(v.date_paiement) ?? null,
         reference_transaction: v.reference_transaction || null,
         commentaire: v.commentaire || null,
       })

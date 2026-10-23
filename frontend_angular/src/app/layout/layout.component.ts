@@ -28,9 +28,14 @@ export class LayoutComponent implements OnInit {
   ngOnInit(): void {
     this.annees.charger();
     // Choisir une page referme le tiroir : sur téléphone, il couvre l'écran.
+    // Elle relance aussi la lecture des années si la première a échoué —
+    // sans effet une fois la liste chargée.
     this.router.events
       .pipe(filter((evenement) => evenement instanceof NavigationEnd))
-      .subscribe(() => this.menuOuvert.set(false));
+      .subscribe(() => {
+        this.menuOuvert.set(false);
+        this.annees.charger();
+      });
     // Le profil n'était chargé qu'à la connexion : après un rafraîchissement de
     // la page il manquait, et tout ce qui dépend du rôle — l'envoi de la photo
     // d'un élève, la suppression définitive dans la corbeille — disparaissait.

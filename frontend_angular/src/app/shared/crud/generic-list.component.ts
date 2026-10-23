@@ -159,6 +159,8 @@ export class GenericListComponent implements OnInit {
         this.dernierSupprime.set(String((colonne && item[colonne]) ?? `#${item.id}`));
         this.toast.succes('Placé dans la corbeille',
                           `« ${this.dernierSupprime()} » reste récupérable depuis la corbeille.`);
+        // Une année supprimée ne doit plus être proposée dans le bandeau haut.
+        if (this.config.endpoint === 'annees-scolaires') this.annees.recharger();
         this.charger();
       },
       error: (e) => this.erreur.set(e?.error?.detail ?? 'La suppression a échoué.'),

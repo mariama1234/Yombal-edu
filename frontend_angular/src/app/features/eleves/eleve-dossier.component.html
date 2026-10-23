@@ -1,4 +1,4 @@
-<p class="module-eyebrow">Gestion des élèves</p>
+<p class="module-eyebrow">Élèves &amp; familles</p>
 <div class="page-head">
   <div>
     <h1>Dossier de l'élève</h1>
@@ -210,8 +210,8 @@
                 Retirer l'autorisation
               </button>
             } @else if (!autorisationOuverte()) {
-              <button type="button" class="btn-primary" [disabled]="!sc.droits_regles"
-                      [title]="sc.droits_regles ? '' : aideDroits" (click)="autorisationOuverte.set(true)">
+              <button type="button" class="btn-primary" [disabled]="!sc.droits_regles && !estDirection()"
+                      [title]="sc.droits_regles || estDirection() ? '' : aideDroits" (click)="autorisationOuverte.set(true)">
                 Autoriser à entrer en classe
               </button>
             }
@@ -233,8 +233,13 @@
             @if (sc.droits_regles) {
               Les droits d'inscription sont réglés : en cas de difficulté financière, l'administration
               peut l'autoriser à suivre les cours. Son statut restera « Inscrit incomplet ».
+            } @else if (estDirection()) {
+              Les droits d'inscription ne sont pas encore réglés : en tant que direction, vous pouvez
+              tout de même l'autoriser à suivre les cours. Le motif restera au dossier, et son statut
+              « Inscrit incomplet ».
             } @else {
-              Une autorisation exceptionnelle n'est possible qu'une fois les droits d'inscription réglés.
+              Une autorisation exceptionnelle n'est possible qu'une fois les droits d'inscription réglés,
+              sauf décision de la direction.
             }
           </p>
 

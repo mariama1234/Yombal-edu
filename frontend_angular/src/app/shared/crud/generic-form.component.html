@@ -101,14 +101,16 @@
                   [id]="field.key"
                   [type]="field.type"
                   [formControlName]="field.key"
+                  [attr.min]="field.min ?? null"
+                  [attr.max]="dateMax(field)"
                   [placeholder]="field.placeholder ?? ''">
               }
             }
 
             @if (erreursServeur()[field.key]) {
               <span class="hint" style="color:var(--red);">{{ erreursServeur()[field.key] }}</span>
-            } @else if (form.get(field.key)?.invalid && form.get(field.key)?.touched) {
-              <span class="hint" style="color:var(--red);">Ce champ est requis.</span>
+            } @else if (erreurSaisie(field)) {
+              <span class="hint" style="color:var(--red);">{{ erreurSaisie(field) }}</span>
             } @else if (depasseLecture(field)) {
               <span class="hint" style="color:var(--orange-500);">
                 Le montant saisi dépasse ce qui reste — l'enregistrement reste possible.
@@ -130,4 +132,8 @@
       </div>
     </form>
   </div>
+
+  @if (config.enfants && modeEdition && idEnCours !== null) {
+    <app-enfants-parent [idParent]="idEnCours" />
+  }
 }

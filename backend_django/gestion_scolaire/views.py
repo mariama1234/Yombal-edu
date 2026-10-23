@@ -525,8 +525,12 @@ class ClasseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fi
 
 
 class ParentTuteurViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
-    queryset = models.ParentTuteur.objects.all()
+    # Les enfants de chaque parent sont listés avec lui (voir le serializer).
+    queryset = models.ParentTuteur.objects.prefetch_related("liens_eleves__id_eleve")
     serializer_class = serializers.ParentTuteurSerializer
+    # Retrouver le parent d'un frère ou d'une sœur à l'inscription : par son
+    # nom, ou par le téléphone que la famille donne au guichet.
+    search_fields = ["nom", "prenom", "telephone", "email"]
     permission_classes = [AccesModule]
     module = "parents"
     perimetre_famille = "liens_eleves__id_eleve"
@@ -2626,6 +2630,8 @@ class MoiView(APIView):
         donnees["role_libelle"] = request.user.get_role_display()
         donnees["profil"] = profil_de(request.user)
         donnees["acces"] = acces_du_compte(request.user)
+        # Affiché sous « YombalEdu » dans le menu : chaque école y lit son nom.
+        donnees["ecole_nom"] = request.user.id_ecole.nom if request.user.id_ecole_id else None
         return Response(donnees)
 
 

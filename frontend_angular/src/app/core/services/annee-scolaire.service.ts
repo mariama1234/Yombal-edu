@@ -34,8 +34,37 @@ export class AnneeScolaireService {
     return annee !== null && annee.statut !== 'active';
   });
 
+  private enCours = false;
+
   charger(): void {
-    if (this.chargee()) return;
+    if (this.chargee() || this.enCours) return;
+    this.lire();
+  }
+
+  /**
+   * Relit la liste après une création, une modification ou une suppression
+   * d'année. Sans ça, une école qui ouvrait sa première année restait sur
+   * « Aucune année » jusqu'au prochain rafraîchissement de la page.
+   *
+   * `activer` : l'année tout juste ouverte comme année en cours devient celle
+   * du bandeau — c'est sur elle qu'on s'apprête à travailler.
+   */
+  recharger(activer?: number): void {
+    this.lire(activer);
+  }
+
+  /**
+   * Oublie la liste à la déconnexion : le service survit au changement de
+   * compte, et le suivant — une autre école, ou le super administrateur qui
+   * n'en a aucune — aurait hérité des années du précédent.
+   */
+  vider(): void {
+    this.annees.set([]);
+    this.chargee.set(false);
+  }
+
+  private lire(activer?: number): void {
+    this.enCours = true;
     this.http
       .get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/`)
       .subscribe({
@@ -43,7 +72,12 @@ export class AnneeScolaireService {
           const annees = r.results ?? [];
           this.annees.set(annees);
           this.chargee.set(true);
+          this.enCours = false;
 
+          if (activer !== undefined && annees.some((a) => a.id === activer)) {
+            this.definir(activer);
+            return;
+          }
           // L'année mémorisée peut avoir été supprimée depuis, ou appartenir à
           // un autre compte : on retombe alors sur l'année active.
           const memorisee = this.idAnnee();
@@ -52,7 +86,9 @@ export class AnneeScolaireService {
             this.definir(active ? active.id : null);
           }
         },
-        error: () => this.chargee.set(true),
+        // Pas de `chargee` sur un échec : le prochain écran retentera, au
+        // lieu de figer « Aucune année » pour toute la session.
+        error: () => (this.enCours = false),
       });
   }
 

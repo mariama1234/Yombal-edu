@@ -11,12 +11,12 @@ interface PlaceholderData {
 
 const DATA: Record<string, PlaceholderData> = {
   communications: {
-    eyebrow: 'Gestion', title: 'Communications',
+    eyebrow: 'Communication & documents', title: 'Communications',
     lead: 'Messages aux familles, annonces internes et campagnes ciblées.',
     note: "Ce module n'a pas encore de table dédiée dans le schéma validé — il faudra définir un modèle Message (destinataires, canal, contenu, statut d'envoi) avant de le rendre fonctionnel.",
   },
   documents: {
-    eyebrow: 'Gestion', title: 'Documents & rapports',
+    eyebrow: 'Communication & documents', title: 'Documents & rapports',
     lead: 'Bulletins, listes administratives et états financiers exportables.',
     note: "Les données existent déjà (bulletins, frais, dépenses) — ce module reste à construire comme couche d'export (PDF/Excel) au-dessus de l'API existante, pas comme nouvelle table.",
   },

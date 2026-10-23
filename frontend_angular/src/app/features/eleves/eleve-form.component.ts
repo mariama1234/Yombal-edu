@@ -17,6 +17,7 @@ import {
   FicheSante,
   Niveau,
   Paginated,
+  ParentTuteur,
   TypeFrais,
 } from '../../core/models/models';
 import { ChoixFraisComponent, FraisAffiche } from '../../shared/frais/choix-frais.component';
@@ -69,6 +70,16 @@ export class EleveFormComponent implements OnInit {
   typesFrais = signal<TypeFrais[]>([]);
   /** Types de frais cochés, par identifiant. */
   fraisCoches = signal<number[]>([]);
+
+  /**
+   * Parent déjà enregistré auquel rattacher l'élève — celui d'un frère ou
+   * d'une sœur déjà inscrit. Sans lui, chaque enfant recréait le même parent
+   * et sa fiche n'en montrait qu'un.
+   */
+  parentExistant = signal<ParentTuteur | null>(null);
+  parentsTrouves = signal<ParentTuteur[]>([]);
+  rechercheParent = signal('');
+  private minuterieParent?: ReturnType<typeof setTimeout>;
 
   private idNiveau = signal<string>('');
   private idAnnee = signal<string>('');
@@ -209,6 +220,46 @@ export class EleveFormComponent implements OnInit {
     return type.nature === 'mensualite' || (type.frequence ?? '').toLowerCase().includes('mens');
   }
 
+  /** Cherche un parent déjà enregistré, par nom ou téléphone, au fil de la frappe. */
+  chercherParent(texte: string): void {
+    this.rechercheParent.set(texte);
+    clearTimeout(this.minuterieParent);
+    const terme = texte.trim();
+    if (terme.length < 2) {
+      this.parentsTrouves.set([]);
+      return;
+    }
+    this.minuterieParent = setTimeout(() => {
+      this.http
+        .get<Paginated<ParentTuteur>>(`${environment.apiUrl}/parents/`,
+                                      { params: { search: terme, page_size: '8' } })
+        .subscribe({
+          next: (r) => this.parentsTrouves.set(r.results ?? []),
+          error: () => this.parentsTrouves.set([]),
+        });
+    }, 250);
+  }
+
+  /** Rattache l'élève à ce parent : ses coordonnées n'ont plus à être saisies. */
+  choisirParent(parent: ParentTuteur): void {
+    this.parentExistant.set(parent);
+    this.parentsTrouves.set([]);
+    this.rechercheParent.set('');
+    this.exigerNouveauParent(false);
+  }
+
+  oublierParent(): void {
+    this.parentExistant.set(null);
+    this.exigerNouveauParent(true);
+  }
+
+  private exigerNouveauParent(exiger: boolean): void {
+    for (const champ of [this.form.controls.parent_nom_complet, this.form.controls.parent_telephone]) {
+      champ.setValidators(exiger ? Validators.required : null);
+      champ.updateValueAndValidity();
+    }
+  }
+
   basculerFrais(id: number): void {
     this.fraisCoches.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
   }
@@ -227,6 +278,9 @@ export class EleveFormComponent implements OnInit {
     this.alerte.set(null);
 
     const v = this.form.getRawValue();
+    // Parent existant : seul le lien de parenté accompagne son identifiant.
+    const parent = this.parentExistant();
+    const nouveau = parent === null;
     this.eleveService
       .inscrire({
         id_ecole: this.auth.currentUser()?.id_ecole!,
@@ -239,12 +293,13 @@ export class EleveFormComponent implements OnInit {
         id_classe: +v.id_classe!,
         id_annee_scolaire: +v.id_annee_scolaire!,
         date_inscription: v.date_inscription!,
-        parent_nom_complet: v.parent_nom_complet || undefined,
-        parent_telephone: v.parent_telephone || undefined,
-        parent_email: v.parent_email || undefined,
+        id_parent: parent?.id,
+        parent_nom_complet: (nouveau && v.parent_nom_complet) || undefined,
+        parent_telephone: (nouveau && v.parent_telephone) || undefined,
+        parent_email: (nouveau && v.parent_email) || undefined,
         parent_lien: v.parent_lien as any,
-        parent_adresse: v.parent_adresse || undefined,
-        parent_profession: v.parent_profession || undefined,
+        parent_adresse: (nouveau && v.parent_adresse) || undefined,
+        parent_profession: (nouveau && v.parent_profession) || undefined,
         sante: this.peutSaisirSante() ? this.ficheSante() : undefined,
         derogation_age: derogation,
         frais_optionnels: this.fraisCoches(),
@@ -313,6 +368,7 @@ export class EleveFormComponent implements OnInit {
     this.erreur.set(null);
     this.alerte.set(null);
     this.fraisCoches.set([]);
+    this.oublierParent();
     this.form.reset({
       sexe: 'F',
       parent_lien: 'mere',

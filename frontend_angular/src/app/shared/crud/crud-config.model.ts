@@ -96,6 +96,13 @@ export interface FieldConfig {
    * `'aujourdhui'` pour un champ `date` : la date du jour.
    */
   defaut?: 'aujourdhui';
+  /**
+   * Plus petite valeur admise d'un champ `number` : 0 pour un âge ou un
+   * montant, 1 pour une capacité. Le serveur la contrôle aussi.
+   */
+  min?: number;
+  /** Champ `date` : un jour à venir est refusé (paiement, dépense…). */
+  pasDansLeFutur?: boolean;
 }
 
 /**
@@ -179,6 +186,11 @@ export interface EntityConfig {
   lectureSeule?: boolean;
   /** Fiches dont on peut créer le compte de connexion (parents, enseignants). */
   acces?: AccesConfig;
+  /**
+   * Fiche d'un parent : en modification, le formulaire montre ses enfants et
+   * permet d'en rattacher ou d'en détacher.
+   */
+  enfants?: boolean;
   /** Actions métier proposées sur chaque ligne. */
   actions?: RowAction[];
   /** Listes déroulantes de filtrage au-dessus du tableau. */

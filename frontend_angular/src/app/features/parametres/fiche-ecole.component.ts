@@ -4,6 +4,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { GenericCrudService } from '../../shared/crud/generic-crud.service';
 import { ToastService } from '../../core/services/toast.service';
+import { AuthService } from '../../core/services/auth.service';
 import { Ecole } from '../../core/models/models';
 
 /**
@@ -27,6 +28,7 @@ export class FicheEcoleComponent implements OnInit {
   private fb = inject(FormBuilder);
   private crud = inject<GenericCrudService<any>>(GenericCrudService);
   private toast = inject(ToastService);
+  private auth = inject(AuthService);
 
   ecole = signal<Ecole | null>(null);
   chargement = signal(true);
@@ -72,6 +74,9 @@ export class FicheEcoleComponent implements OnInit {
     this.crud.update('ecoles', ecole.id, this.form.getRawValue() as any).subscribe({
       next: (maj: any) => {
         this.ecole.set(maj);
+        // Le menu affiche le nom de l'école : il suit le changement sans
+        // attendre la prochaine connexion.
+        this.auth.currentUser.update((u) => (u ? { ...u, ecole_nom: maj.nom } : u));
         this.enregistrement.set(false);
         this.toast.succes('Informations enregistrées', maj.nom);
       },

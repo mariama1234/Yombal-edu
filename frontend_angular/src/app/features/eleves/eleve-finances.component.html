@@ -214,8 +214,12 @@
               </div>
               <div class="field">
                 <label for="date-paiement">Date du paiement</label>
-                <input class="input" id="date-paiement" type="date" formControlName="date_paiement">
-                <span class="hint">Vide = aujourd'hui.</span>
+                <input class="input" id="date-paiement" type="date" formControlName="date_paiement" [max]="aujourdhui">
+                @if (formPaiement.controls.date_paiement.hasError('dateFuture')) {
+                  <span class="hint hint-error">La date ne peut pas dépasser aujourd'hui.</span>
+                } @else {
+                  <span class="hint">Aujourd'hui par défaut.</span>
+                }
               </div>
             </div>
 

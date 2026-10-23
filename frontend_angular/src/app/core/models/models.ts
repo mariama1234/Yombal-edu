@@ -23,6 +23,8 @@ export interface Utilisateur {
   /** Renseignés par /auth/moi/ seulement. */
   role_libelle?: string;
   profil?: string;
+  /** Nom de l'école du compte, affiché dans le menu ; `null` pour le super administrateur. */
+  ecole_nom?: string | null;
   /** Modules ouverts au compte et niveau d'accès, lus sur la matrice du serveur. */
   acces?: Partial<Record<Module, NiveauAcces>>;
 }
@@ -99,6 +101,22 @@ export interface ParentTuteur {
   telephone?: string;
   email?: string;
   adresse?: string;
+  /** Enfants rattachés, frères et sœurs compris (lecture seule). */
+  enfants?: EnfantDuParent[];
+  /** Leurs noms, séparés par des virgules, pour la liste des parents. */
+  enfants_noms?: string;
+}
+
+/** Un enfant vu depuis la fiche de son parent. */
+export interface EnfantDuParent {
+  /** Identifiant du rattachement (`/eleves-parents/{id}/`), pour le défaire. */
+  id_lien: number;
+  id_eleve: number;
+  nom_complet: string;
+  matricule: string;
+  lien: 'pere' | 'mere' | 'tuteur' | 'autre';
+  lien_libelle: string;
+  contact_principal: boolean;
 }
 
 export interface Eleve {
@@ -178,6 +196,8 @@ export interface EleveInscriptionPayload {
   id_classe: number;
   id_annee_scolaire: number;
   date_inscription: string;
+  /** Parent déjà enregistré (frère ou sœur inscrit) : rattaché au lieu d'être recréé. */
+  id_parent?: number;
   parent_nom_complet?: string;
   parent_telephone?: string;
   parent_email?: string;

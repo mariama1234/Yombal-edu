@@ -180,6 +180,13 @@ h1,h2,h3{font-family:var(--font-display);margin:0;}
 .panel-title{font-family:var(--font-display);font-size:15px;font-weight:600;}
 .panel-link{font-size:12.5px;color:var(--orange-500);font-weight:600;background:none;border:none;cursor:pointer;}
 
+/* Résultats d'une recherche à choisir sous un champ (parent existant, enfant à rattacher). */
+.choix-liste{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;margin-top:6px;overflow:hidden;background:var(--surface);}
+.choix-ligne{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 12px;background:none;border:none;border-bottom:1px solid var(--line);text-align:left;cursor:pointer;font:inherit;color:var(--ink-900);}
+.choix-ligne:last-child{border-bottom:none;}
+.choix-ligne:hover,.choix-ligne:focus-visible{background:var(--bg);}
+.choix-ligne .hint{margin:0;}
+
 .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:26px;}
 @media (max-width:1100px){.kpi-grid{grid-template-columns:repeat(2,1fr);}}
 @media (max-width:560px){.kpi-grid{grid-template-columns:1fr;}}

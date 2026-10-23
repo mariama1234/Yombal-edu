@@ -1,3 +1,4 @@
+import re
 from decimal import Decimal
 
 from rest_framework import serializers
@@ -5,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
+from django.utils import timezone
 from . import finances, justificatifs, matricules, models, scolarite
 from .permissions import ROLES_DIRECTION, peut_ecrire, peut_lire
 
@@ -265,7 +267,58 @@ class AnneeScolaireSerializer(UniciteParEcoleMixin, serializers.ModelSerializer)
             raise serializers.ValidationError(
                 {"date_fin": "La fin de l'année scolaire doit suivre son début."}
             )
+
+        # Le libellé, les dates et le chevauchement ne se contrôlent que s'ils
+        # changent : archiver une ancienne année saisie avant ces règles ne
+        # doit pas exiger d'en corriger d'abord le libellé.
+        if not {"libelle", "date_debut", "date_fin"} & attrs.keys():
+            return attrs
+        libelle = attrs.get("libelle", getattr(self.instance, "libelle", ""))
+        self._verifier_libelle(libelle, debut, fin)
+        self._verifier_chevauchement(debut, fin)
         return attrs
+
+    @staticmethod
+    def _verifier_libelle(libelle, debut, fin):
+        """
+        « 2026-2027 » : deux années qui se suivent, la rentrée dans la
+        première, la fin des cours dans la seconde. Un « 2027-2026 » ouvert en
+        2022 se retrouvait sinon partout dans les listes sans que rien ne colle.
+        """
+        correspondance = re.fullmatch(r"\s*(\d{4})\s*-\s*(\d{4})\s*", libelle or "")
+        if correspondance is None:
+            raise serializers.ValidationError(
+                {"libelle": "Écrivez l'année sous la forme 2026-2027."})
+        premiere, seconde = (int(a) for a in correspondance.groups())
+        if seconde != premiere + 1:
+            raise serializers.ValidationError(
+                {"libelle": f"La seconde année doit suivre la première : {premiere}-{premiere + 1}."})
+        if debut and debut.year != premiere:
+            raise serializers.ValidationError(
+                {"date_debut": f"Le premier jour doit tomber en {premiere}, comme le libellé."})
+        if fin and fin.year != seconde:
+            raise serializers.ValidationError(
+                {"date_fin": f"Le dernier jour doit tomber en {seconde}, comme le libellé."})
+
+    def _verifier_chevauchement(self, debut, fin):
+        """
+        Deux années de la même école ne se recouvrent pas : un jour donné
+        relève d'une seule année, sinon une dépense ou une absence de ce jour-là
+        serait imputée à deux exercices à la fois.
+        """
+        requete = self.context.get("request")
+        if requete is None or not (debut and fin):
+            return
+        voisines = models.AnneeScolaire.objects.filter(
+            id_ecole_id=requete.user.id_ecole_id, date_debut__lte=fin, date_fin__gte=debut)
+        if self.instance is not None:
+            voisines = voisines.exclude(pk=self.instance.pk)
+        voisine = voisines.order_by("date_debut").first()
+        if voisine is not None:
+            raise serializers.ValidationError({
+                "date_debut": f"Ces dates recouvrent l'année {voisine.libelle} "
+                              f"({voisine.date_debut:%d/%m/%Y} — {voisine.date_fin:%d/%m/%Y}).",
+            })
 
 
 class PeriodeScolaireSerializer(serializers.ModelSerializer):
@@ -301,6 +354,12 @@ class NiveauSerializer(serializers.ModelSerializer):
         model = models.Niveau
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+        # Explicites : un âge négatif passait l'écran, et le message par
+        # défaut ne disait pas de quel âge il s'agissait.
+        extra_kwargs = {
+            "age_min": {"min_value": 0, "error_messages": {"min_value": "Un âge ne peut pas être négatif."}},
+            "age_max": {"min_value": 0, "error_messages": {"min_value": "Un âge ne peut pas être négatif."}},
+        }
 
     def get_tarifs(self, obj) -> dict:
         return {str(t.id_type_frais_id): finances.montant_json(t.montant) for t in obj.tarifs.all()}
@@ -330,6 +389,11 @@ class ClasseSerializer(serializers.ModelSerializer):
         model = models.Classe
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+        # Une classe de zéro place ne pourrait inscrire personne.
+        extra_kwargs = {
+            "capacite_max": {"min_value": 1, "error_messages": {
+                "min_value": "La capacité doit être d'au moins une place."}},
+        }
 
     def get_enseignant_nom(self, obj) -> str | None:
         if obj.id_enseignant_principal:
@@ -366,10 +430,34 @@ class AccesFicheMixin(serializers.ModelSerializer):
 
 
 class ParentTuteurSerializer(AccesFicheMixin):
+    # Les enfants rattachés, frères et sœurs compris : ouvrir la fiche d'un
+    # parent doit dire de qui il est le parent, et la liste les nommer.
+    enfants = serializers.SerializerMethodField()
+    enfants_noms = serializers.SerializerMethodField()
+
     class Meta:
         model = models.ParentTuteur
         fields = "__all__"
         read_only_fields = ["id_ecole", "id_utilisateur"]
+
+    @staticmethod
+    def _liens(obj):
+        # Le ViewSet précharge les liens : pas de requête par ligne.
+        return sorted(obj.liens_eleves.all(), key=lambda l: (l.id_eleve.prenom, l.id_eleve.nom))
+
+    def get_enfants(self, obj) -> list:
+        return [{
+            "id_lien": lien.pk,
+            "id_eleve": lien.id_eleve_id,
+            "nom_complet": f"{lien.id_eleve.prenom} {lien.id_eleve.nom}".strip(),
+            "matricule": lien.id_eleve.matricule,
+            "lien": lien.lien_parente,
+            "lien_libelle": lien.get_lien_parente_display(),
+            "contact_principal": lien.contact_principal,
+        } for lien in self._liens(obj)]
+
+    def get_enfants_noms(self, obj) -> str:
+        return ", ".join(f"{l.id_eleve.prenom} {l.id_eleve.nom}".strip() for l in self._liens(obj))
 
 
 class EleveParentSerializer(serializers.ModelSerializer):
@@ -535,7 +623,11 @@ class EleveInscriptionSerializer(serializers.Serializer):
     id_annee_scolaire = serializers.PrimaryKeyRelatedField(queryset=models.AnneeScolaire.objects.all())
     date_inscription = serializers.DateField()
 
-    # Section "Parent / Tuteur" (optionnelle)
+    # Section "Parent / Tuteur" (optionnelle). `id_parent` rattache l'élève à
+    # un parent déjà enregistré — le frère ou la sœur d'un inscrit — au lieu
+    # d'en créer un second, identique, à chaque enfant.
+    id_parent = serializers.PrimaryKeyRelatedField(
+        queryset=models.ParentTuteur.objects.all(), required=False, allow_null=True)
     parent_nom_complet = serializers.CharField(max_length=200, required=False, allow_blank=True)
     parent_telephone = serializers.CharField(max_length=30, required=False, allow_blank=True)
     parent_email = serializers.EmailField(required=False, allow_blank=True)
@@ -578,6 +670,11 @@ class EleveInscriptionSerializer(serializers.Serializer):
         if any(t.id_ecole_id != ecole.pk for t in attrs.get("frais_optionnels", [])):
             raise serializers.ValidationError(
                 {"frais_optionnels": "Ce type de frais n'appartient pas à votre école."}
+            )
+        parent = attrs.get("id_parent")
+        if parent is not None and parent.id_ecole_id != ecole.pk:
+            raise serializers.ValidationError(
+                {"id_parent": "Ce parent n'appartient pas à votre école."}
             )
 
         attrs["sante"] = self._valider_sante(attrs.get("sante"))
@@ -658,7 +755,14 @@ class EleveInscriptionSerializer(serializers.Serializer):
             validated_data.get("frais_optionnels", []), classe=validated_data["id_classe"],
         )
 
-        if validated_data.get("parent_nom_complet"):
+        if validated_data.get("id_parent") is not None:
+            models.EleveParent.objects.create(
+                id_eleve=eleve,
+                id_parent=validated_data["id_parent"],
+                lien_parente=validated_data.get("parent_lien", models.EleveParent.LienParente.AUTRE),
+                contact_principal=True,
+            )
+        elif validated_data.get("parent_nom_complet"):
             nom_complet = validated_data["parent_nom_complet"].split(" ", 1)
             parent = models.ParentTuteur.objects.create(
                 id_ecole=validated_data["id_ecole"],
@@ -946,6 +1050,10 @@ class SalleSerializer(serializers.ModelSerializer):
         model = models.Salle
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+        extra_kwargs = {
+            "capacite": {"min_value": 1, "error_messages": {
+                "min_value": "La capacité doit être d'au moins une place."}},
+        }
 
 
 class EmploiDuTempsSerializer(serializers.ModelSerializer):
@@ -1005,10 +1113,28 @@ class TypeFraisSerializer(UniciteParEcoleMixin, serializers.ModelSerializer):
 
     nature_libelle = serializers.CharField(source="get_nature_display", read_only=True)
 
+    # Liste fermée, comme à l'écran : tapée à la main, la fréquence finissait
+    # en « mensuel », « Mois », « par mois »… et seule celle qui contient
+    # « mens » est présentée par mois (`finances.est_mensuel`).
+    FREQUENCES = ("Unique", "Mensuelle", "Trimestrielle", "Annuelle")
+
     class Meta:
         model = models.TypeFrais
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+        extra_kwargs = {
+            "montant_defaut": {"min_value": 0, "error_messages": {
+                "min_value": "Le montant ne peut pas être négatif."}},
+        }
+
+    def validate_frequence(self, valeur):
+        if not valeur:
+            return valeur
+        for frequence in self.FREQUENCES:
+            if valeur.strip().lower() == frequence.lower():
+                return frequence
+        raise serializers.ValidationError(
+            "Choisissez une fréquence de la liste : " + ", ".join(self.FREQUENCES) + ".")
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -1079,6 +1205,17 @@ class FraisEleveSerializer(serializers.ModelSerializer):
         return frais
 
 
+def refuser_date_future(instant, message="Un paiement ne peut pas être daté dans le futur."):
+    """
+    Un règlement se date du jour où il a été reçu : jamais d'un jour à venir.
+    Comparé au jour près, pas à la seconde : la caisse date « aujourd'hui »
+    à midi, ce qui, saisi le matin, tombe quelques heures plus tard.
+    """
+    if instant is not None and timezone.localdate(instant) > timezone.localdate():
+        raise serializers.ValidationError(message)
+    return instant
+
+
 class PaiementSerializer(serializers.ModelSerializer):
     # Le reçu est créé dans la foulée de l'encaissement : le renvoyer ici évite
     # à l'écran caissier une seconde requête pour proposer l'impression.
@@ -1117,6 +1254,9 @@ class PaiementSerializer(serializers.ModelSerializer):
     def get_eleve_nom(self, obj) -> str:
         eleve = obj.id_frais_eleve.id_eleve
         return f"{eleve.prenom} {eleve.nom}"
+
+    def validate_date_paiement(self, valeur):
+        return refuser_date_future(valeur)
 
     def validate(self, attrs):
         """
@@ -1337,6 +1477,9 @@ class EncaissementSerializer(serializers.Serializer):
     frais = serializers.ListField(child=serializers.IntegerField(), required=False,
                                   allow_null=True, allow_empty=True)
 
+    def validate_date_paiement(self, valeur):
+        return refuser_date_future(valeur)
+
 
 class GenerationRelancesSerializer(serializers.Serializer):
     """Entrée de POST /api/relances/generer/."""
@@ -1362,7 +1505,9 @@ class TypeDepenseSerializer(serializers.ModelSerializer):
     après une écriture, l'instance renvoyée sort de la sauvegarde et non de la
     liste annotée.
     """
-    budget_alloue = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+    budget_alloue = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, min_value=Decimal("0"),
+        error_messages={"min_value": "Le budget ne peut pas être négatif."})
     montant_depense = serializers.SerializerMethodField()
     budget_disponible = serializers.SerializerMethodField()
 
@@ -1454,6 +1599,18 @@ class DepenseSerializer(serializers.ModelSerializer):
     def get_a_justificatif(self, obj) -> bool:
         return justificatifs.chemin(obj) is not None
 
+    def validate_montant(self, valeur):
+        # Négative, une dépense créditait la caisse au lieu de la débiter, et
+        # rendait du budget à la catégorie.
+        if valeur <= 0:
+            raise serializers.ValidationError("Le montant d'une dépense doit être supérieur à zéro.")
+        return valeur
+
+    def validate_date_depense(self, valeur):
+        if valeur > timezone.localdate():
+            raise serializers.ValidationError("Une dépense ne peut pas être datée dans le futur.")
+        return valeur
+
     def get_saisi_par(self, obj) -> str | None:
         u = obj.id_utilisateur
         return f"{u.prenom} {u.nom}".strip() if u else None
@@ -1470,6 +1627,10 @@ class BudgetSerializer(serializers.ModelSerializer):
         model = models.Budget
         fields = "__all__"
         read_only_fields = ["id_ecole"]
+        extra_kwargs = {
+            "montant_prevu": {"min_value": 0, "error_messages": {
+                "min_value": "Le budget ne peut pas être négatif."}},
+        }
 
     def get_ecart(self, obj) -> float:
         return float(obj.montant_prevu - obj.montant_realise)

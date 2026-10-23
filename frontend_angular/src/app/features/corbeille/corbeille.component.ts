@@ -6,6 +6,7 @@ import { ENTITY_CONFIGS } from '../../shared/crud/entity-configs';
 import { EntityConfig } from '../../shared/crud/crud-config.model';
 import { AuthService } from '../../core/services/auth.service';
 import { ToastService } from '../../core/services/toast.service';
+import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 
 /** Une ligne de GET /api/corbeille/. */
 export interface ElementCorbeille {
@@ -41,6 +42,7 @@ export class CorbeilleComponent {
   private crud: GenericCrudService<any> = inject(GenericCrudService);
   private auth = inject(AuthService);
   private toast = inject(ToastService);
+  private annees = inject(AnneeScolaireService);
 
   elements = signal<ElementCorbeille[]>([]);
   total = signal(0);
@@ -99,6 +101,8 @@ export class CorbeilleComponent {
         this.toast.succes('Élément restauré',
           `« ${element.libelle} » est de retour${element.emporte ? `, avec ${element.emporte}` : ''}.`);
         this.enCours.set(null);
+        // Une année restaurée doit reparaître dans le bandeau haut.
+        this.annees.recharger();
         this.reculerSiPageVide();
         this.charger();
       },

@@ -1,6 +1,6 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormBuilder, FormGroup, ReactiveFormsModule, ValidatorFn, Validators } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Observable, concat, forkJoin, toArray } from 'rxjs';
 import { GenericCrudService } from './generic-crud.service';
@@ -10,11 +10,13 @@ import { ENTITY_CONFIGS } from './entity-configs';
 import { EntityConfig, EtapeSuivante, FieldConfig } from './crud-config.model';
 import { AuthService } from '../../core/services/auth.service';
 import { Module } from '../../core/models/models';
+import { dateDuJour, pasDansLeFutur } from '../dates';
+import { EnfantsParentComponent } from '../parents/enfants-parent.component';
 
 @Component({
   selector: 'app-generic-form',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, EnfantsParentComponent],
   templateUrl: './generic-form.component.html',
 })
 export class GenericFormComponent implements OnInit {
@@ -81,7 +83,9 @@ export class GenericFormComponent implements OnInit {
       // Un champ `lecture` n'a pas de contrôle : il affiche une valeur qui
       // vient d'ailleurs, et ne doit pas partir dans le payload.
       if (field.type === 'lecture' || field.type === 'fichier') continue;
-      const validators = field.required ? [Validators.required] : [];
+      const validators: ValidatorFn[] = field.required ? [Validators.required] : [];
+      if (field.min !== undefined) validators.push(Validators.min(field.min));
+      if (field.pasDansLeFutur) validators.push(pasDansLeFutur);
       controls[field.key] = [field.type === 'checkbox' ? false : this.valeurParDefaut(field), validators];
       if (field.optionsEndpoint) {
         this.optionsParChamp[field.key] = [];
@@ -95,14 +99,30 @@ export class GenericFormComponent implements OnInit {
    * par celle de la ligne chargée : le défaut ne vaut que pour une création.
    */
   private valeurParDefaut(field: FieldConfig): string {
-    if (field.defaut === 'aujourdhui') {
-      // Date locale, pas `toISOString()` : en UTC, une saisie faite tard le
-      // soir tomberait sur le lendemain dans les fuseaux à l'est de Greenwich.
-      const d = new Date();
-      const deux = (n: number) => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${deux(d.getMonth() + 1)}-${deux(d.getDate())}`;
-    }
+    if (field.defaut === 'aujourdhui') return dateDuJour();
     return '';
+  }
+
+  /** Borne haute du sélecteur de date : aujourd'hui pour un champ `pasDansLeFutur`. */
+  dateMax(field: FieldConfig): string | null {
+    return field.pasDansLeFutur ? dateDuJour() : null;
+  }
+
+  /**
+   * Ce qui ne va pas dans la saisie d'un champ. Un nombre négatif ou une date
+   * à venir se signalent dès la frappe ; un champ vide, seulement une fois
+   * quitté — sinon le formulaire s'ouvrirait couvert d'erreurs.
+   */
+  erreurSaisie(field: FieldConfig): string | null {
+    const controle = this.form.get(field.key);
+    if (!controle || !controle.invalid || !(controle.touched || controle.dirty)) return null;
+    if (controle.hasError('required')) return controle.touched ? 'Ce champ est requis.' : null;
+    if (controle.hasError('min')) {
+      return field.min === 0 ? 'La valeur ne peut pas être négative.'
+                             : `La valeur doit être d'au moins ${field.min}.`;
+    }
+    if (controle.hasError('dateFuture')) return 'La date ne peut pas dépasser aujourd’hui.';
+    return 'Valeur invalide.';
   }
 
   private chargerOptions(): void {
@@ -341,11 +361,11 @@ export class GenericFormComponent implements OnInit {
         const id = enregistre?.id ?? this.idEnCours!;
         const pieces = this.requetesPieces(id);
         if (pieces.length === 0) {
-          this.terminer(payload);
+          this.terminer(payload, id);
           return;
         }
         concat(...pieces).pipe(toArray()).subscribe({
-          next: () => this.terminer(payload),
+          next: () => this.terminer(payload, id),
           error: (e) => {
             // La ligne est enregistrée, seule la pièce a été refusée : le
             // formulaire reste ouvert sur elle, en modification, pour qu'on
@@ -395,8 +415,13 @@ export class GenericFormComponent implements OnInit {
       : Object.keys(parChamp).length ? 'Corrigez les champs signalés.' : 'L’enregistrement a échoué.');
   }
 
-  private terminer(payload: Record<string, any>): void {
+  private terminer(payload: Record<string, any>, id: number): void {
     this.enregistrement.set(false);
+    // Le bandeau haut lit sa liste d'années une fois pour toutes : une année
+    // ouverte ou modifiée ici doit y apparaître sans recharger la page.
+    if (this.config.endpoint === 'annees-scolaires') {
+      this.annees.recharger(payload['statut'] === 'active' ? id : undefined);
+    }
     // La liste affiche « enregistrement effectué » et propose la suite
     // logique : le nom saisi sert de repère quand il y en a un.
     const champTexte = this.config.fields.find((f) => f.type === 'text');
