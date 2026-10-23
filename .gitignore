@@ -20,3 +20,6 @@ desktop.ini
 
 # Cle de signature engendree en developpement (jamais versionnee)
 .secret_key
+
+# Documents personnels et financiers exportes
+apercus_documents/
