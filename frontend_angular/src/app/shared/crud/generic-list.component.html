@@ -13,8 +13,15 @@
         </p>
       }
     </div>
-    @if (modifiable()) {
-      <div style="display:flex; gap:10px;">
+    @if (modifiable() || config.telechargement) {
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        @if (config.telechargement) {
+          <button type="button" class="btn-ghost" [disabled]="occupe()" (click)="telecharger()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            {{ config.telechargement.label }}
+          </button>
+        }
+        @if (modifiable()) {
         <a class="btn-ghost" routerLink="/corbeille" [queryParams]="{ module: config.key }">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14"/></svg>
           Corbeille
@@ -23,6 +30,7 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
           Ajouter {{ config.titreSingulier }}
         </a>
+      }
       </div>
     }
   </div>
@@ -68,8 +76,24 @@
     </div>
   }
 
-  @if (config.filtres?.length) {
-    <div class="filters">
+  @if (config.filtres?.length || config.selecteurPeriode) {
+    <div class="filters" style="flex-wrap:wrap;">
+      @if (config.selecteurPeriode) {
+        <select class="input" style="width:auto;" aria-label="Période affichée"
+                (change)="choisirVue($any($event.target).value)">
+          <option value="annuelle" [selected]="vue() === 'annuelle'">Toute l’année</option>
+          <option value="mensuelle" [selected]="vue() === 'mensuelle'">Un mois</option>
+          <option value="hebdomadaire" [selected]="vue() === 'hebdomadaire'">Une semaine</option>
+        </select>
+        @if (vue() !== 'annuelle') {
+          <button type="button" class="btn-ghost" style="padding:6px 10px;" (click)="decaler(-1)"
+                  [attr.aria-label]="vue() === 'mensuelle' ? 'Mois précédent' : 'Semaine précédente'">‹</button>
+          <input class="input" type="date" style="width:auto;" aria-label="Date de la période"
+                 [value]="datePeriode()" (change)="choisirDate($any($event.target).value)">
+          <button type="button" class="btn-ghost" style="padding:6px 10px;" (click)="decaler(1)"
+                  [attr.aria-label]="vue() === 'mensuelle' ? 'Mois suivant' : 'Semaine suivante'">›</button>
+        }
+      }
       @for (filtre of config.filtres ?? []; track filtre.param) {
         <select class="input" style="width:auto;" (change)="filtrer(filtre.param, $any($event.target).value)">
           @if (!filtre.obligatoire) {
@@ -110,7 +134,7 @@
           </tr>
         </thead>
         <tbody>
-          @for (item of items(); track item.id) {
+          @for (item of items(); track item.id; let i = $index, premier = $first, dernier = $last) {
             <tr>
               @for (col of config.columns; track col.key) {
                 <td [class.mono]="col.type === 'number' || col.type === 'date'" [attr.data-label]="col.label">
@@ -128,6 +152,12 @@
               <!-- Les « · » entre deux actions viennent du CSS (.actions-ligne) :
                    aucun ne traîne en bout de ligne quand une action manque. -->
               <td class="cellule-actions actions-ligne" style="text-align:right; white-space:nowrap;">
+                @if (config.reordonnable && modifiable()) {
+                  <button class="panel-link" [disabled]="premier || occupe()" (click)="deplacer(i, -1)"
+                          title="Monter" aria-label="Monter d’un rang">↑</button>
+                  <button class="panel-link" [disabled]="dernier || occupe()" (click)="deplacer(i, 1)"
+                          title="Descendre" aria-label="Descendre d’un rang">↓</button>
+                }
                 @for (action of config.actions ?? []; track action.chemin) {
                   @if (modifiable() && actionVisible(action, item)) {
                     <button class="panel-link" (click)="lancerAction(action, item)">{{ action.label }}</button>

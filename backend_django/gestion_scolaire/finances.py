@@ -455,6 +455,11 @@ def generer_frais(ecole, annee, type_frais, echeances, montant=None, classe=None
         .filter(id_type_frais=type_frais, id_annee_scolaire=annee, id_eleve__in=eleves)
         .values_list("id_eleve_id", "echeance")
     )
+    # Un frais mensuel se compte au mois, pas au jour : une mensualité réglée
+    # d'avance porte sa propre date, et regénérer le mois ne doit pas la
+    # facturer une seconde fois.
+    mensuel = est_mensuel(type_frais)
+    mois_deja = {(e, (d.year, d.month)) for e, d in deja if d} if mensuel else set()
 
     classes = {
         i.id_eleve_id: i.id_classe
@@ -474,7 +479,7 @@ def generer_frais(ecole, annee, type_frais, echeances, montant=None, classe=None
             sans_tarif += 1
             continue
         for echeance in echeances:
-            if (eleve.pk, echeance) in deja:
+            if (eleve.pk, echeance) in deja or (eleve.pk, (echeance.year, echeance.month)) in mois_deja:
                 ignores += 1
                 continue
             remise, motif_remise = remise_sociale(eleve, type_frais, montant_eleve)
@@ -1240,6 +1245,85 @@ def libelle_mois(jour):
     return f"{MOIS_FR[jour.month - 1].capitalize()} {jour.year}"
 
 
+# ---------------------------------------------------------------------------
+# Mensualités réglées d'avance
+# ---------------------------------------------------------------------------
+
+def _mensualite(ecole):
+    return (models.TypeFrais.objects
+            .filter(id_ecole=ecole, nature=models.TypeFrais.Nature.MENSUALITE)
+            .order_by("pk").first())
+
+
+def mois_payables_d_avance(eleve, annee):
+    """
+    Les mois de l'année dont la mensualité n'est pas encore émise, et qu'une
+    famille peut pourtant régler dès aujourd'hui.
+
+    Les mensualités se génèrent mois par mois depuis Finances : avant, un
+    mois à venir n'existait pas, et la caisse ne pouvait pas l'encaisser. Ne
+    sont proposés que les mois à partir de celui de l'inscription — on ne
+    facture pas un mois où l'élève n'était pas là —, au tarif du niveau,
+    remise sociale déduite.
+    """
+    if annee is None:
+        return []
+    inscription = _inscription_de_lannee(eleve, annee)
+    type_frais = _mensualite(eleve.id_ecole)
+    if inscription is None or type_frais is None:
+        return []
+    montant = tarif(type_frais, inscription.id_classe)
+    if not montant or montant <= 0:
+        return []
+    remise, _ = remise_sociale(eleve, type_frais, montant)
+    emis = {(d.year, d.month) for d in models.FraisEleve.objects
+            .filter(id_eleve=eleve, id_annee_scolaire=annee, id_type_frais=type_frais)
+            .exclude(echeance__isnull=True).values_list("echeance", flat=True)}
+    depart = inscription.date_inscription.replace(day=1)
+    return [{
+        "mois": premier.strftime("%Y-%m"),
+        "libelle": libelle_mois(premier),
+        "montant": montant_json(montant - (remise or ZERO)),
+    } for premier in mois_de_lannee(annee)
+        if premier >= depart and (premier.year, premier.month) not in emis]
+
+
+def emettre_mois_d_avance(eleve, annee, mois):
+    """
+    Émet la mensualité de chaque mois demandé (« 2026-12 »), pour qu'elle
+    s'encaisse aussitôt. Un mois déjà émis ou hors de l'année est refusé :
+    le payer d'avance le facturerait deux fois.
+
+    L'échéance tombe le même jour du mois que la première mensualité de
+    l'élève — à défaut, le 1er —, comme si le mois avait été généré.
+    """
+    proposes = {m["mois"]: m for m in mois_payables_d_avance(eleve, annee)}
+    inconnus = [m for m in mois if m not in proposes]
+    if inconnus:
+        raise ErreurFinance(
+            f"Mois impossible à régler d'avance : {', '.join(inconnus)} "
+            "(déjà émis, ou en dehors de l'année de l'élève).")
+    type_frais = _mensualite(eleve.id_ecole)
+    inscription = _inscription_de_lannee(eleve, annee)
+    premiere = (models.FraisEleve.objects
+                .filter(id_eleve=eleve, id_annee_scolaire=annee, id_type_frais=type_frais)
+                .exclude(echeance__isnull=True).order_by("echeance")
+                .values_list("echeance", flat=True).first())
+    jour = premiere.day if premiere else 1
+    montant = tarif(type_frais, inscription.id_classe)
+    remise, motif_remise = remise_sociale(eleve, type_frais, montant)
+    crees = []
+    for cle in sorted(set(mois)):
+        an, numero = (int(x) for x in cle.split("-"))
+        crees.append(models.FraisEleve.objects.create(
+            id_eleve=eleve, id_type_frais=type_frais, id_annee_scolaire=annee,
+            montant_du=montant, echeance=date(an, numero, min(jour, monthrange(an, numero)[1])),
+            remise=remise, motif_remise=motif_remise,
+            statut=_statut_initial(montant, remise),
+        ))
+    return crees
+
+
 def _libelle_frais(frais, types_repetes):
     """
     « Inscription », mais « Mensualité novembre » quand le type revient
@@ -1419,6 +1503,7 @@ def situation_eleve(ecole, eleve, annee=None, aujourdhui=None):
         },
         "confirmation": _confirmation(eleve, annee, inscription, lignes),
         "frais": frais,
+        "mois_d_avance": mois_payables_d_avance(eleve, annee) if inscription is not None else [],
         "echeancier": _echeancier(annee, lignes, aujourdhui),
         "paiements": historique_paiements(eleve, annee, types_repetes),
     }

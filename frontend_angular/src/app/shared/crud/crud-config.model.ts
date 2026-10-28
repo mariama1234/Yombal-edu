@@ -103,6 +103,12 @@ export interface FieldConfig {
   min?: number;
   /** Champ `date` : un jour à venir est refusé (paiement, dépense…). */
   pasDansLeFutur?: boolean;
+  /**
+   * Le champ ne s'affiche (et ne s'envoie) que si un autre champ du
+   * formulaire a l'une de ces valeurs. Ex : la date de référence d'une séance,
+   * seulement quand elle n'est pas annuelle.
+   */
+  visibleSi?: { champ: string; valeurs: (string | number | boolean)[] };
 }
 
 /**
@@ -128,8 +134,11 @@ export interface FiltreConfig {
   param: string;
   /** Libellé de l'option qui retire le filtre, ex: « Tous les niveaux ». */
   tous: string;
-  optionsEndpoint: string;
+  /** Options chargées depuis un endpoint… */
+  optionsEndpoint?: string;
   optionsLabelKey?: string;
+  /** …ou fixes, ex: la vue annuelle, mensuelle ou hebdomadaire. */
+  options?: FieldOption[];
   /**
    * Pas d'option « tous » : la liste montre une valeur à la fois, la première
    * par défaut, et jamais tout d'un coup.
@@ -209,7 +218,20 @@ export interface EntityConfig {
   filtreParAnnee?: boolean;
   /**
    * Année à préremplir dans le formulaire de création, quand l'entité porte
-   * une clé vers l'année scolaire. Évite de la ressaisir à chaque ligne.
+   * une clé vers l'année scolaire : celle du bandeau haut. Évite de la
+   * ressaisir à chaque ligne.
    */
   champAnnee?: string;
+  /**
+   * Les lignes se déplacent à la main (flèches ↑ ↓) ; l'ordre est enregistré
+   * par POST `<endpoint>/reordonner/` et repris par toutes les listes.
+   */
+  reordonnable?: boolean;
+  /**
+   * Sélecteur de période au-dessus du tableau : vue de l'année entière, d'un
+   * mois ou d'une semaine, autour d'une date. Envoie `vue` et `date`.
+   */
+  selecteurPeriode?: boolean;
+  /** Bouton de téléchargement (ex: PDF) qui reprend les filtres affichés. */
+  telechargement?: { label: string; chemin: string };
 }

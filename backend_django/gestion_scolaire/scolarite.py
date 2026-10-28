@@ -142,6 +142,22 @@ def fourchette_par_defaut(libelle):
     return GRILLE_AGES.get(_cle_niveau(libelle))
 
 
+# Écart entre deux niveaux du cursus : laisse la place d'en glisser un entre
+# deux sans renuméroter les autres.
+PAS_ORDRE = 10
+
+
+def rang_par_defaut(libelle):
+    """
+    Rang d'un niveau connu dans le cursus — la grille suit l'ordre de la petite
+    section à la terminale —, ou `None` pour un niveau propre à l'école.
+    """
+    cle = _cle_niveau(libelle)
+    if cle not in GRILLE_AGES:
+        return None
+    return (list(GRILLE_AGES).index(cle) + 1) * PAS_ORDRE
+
+
 class ControleAge:
     """Réglage de l'école (paramètre `controle_age_inscription`)."""
     PREVENIR = "prevenir"
@@ -426,7 +442,7 @@ def eleves_a_reinscrire(ecole, annee_source, classe_source=None):
 @transaction.atomic
 def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=None,
                date_inscription=None, appliquer=True, eleves=None, derogation_age=False,
-               utilisateur=None):
+               utilisateur=None, classe_redoublement=None, redoublants=None):
     """
     Réinscrit en bloc les élèves d'une classe dans une classe de l'année
     suivante.
@@ -451,10 +467,16 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
     validation, un élève bloqué (date de naissance manquante, ou école qui
     bloque) arrête tout : on le décoche ou on complète sa fiche. Un simple
     avertissement exige `derogation_age`, et chaque dérogation est tracée.
+
+    Tous ne montent pas : `redoublants` nomme, parmi les cochés, ceux qui ne
+    passent pas en classe supérieure. Ils sont réinscrits dans
+    `classe_redoublement` (une classe de l'année d'arrivée, d'ordinaire du
+    niveau qu'ils quittent), les autres dans `classe_cible`.
     """
     date_inscription = date_inscription or annee_cible.date_debut or date.today()
     _verifier_ecole(ecole, annee_source=annee_source, annee_cible=annee_cible,
-                    classe_cible=classe_cible, classe_source=classe_source)
+                    classe_cible=classe_cible, classe_source=classe_source,
+                    classe_redoublement=classe_redoublement)
 
     if annee_source.pk == annee_cible.pk:
         raise ErreurScolarite("L'année d'arrivée doit être différente de l'année de départ.")
@@ -465,6 +487,10 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
     if classe_source is not None and classe_source.id_annee_scolaire_id != annee_source.pk:
         raise ErreurScolarite(
             f"La classe {classe_source.nom} ne relève pas de l'année {annee_source.libelle}."
+        )
+    if classe_redoublement is not None and classe_redoublement.id_annee_scolaire_id != annee_cible.pk:
+        raise ErreurScolarite(
+            f"La classe {classe_redoublement.nom} ne relève pas de l'année {annee_cible.libelle}."
         )
 
     inscriptions = list(eleves_a_reinscrire(ecole, annee_source, classe_source))
@@ -500,8 +526,22 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
     if appliquer and selection is not None and not a_creer:
         raise ErreurScolarite("Aucun élève coché : rien à réinscrire.")
 
-    alertes = {i.id_eleve_id: controle_age(ecole, classe_cible, i.id_eleve.date_naissance,
-                                           i.id_eleve.prenom)
+    restent = {int(e) for e in (redoublants or [])}
+    if restent - candidats:
+        raise ErreurScolarite("Un des redoublants ne fait pas partie des élèves à réinscrire.")
+    if appliquer and restent & {e.pk for e in a_creer} and classe_redoublement is None:
+        raise ErreurScolarite(
+            "Des élèves cochés ne passent pas en classe supérieure : choisissez leur classe "
+            "de redoublement.")
+
+    def destination(id_eleve):
+        """La classe d'arrivée de l'élève : celle des redoublants, ou la classe supérieure."""
+        if id_eleve in restent and classe_redoublement is not None:
+            return classe_redoublement
+        return classe_cible
+
+    alertes = {i.id_eleve_id: controle_age(ecole, destination(i.id_eleve_id),
+                                           i.id_eleve.date_naissance, i.id_eleve.prenom)
                for i in inscriptions if i.id_eleve_id not in deja}
     en_alerte = [e for e in a_creer if alertes.get(e.pk)]
     if appliquer and en_alerte:
@@ -524,7 +564,9 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
     # L'effectif visé dépasse-t-il la capacité ? On avertit sans bloquer :
     # une classe surchargée en début d'année est une réalité, pas une erreur
     # de saisie, et la direction préfère être prévenue qu'empêchée.
-    effectif_vise = classe_cible.effectif + len(a_creer)
+    montent = [e for e in a_creer if destination(e.pk) == classe_cible]
+    redoublent = [e for e in a_creer if destination(e.pk) != classe_cible]
+    effectif_vise = classe_cible.effectif + len(montent)
     avertissement = None
     if classe_cible.capacite_max and effectif_vise > classe_cible.capacite_max:
         avertissement = (
@@ -535,24 +577,32 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
     frais_emis = 0
     if appliquer and a_creer:
         for eleve in a_creer:
+            classe = destination(eleve.pk)
             # Passe par save() plutôt que bulk_create : c'est Inscription.save()
             # qui écrit la trace « réinscription » dans l'historique.
-            models.Inscription.objects.create(
+            inscription = models.Inscription.objects.create(
                 id_eleve=eleve,
-                id_classe=classe_cible,
+                id_classe=classe,
                 id_annee_scolaire=annee_cible,
                 date_inscription=date_inscription,
             )
+            if classe != classe_cible:
+                models.HistoriqueScolaire.objects.filter(
+                    id_eleve=eleve, id_nouvelle_classe=classe,
+                    date_evenement=inscription.date_inscription,
+                ).update(motif=f"Redoublement : inscription en {classe.nom}")
             if alertes.get(eleve.pk):
-                tracer_derogation_age(eleve, classe_cible, date_inscription,
+                tracer_derogation_age(eleve, classe, date_inscription,
                                       alertes[eleve.pk]["message"], utilisateur)
             # Même règle qu'à l'inscription : droits et mensualités d'office,
             # et les frais au choix de l'an passé reconduits.
             frais_emis += len(finances.emettre_frais_inscription(
                 eleve, annee_cible, date_inscription,
-                finances.types_optionnels_de(eleve, annee_source), classe=classe_cible))
+                finances.types_optionnels_de(eleve, annee_source), classe=classe))
         recaler_effectif(classe_cible)
         classe_cible.refresh_from_db(fields=["effectif"])
+        if redoublent:
+            recaler_effectif(classe_redoublement)
 
     return {
         "annee_source": annee_source.libelle,
@@ -562,6 +612,9 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
         "date_inscription": date_inscription.isoformat(),
         "concernes": len(inscriptions),
         "reinscrits": len(a_creer),
+        "montent": len(montent),
+        "redoublent": len(redoublent),
+        "classe_redoublement": classe_redoublement.nom if classe_redoublement is not None else None,
         "frais_emis": frais_emis,
         "ignores": ignores,
         "non_retenus": non_retenus,
@@ -572,6 +625,7 @@ def reinscrire(ecole, annee_source, annee_cible, classe_cible, classe_source=Non
             "nom_complet": f"{i.id_eleve.prenom} {i.id_eleve.nom}".strip(),
             "deja_inscrit": i.id_eleve_id in deja,
             "retenu": retenu(i),
+            "passe": i.id_eleve_id not in restent,
             "alerte_age": alertes.get(i.id_eleve_id),
         } for i in inscriptions],
         "alertes_age": sum(1 for e in a_creer if alertes.get(e.pk)),

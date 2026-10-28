@@ -16,6 +16,7 @@
       @if (erreurGenerale()) { <div class="form-error">{{ erreurGenerale() }}</div> }
       <div class="form-grid">
         @for (field of config.fields; track field.key) {
+          @if (champVisible(field)) {
           <div class="field" [class.span-2]="field.span2 || field.type === 'textarea'">
             <label [for]="field.key">{{ field.label }}</label>
 
@@ -121,6 +122,7 @@
               <span class="hint">{{ field.aide }}</span>
             }
           </div>
+          }
         }
       </div>
 

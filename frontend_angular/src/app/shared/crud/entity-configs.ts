@@ -58,12 +58,15 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { label: 'Tarifs par niveau', chemin: '/finances/tarifs', module: 'types_frais' },
     ],
     endpoint: 'niveaux',
+    reordonnable: true,
     titre: 'Niveaux',
     titreSingulier: 'un niveau',
     eyebrow: 'Organisation scolaire',
     description:
       'Les niveaux d’enseignement de l’école — CI, CP, CE1, 6ème… Une classe se '
-      + 'rattache à un niveau, qui sert aussi à filtrer les listes.',
+      + 'rattache à un niveau, qui sert aussi à filtrer les listes. Un niveau connu '
+      + 'se range de lui-même à sa place dans le cursus ; les flèches ↑ ↓ changent '
+      + 'l’ordre, repris dans toutes les listes et tous les formulaires.',
     columns: [
       { key: 'libelle', label: 'Niveau' },
       { key: 'age_min', label: 'Âge min.', type: 'number' },
@@ -149,7 +152,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'prenom', label: 'Prénom' },
       { key: 'telephone', label: 'Téléphone' },
       { key: 'email', label: 'E-mail' },
-      { key: 'enfants_noms', label: 'Enfants' },
+      { key: 'enfants_noms', label: 'Enfants (classe)' },
     ],
     fields: [
       { key: 'nom', label: 'Nom', type: 'text', required: true },
@@ -168,10 +171,12 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { label: 'Affectations', chemin: '/affectations', module: 'matieres' },
     ],
     endpoint: 'matieres',
+    reordonnable: true,
     titre: 'Matières',
     titreSingulier: 'une matière',
     eyebrow: 'Pédagogie',
-    description: 'Catalogue des matières enseignées dans l\u2019école.',
+    description: 'Catalogue des matières enseignées dans l\u2019école. Les flèches ↑ ↓ '
+      + 'fixent l’ordre dans lequel elles sont proposées.',
     columns: [{ key: 'nom', label: 'Nom de la matière' }],
     fields: [{ key: 'nom', label: 'Nom de la matière', type: 'text', required: true, placeholder: 'Mathématiques' }],
   },
@@ -184,18 +189,68 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     ],
     endpoint: 'enseignants',
     titre: 'Enseignants & personnel',
-    titreSingulier: 'un enseignant',
+    titreSingulier: 'un membre du personnel',
     eyebrow: 'Pédagogie',
-    description: 'Équipe pédagogique de l\u2019école.',
+    description: 'L’équipe de l’école : enseignants, et personnel administratif ou de service. '
+      + 'La fonction les distingue ; le nom est celui que proposent toutes les listes.',
+    filtres: [
+      {
+        param: 'fonction', tous: 'Toutes les fonctions',
+        options: [
+          { value: 'enseignant', label: 'Enseignants' }, { value: 'directeur', label: 'Direction' },
+          { value: 'censeur', label: 'Censeurs' }, { value: 'surveillant', label: 'Surveillants' },
+          { value: 'secretaire', label: 'Secrétariat' }, { value: 'comptable', label: 'Comptables' },
+          { value: 'caissier', label: 'Caissiers' }, { value: 'gardien', label: 'Gardiens' },
+          { value: 'entretien', label: 'Entretien' }, { value: 'chauffeur', label: 'Chauffeurs' },
+          { value: 'autre', label: 'Autres' },
+        ],
+      },
+    ],
     columns: [
-      { key: 'matricule', label: 'Matricule' },
+      { key: 'nom', label: 'Nom' },
+      { key: 'prenom', label: 'Prénom' },
+      { key: 'fonction_libelle', label: 'Fonction' },
       { key: 'specialite', label: 'Spécialité' },
+      { key: 'telephone', label: 'Téléphone' },
+      { key: 'date_embauche', label: 'Embauche', type: 'date' },
+      { key: 'type_contrat_libelle', label: 'Contrat' },
+      { key: 'matricule', label: 'Matricule' },
       { key: 'statut', label: 'Statut', type: 'badge' },
     ],
     fields: [
-      { key: 'matricule', label: 'Matricule', type: 'text', required: true },
-      { key: 'specialite', label: 'Spécialité', type: 'text' },
-      { key: 'date_embauche', label: "Date d'embauche", type: 'date' },
+      { key: 'nom', label: 'Nom', type: 'text', required: true },
+      { key: 'prenom', label: 'Prénom', type: 'text' },
+      {
+        key: 'fonction', label: 'Fonction', type: 'select', required: true,
+        options: [
+          { value: 'enseignant', label: 'Enseignant' }, { value: 'directeur', label: 'Directeur' },
+          { value: 'censeur', label: 'Censeur' }, { value: 'surveillant', label: 'Surveillant' },
+          { value: 'secretaire', label: 'Secrétaire' }, { value: 'comptable', label: 'Comptable' },
+          { value: 'caissier', label: 'Caissier' }, { value: 'gardien', label: 'Gardien' },
+          { value: 'entretien', label: 'Agent d’entretien' }, { value: 'chauffeur', label: 'Chauffeur' },
+          { value: 'autre', label: 'Autre' },
+        ],
+      },
+      { key: 'specialite', label: 'Spécialité', type: 'text', placeholder: 'Mathématiques, anglais…' },
+      { key: 'telephone', label: 'Téléphone', type: 'tel' },
+      { key: 'email', label: 'E-mail', type: 'email', aide: 'Sert d’identifiant si on lui crée un accès.' },
+      { key: 'date_embauche', label: "Date d'embauche", type: 'date', pasDansLeFutur: true },
+      {
+        key: 'annee_recrutement', label: 'Année de recrutement', type: 'number', min: 1950, placeholder: '2019',
+        aide: 'Vide : déduite de la date d’embauche.',
+      },
+      {
+        key: 'type_contrat', label: 'Type de contrat', type: 'select',
+        options: [
+          { value: 'cdi', label: 'CDI' }, { value: 'cdd', label: 'CDD' },
+          { value: 'vacataire', label: 'Vacataire' }, { value: 'stagiaire', label: 'Stagiaire' },
+          { value: 'prestataire', label: 'Prestataire' }, { value: 'benevole', label: 'Bénévole' },
+        ],
+      },
+      {
+        key: 'matricule', label: 'Matricule', type: 'text',
+        aide: 'Vide : attribué à l’enregistrement (P0001, P0002…).',
+      },
       {
         key: 'statut', label: 'Statut', type: 'select', required: true,
         options: [{ value: 'actif', label: 'Actif' }, { value: 'inactif', label: 'Inactif' }],
@@ -213,8 +268,14 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     description: 'Absences et retards enregistrés par classe.',
     columns: [
       { key: 'date_absence', label: 'Date', type: 'date' },
+      { key: 'eleve_nom', label: 'Élève' },
+      { key: 'classe_nom', label: 'Classe' },
+      { key: 'horaire', label: 'Horaire' },
+      { key: 'duree', label: 'Durée' },
+      { key: 'matiere_nom', label: 'Matière manquée' },
       { key: 'statut', label: 'Type', type: 'badge' },
       { key: 'justifiee', label: 'Justifiée' },
+      { key: 'a_justificatif', label: 'Pièce' },
       { key: 'motif', label: 'Motif' },
     ],
     fields: [
@@ -231,8 +292,22 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
         options: [{ value: 'absent', label: 'Absent' }, { value: 'retard', label: 'Retard' }],
       },
       { key: 'date_absence', label: 'Date', type: 'date', required: true, defaut: 'aujourdhui', pasDansLeFutur: true },
+      { key: 'heure_debut', label: 'De (heure)', type: 'time', aide: 'Vide : toute la journée.' },
+      { key: 'heure_fin', label: 'À (heure)', type: 'time' },
+      {
+        key: 'id_matiere', label: 'Matière manquée', type: 'select', optionsEndpoint: 'matieres', optionsLabelKey: 'nom',
+        aide: 'Vide : lue à l’emploi du temps de la classe, d’après l’heure de début.',
+      },
       { key: 'justifiee', label: 'Absence justifiée', type: 'checkbox' },
       { key: 'motif', label: 'Motif', type: 'textarea', span2: true },
+      {
+        key: 'justificatif', label: 'Pièce justificative', type: 'fichier', span2: true,
+        fichier: {
+          chemin: 'justificatif', presente: 'a_justificatif',
+          accept: 'application/pdf,image/jpeg,image/png,image/webp',
+        },
+        aide: 'Certificat médical, mot des parents : PDF ou photo (JPEG, PNG, WebP), 5 Mo au plus.',
+      },
     ],
   },
 
@@ -315,18 +390,28 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     titre: 'Emploi du temps',
     titreSingulier: 'un cours',
     eyebrow: 'Pédagogie',
-    description: 'Planning hebdomadaire des cours par classe.',
+    description: 'Les cours de chaque classe, rangés par classe puis du lundi au samedi. Un cours vaut '
+      + 'toute l’année, un mois ou une semaine : affichez l’année, un mois ou une semaine, '
+      + 'filtrez une classe, et imprimez en PDF ce qui est affiché.',
+    selecteurPeriode: true,
+    telechargement: { label: 'Imprimer en PDF', chemin: 'pdf' },
+    filtres: [
+      { param: 'classe', tous: 'Toutes les classes', optionsEndpoint: 'classes', optionsLabelKey: 'nom' },
+    ],
     columns: [
-      { key: 'jour_semaine', label: 'Jour' },
+      { key: 'classe_nom', label: 'Classe' },
+      { key: 'jour_libelle', label: 'Jour' },
       { key: 'heure_debut', label: 'Début' },
       { key: 'heure_fin', label: 'Fin' },
       { key: 'matiere_nom', label: 'Matière' },
+      { key: 'enseignant_nom', label: 'Enseignant' },
       { key: 'salle_nom', label: 'Salle' },
+      { key: 'periode_libelle', label: 'Période' },
     ],
     fields: [
       { key: 'id_classe', label: 'Classe', type: 'select', required: true, optionsEndpoint: 'classes', optionsLabelKey: 'nom' },
       { key: 'id_matiere', label: 'Matière', type: 'select', required: true, optionsEndpoint: 'matieres', optionsLabelKey: 'nom' },
-      { key: 'id_enseignant', label: 'Enseignant', type: 'select', required: true, optionsEndpoint: 'enseignants', optionsLabelKey: 'matricule' },
+      { key: 'id_enseignant', label: 'Enseignant', type: 'select', required: true, optionsEndpoint: 'enseignants', optionsLabelKey: 'nom_complet', optionsSecondaireKey: 'matricule' },
       { key: 'id_salle', label: 'Salle', type: 'select', optionsEndpoint: 'salles', optionsLabelKey: 'nom' },
       {
         key: 'jour_semaine', label: 'Jour', type: 'select', required: true,
@@ -334,6 +419,20 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       },
       { key: 'heure_debut', label: 'Heure de début', type: 'time', required: true },
       { key: 'heure_fin', label: 'Heure de fin', type: 'time', required: true },
+      {
+        key: 'periodicite', label: 'Valable', type: 'select', required: true,
+        options: [
+          { value: 'annuelle', label: 'Toute l’année' },
+          { value: 'mensuelle', label: 'Un mois' },
+          { value: 'hebdomadaire', label: 'Une semaine' },
+        ],
+        aide: 'Un mois ou une semaine : un aménagement (examens, remplacement) à côté du planning de l’année.',
+      },
+      {
+        key: 'date_debut', label: 'Une date du mois ou de la semaine', type: 'date',
+        visibleSi: { champ: 'periodicite', valeurs: ['mensuelle', 'hebdomadaire'] },
+        aide: 'Le cours vaut pour tout le mois de cette date, ou sa semaine du lundi au dimanche.',
+      },
     ],
   },
 
@@ -348,6 +447,8 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     ],
     filtreParAnnee: true,
     endpoint: 'classes',
+    champAnnee: 'id_annee_scolaire',
+    reordonnable: true,
     titre: 'Classes',
     titreSingulier: 'une classe',
     eyebrow: 'Organisation scolaire',
@@ -355,19 +456,23 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { param: 'id_niveau', tous: 'Tous les niveaux', optionsEndpoint: 'niveaux', optionsLabelKey: 'libelle', obligatoire: true },
     ],
     description: 'Les classes de l’année affichée en haut, rangées par niveau, avec leur effectif '
-      + 'et leur capacité.',
+      + 'et leur capacité. Les flèches ↑ ↓ changent leur ordre dans le niveau.',
     columns: [
       { key: 'nom', label: 'Classe' },
       { key: 'niveau_libelle', label: 'Niveau' },
+      { key: 'enseignant_nom', label: 'Professeur principal' },
       { key: 'effectif', label: 'Effectif', type: 'number' },
       { key: 'capacite_max', label: 'Capacité', type: 'number' },
     ],
     fields: [
       { key: 'nom', label: 'Nom de la classe', type: 'text', required: true, placeholder: '6ème A' },
       { key: 'id_niveau', label: 'Niveau (facultatif)', type: 'select', optionsEndpoint: 'niveaux', optionsLabelKey: 'libelle' },
-      { key: 'id_annee_scolaire', label: 'Année scolaire', type: 'select', required: true, optionsEndpoint: 'annees-scolaires', optionsLabelKey: 'libelle' },
+      {
+        key: 'id_annee_scolaire', label: 'Année scolaire', type: 'select', required: true, optionsEndpoint: 'annees-scolaires', optionsLabelKey: 'libelle',
+        aide: 'Préremplie avec l’année affichée en haut de l’écran.',
+      },
       { key: 'capacite_max', label: 'Capacité maximale (places)', type: 'number', required: true, min: 1 },
-      { key: 'id_enseignant_principal', label: 'Professeur principal', type: 'select', optionsEndpoint: 'enseignants', optionsLabelKey: 'matricule' },
+      { key: 'id_enseignant_principal', label: 'Professeur principal', type: 'select', optionsEndpoint: 'enseignants', optionsLabelKey: 'nom_complet', optionsSecondaireKey: 'matricule' },
     ],
   },
 
@@ -660,7 +765,17 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     titre: 'Comptes & rôles',
     titreSingulier: 'un compte',
     eyebrow: 'Administration',
-    description: 'Comptes de connexion de l’école. Le rôle détermine ce que chacun peut voir et faire.',
+    description: 'Comptes de connexion de l’école. Le rôle détermine ce que chacun peut voir et faire. '
+      + '« Envoyer les paramètres » écrit à la personne son identifiant et un mot de passe provisoire neuf.',
+    actions: [
+      {
+        label: 'Envoyer les paramètres par mail',
+        chemin: 'envoyer-identifiants',
+        confirmation: 'Un nouveau mot de passe provisoire va être créé et envoyé par e-mail à ce compte, '
+          + 'avec son identifiant. L’ancien mot de passe ne fonctionnera plus. Continuer ?',
+        visibleSi: { champ: 'statut', valeur: 'actif' },
+      },
+    ],
     columns: [
       { key: 'nom', label: 'Nom' },
       { key: 'prenom', label: 'Prénom' },
@@ -706,6 +821,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     ],
     filtreParAnnee: true,
     endpoint: 'periodes',
+    champAnnee: 'id_annee_scolaire',
     titre: 'Périodes scolaires',
     titreSingulier: 'une période',
     eyebrow: 'Organisation scolaire',
@@ -731,14 +847,18 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     ],
     filtreParAnnee: true,
     endpoint: 'coefficients',
+    champAnnee: 'id_annee_scolaire',
     titre: 'Coefficients',
     titreSingulier: 'un coefficient',
     eyebrow: 'Pédagogie',
-    description: 'Poids de chaque matière dans une classe. C’est la base du calcul des moyennes et des bulletins.',
+    description: 'Poids de chaque matière dans une classe. C’est la base du calcul des moyennes et des bulletins. '
+      + 'La colonne Enseignant(s) vient des affectations : une matière sans enseignant se repère d’un coup d’œil.',
     columns: [
       { key: 'matiere_nom', label: 'Matière' },
       { key: 'classe_nom', label: 'Classe' },
       { key: 'coefficient', label: 'Coefficient', type: 'number' },
+      { key: 'enseignants', label: 'Enseignant(s)' },
+      { key: 'volume_horaire', label: 'Heures / sem.', type: 'number' },
     ],
     fields: [
       { key: 'id_matiere', label: 'Matière', type: 'select', required: true, optionsEndpoint: 'matieres', optionsLabelKey: 'nom' },
@@ -755,22 +875,29 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     ],
     filtreParAnnee: true,
     endpoint: 'affectations',
+    champAnnee: 'id_annee_scolaire',
     titre: 'Affectations',
     titreSingulier: 'une affectation',
     eyebrow: 'Pédagogie',
-    description: 'Qui enseigne quelle matière, dans quelle classe, et pour quel volume horaire.',
+    description: 'Qui enseigne quelle matière, dans quelle classe, pour quel volume horaire — et le coefficient '
+      + 'de cette matière dans la classe, le même que sur l’écran Coefficients.',
     columns: [
-      { key: 'enseignant_matricule', label: 'Enseignant' },
+      { key: 'enseignant_nom', label: 'Enseignant' },
       { key: 'matiere_nom', label: 'Matière' },
       { key: 'classe_nom', label: 'Classe' },
       { key: 'volume_horaire', label: 'Heures', type: 'number' },
+      { key: 'coefficient', label: 'Coefficient', type: 'number' },
     ],
     fields: [
-      { key: 'id_enseignant', label: 'Enseignant', type: 'select', required: true, optionsEndpoint: 'enseignants', optionsLabelKey: 'matricule' },
+      { key: 'id_enseignant', label: 'Enseignant', type: 'select', required: true, optionsEndpoint: 'enseignants', optionsLabelKey: 'nom_complet', optionsSecondaireKey: 'matricule' },
       { key: 'id_matiere', label: 'Matière', type: 'select', required: true, optionsEndpoint: 'matieres', optionsLabelKey: 'nom' },
       { key: 'id_classe', label: 'Classe', type: 'select', required: true, optionsEndpoint: 'classes', optionsLabelKey: 'nom' },
       { key: 'id_annee_scolaire', label: 'Année scolaire', type: 'select', required: true, optionsEndpoint: 'annees-scolaires', optionsLabelKey: 'libelle' },
       { key: 'volume_horaire', label: 'Volume horaire hebdomadaire', type: 'number', min: 0 },
+      {
+        key: 'coefficient', label: 'Coefficient de la matière dans la classe', type: 'number', min: 0, placeholder: '4',
+        aide: 'Crée ou met à jour le coefficient de l’écran Coefficients. Vide : il n’est pas modifié.',
+      },
     ],
   },
 

@@ -13,6 +13,8 @@ export interface AccesCree {
   role_libelle: string;
   nom_complet: string;
   mot_de_passe_provisoire: string;
+  /** Vrai quand les identifiants sont aussi partis par e-mail. */
+  mail_envoye?: boolean;
   detail: string;
 }
 
@@ -63,6 +65,8 @@ export class CreerAccesComponent {
     prenom: [''],
     nom: ['', Validators.required],
     email: ['', [Validators.required, Validators.email]],
+    // Décoché par défaut : sans messagerie réglée sur le serveur, rien ne part.
+    envoyer_par_mail: [false],
   });
 
   ngOnInit(): void {
@@ -84,7 +88,9 @@ export class CreerAccesComponent {
         next: (r) => {
           this.occupe.set(false);
           this.resultat.set(r);
-          this.toast.succes('Accès créé', `${r.nom_complet} peut maintenant se connecter.`);
+          this.toast.succes('Accès créé', r.mail_envoye
+            ? `Paramètres de connexion envoyés à ${r.email}.`
+            : `${r.nom_complet} peut maintenant se connecter.`);
           this.cree.emit(r);
         },
         error: (e) => {

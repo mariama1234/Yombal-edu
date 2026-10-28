@@ -39,7 +39,7 @@ type Lien = EnfantDuParent['lien'];
                 } @else {
                   <strong>{{ e.nom_complet }}</strong>
                 }
-                <span class="hint"> · {{ e.matricule }} · {{ e.lien_libelle }}</span>
+                <span class="hint"> · {{ e.classe ?? 'non inscrit' }} · {{ e.matricule }} · {{ e.lien_libelle }}</span>
                 @if (e.contact_principal) { <span class="pill a_jour" style="margin-left:6px;">Contact principal</span> }
               </span>
               @if (peutModifier()) {

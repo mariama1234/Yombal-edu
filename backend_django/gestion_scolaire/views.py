@@ -7,18 +7,17 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Case, Count, IntegerField, Q, Sum, Value, When
 from django.db.models import Model as DjangoModel
 from django.db.models.deletion import ProtectedError, RestrictedError
 from django.http import FileResponse, HttpResponse
 from django.utils import timezone
-from django.utils.crypto import get_random_string
 from datetime import date as date_type
 
 from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
 
-from . import (corbeille, finances, finances_documents, imports_eleves, justificatifs, models,
+from . import (corbeille, courriels, finances, finances_documents, imports_eleves, justificatifs, models,
                pedagogie, pedagogie_documents, photos, scolarite, serializers)
 from .audit import JournalisationMixin, journaliser
 from .permissions import (ECRITURE, AccesModule, EstAdmin, Profil, acces_du_compte,
@@ -142,6 +141,42 @@ def _fichier(request, document, description=None, entite="finances"):
     reponse["Content-Disposition"] = f'attachment; filename="{nom}"'
     reponse["Content-Length"] = str(len(contenu))
     return reponse
+
+
+def _justificatif(request, objet, entite, designation):
+    """
+    Pièce jointe d'une ligne (dépense, absence) : GET pour la relire, POST
+    (champ `fichier`) pour la déposer ou la remplacer, DELETE pour la retirer.
+    `designation` nomme la ligne dans les messages et au journal.
+    """
+    if request.method == "GET":
+        fichier = justificatifs.chemin(objet)
+        if fichier is None:
+            return Response({"detail": f"Aucun justificatif pour {designation}."},
+                            status=status.HTTP_404_NOT_FOUND)
+        reponse = FileResponse(open(fichier, "rb"),
+                               content_type=justificatifs.type_mime(fichier))
+        reponse["Content-Disposition"] = (
+            f'attachment; filename="{justificatifs.nom_telechargement(objet, fichier)}"')
+        reponse["Cache-Control"] = "private, no-store"
+        return reponse
+
+    if request.method == "DELETE":
+        justificatifs.supprimer(objet)
+        journaliser(request, models.JournalActivite.Action.MODIFICATION, entite=entite,
+                    id_entite=objet.pk, description=f"Justificatif retiré de {designation}")
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    envoye = request.FILES.get("fichier")
+    if envoye is None:
+        raise ValidationError({"fichier": "Aucun fichier reçu."})
+    try:
+        justificatifs.enregistrer(objet, envoye)
+    except justificatifs.ErreurJustificatif as exc:
+        raise ValidationError({"fichier": str(exc)})
+    journaliser(request, models.JournalActivite.Action.MODIFICATION, entite=entite,
+                id_entite=objet.pk, description=f"Justificatif joint à {designation}")
+    return Response({"a_justificatif": True})
 
 
 def ecole_de(instance, profondeur=0):
@@ -377,18 +412,30 @@ class CreationAccesMixin:
         if Utilisateur.objects.filter(email__iexact=email).exists():
             raise ValidationError({"email": "Un compte utilise déjà cette adresse e-mail."})
 
-        # Tiré au sort sans les caractères qu'on confond en le recopiant (0/O, 1/l).
-        mot_de_passe = donnees.get("mot_de_passe") or get_random_string(
-            10, "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+        mot_de_passe = donnees.get("mot_de_passe") or courriels.mot_de_passe_provisoire()
 
-        with transaction.atomic():
-            compte = Utilisateur.objects.create_user(
-                email=email, id_ecole=request.user.id_ecole, nom=nom, prenom=prenom,
-                role=self.role_acces, password=mot_de_passe,
-                telephone=(donnees.get("telephone") or telephone_fiche or None),
-            )
-            fiche.id_utilisateur = compte
-            fiche.save(update_fields=["id_utilisateur"])
+        try:
+            with transaction.atomic():
+                compte = Utilisateur.objects.create_user(
+                    email=email, id_ecole=request.user.id_ecole, nom=nom, prenom=prenom,
+                    role=self.role_acces, password=mot_de_passe,
+                    telephone=(donnees.get("telephone") or telephone_fiche or None),
+                )
+                fiche.id_utilisateur = compte
+                # La fiche sans nom ni e-mail (un enseignant saisi par son seul
+                # matricule) reprend ceux qu'on vient de donner au compte.
+                champs = {f.name for f in fiche._meta.fields}
+                completes = [c for c, v in (("nom", nom), ("prenom", prenom), ("email", email))
+                             if c in champs and v and not getattr(fiche, c)]
+                for champ in completes:
+                    setattr(fiche, champ, {"nom": nom, "prenom": prenom, "email": email}[champ])
+                fiche.save(update_fields=["id_utilisateur", *completes])
+                # Dans la transaction : un accès dont le courriel n'est pas
+                # parti n'est pas créé, on recommence sans l'option.
+                if donnees.get("envoyer_par_mail"):
+                    courriels.envoyer_identifiants(compte, mot_de_passe)
+        except courriels.ErreurCourriel as exc:
+            raise ValidationError({"detail": str(exc)})
 
         libelle = self.libelle_de_la_fiche(fiche)
         journaliser(request, models.JournalActivite.Action.CREATION, entite="utilisateur",
@@ -403,9 +450,45 @@ class CreationAccesMixin:
             "nom_complet": f"{prenom} {nom}".strip(),
             # Affiché une seule fois : à transmettre, puis à changer.
             "mot_de_passe_provisoire": mot_de_passe,
+            "mail_envoye": bool(donnees.get("envoyer_par_mail")),
             "detail": f"Accès créé pour {libelle}. Identifiant : {email} — "
                       f"mot de passe provisoire : {mot_de_passe}",
         }, status=status.HTTP_201_CREATED)
+
+
+class ReordonnableMixin:
+    """
+    « Monter », « descendre » : POST /api/<liste>/reordonner/ {"ids": [3, 1, 2]}
+
+    Les lignes prennent le rang de leur position dans `ids`. L'écran envoie
+    la liste qu'il affiche — tous les niveaux, ou les classes d'un niveau —,
+    et seules ces lignes sont renumérotées.
+    """
+
+    @extend_schema(request=dict, responses=dict)
+    @action(detail=False, methods=["post"])
+    def reordonner(self, request):
+        ids = request.data.get("ids")
+        if not isinstance(ids, list) or not ids:
+            raise ValidationError({"ids": "Liste d'identifiants attendue, dans l'ordre voulu."})
+        try:
+            ids = [int(i) for i in ids]
+        except (TypeError, ValueError):
+            raise ValidationError({"ids": "Identifiants entiers attendus."})
+        if len(set(ids)) != len(ids):
+            raise ValidationError({"ids": "Un identifiant figure deux fois."})
+        lignes = {o.pk: o for o in self.get_queryset().filter(pk__in=ids)}
+        if len(lignes) != len(ids):
+            raise ValidationError({"ids": "Une des lignes n'existe pas ou n'est pas à vous."})
+        with transaction.atomic():
+            for rang, pk in enumerate(ids, start=1):
+                ligne = lignes[pk]
+                ligne.ordre = rang * scolarite.PAS_ORDRE
+                ligne.save(update_fields=["ordre"])
+        journaliser(request, models.JournalActivite.Action.MODIFICATION,
+                    entite=getattr(self, "entite_journal", None) or self.queryset.model._meta.model_name,
+                    description=f"Nouvel ordre d'affichage ({len(ids)} lignes)")
+        return Response({"ordre": ids})
 
 
 class CorbeilleMixin:
@@ -460,6 +543,35 @@ class UtilisateurViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixi
             raise ValidationError("Vous ne pouvez pas supprimer votre propre compte.")
         super().perform_destroy(instance)
 
+    @extend_schema(request=None, responses=dict)
+    @action(detail=True, methods=["post"], url_path="envoyer-identifiants")
+    def envoyer_identifiants(self, request, pk=None):
+        """
+        « Envoyer les paramètres par mail » : POST /api/utilisateurs/{id}/envoyer-identifiants/
+
+        Le mot de passe n'est connu qu'en empreinte : le compte reçoit un mot
+        de passe provisoire neuf, avec son identifiant et l'adresse de
+        l'application. Si le courriel ne part pas, rien ne change — l'ancien
+        mot de passe reste valable.
+        """
+        compte = self.get_object()
+        if compte.statut != Utilisateur.Statut.ACTIF:
+            raise ValidationError({"detail": "Ce compte est inactif : réactivez-le avant de "
+                                             "lui envoyer ses paramètres."})
+        mot_de_passe = courriels.mot_de_passe_provisoire()
+        try:
+            with transaction.atomic():
+                compte.set_password(mot_de_passe)
+                compte.save(update_fields=["password"])
+                courriels.envoyer_identifiants(compte, mot_de_passe)
+        except courriels.ErreurCourriel as exc:
+            raise ValidationError({"detail": str(exc)})
+        journaliser(request, models.JournalActivite.Action.MODIFICATION, entite="utilisateur",
+                    id_entite=compte.pk,
+                    description=f"Paramètres de connexion envoyés par e-mail à {compte.email}")
+        return Response({"detail": f"Paramètres de connexion envoyés à {compte.email}. "
+                                   "Le mot de passe précédent n'est plus valable."})
+
 
 # ---------- Cœur ----------
 
@@ -507,14 +619,14 @@ class PeriodeScolaireViewSet(CoherenceEcoleMixin, CorbeilleMixin, Journalisation
         ).order_by("date_debut")
 
 
-class NiveauViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
+class NiveauViewSet(ReordonnableMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Niveau.objects.prefetch_related("tarifs").all()
     serializer_class = serializers.NiveauSerializer
     permission_classes = [AccesModule]
     module = "classes"
 
 
-class ClasseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
+class ClasseViewSet(ReordonnableMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                     EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Classe.objects.select_related("id_niveau", "id_enseignant_principal").all()
     serializer_class = serializers.ClasseSerializer
@@ -526,7 +638,9 @@ class ClasseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Fi
 
 class ParentTuteurViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     # Les enfants de chaque parent sont listés avec lui (voir le serializer).
-    queryset = models.ParentTuteur.objects.prefetch_related("liens_eleves__id_eleve")
+    queryset = models.ParentTuteur.objects.prefetch_related(
+        "liens_eleves__id_eleve__inscriptions__id_classe",
+        "liens_eleves__id_eleve__inscriptions__id_annee_scolaire")
     serializer_class = serializers.ParentTuteurSerializer
     # Retrouver le parent d'un frère ou d'une sœur à l'inscription : par son
     # nom, ou par le téléphone que la famille donne au guichet.
@@ -737,7 +851,7 @@ class EleveViewSet(PerimetreMixin, CreationAccesMixin, CoherenceEcoleMixin, Corb
 
         classes = (models.Classe.objects
                    .filter(id_ecole=ecole, id_annee_scolaire=annee)
-                   .select_related("id_niveau").order_by("nom"))
+                   .select_related("id_niveau"))
 
         return Response({
             "eleve": {
@@ -1472,6 +1586,8 @@ class InscriptionViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, Jo
                 eleves=donnees.get("eleves"),
                 derogation_age=donnees.get("derogation_age", False),
                 utilisateur=request.user,
+                classe_redoublement=donnees.get("id_classe_redoublement"),
+                redoublants=donnees.get("redoublants"),
             )
         except scolarite.ErreurAge:
             raise
@@ -1543,11 +1659,14 @@ class EnseignantViewSet(CreationAccesMixin, CoherenceEcoleMixin, CorbeilleMixin,
     role_acces = "enseignant"
     modules_par_action = {"creer_acces": "comptes"}
 
+    search_fields = ["nom", "prenom", "matricule", "specialite"]
+    filterset_fields = ["fonction", "statut", "type_contrat"]
+
     def libelle_de_la_fiche(self, fiche):
-        return f"l'enseignant {fiche.matricule}"
+        return f"{fiche.nom_complet} ({fiche.matricule})"
 
 
-class MatiereViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
+class MatiereViewSet(ReordonnableMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, EcoleFiltreeMixin, viewsets.ModelViewSet):
     queryset = models.Matiere.objects.all()
     serializer_class = serializers.MatiereSerializer
     permission_classes = [AccesModule]
@@ -1591,7 +1710,8 @@ class AffectationEnseignantViewSet(CoherenceEcoleMixin, CorbeilleMixin, Journali
         """
         lignes = (
             self.get_queryset()
-            .values("id_enseignant", "id_enseignant__matricule")
+            .values("id_enseignant", "id_enseignant__matricule",
+                    "id_enseignant__nom", "id_enseignant__prenom")
             .annotate(total_heures=Sum("volume_horaire"), nb_affectations=Count("id"))
             .order_by("-total_heures")
         )
@@ -1599,6 +1719,8 @@ class AffectationEnseignantViewSet(CoherenceEcoleMixin, CorbeilleMixin, Journali
             {
                 "id_enseignant": l["id_enseignant"],
                 "matricule": l["id_enseignant__matricule"],
+                "nom_complet": (f"{l['id_enseignant__prenom']} {l['id_enseignant__nom']}".strip()
+                                or l["id_enseignant__matricule"]),
                 "total_heures": l["total_heures"] or 0,
                 "nb_affectations": l["nb_affectations"],
             }
@@ -1911,15 +2033,38 @@ class BulletinViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, Journ
 
 class AbsenceViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                      viewsets.ModelViewSet):
-    queryset = models.Absence.objects.all()
+    queryset = models.Absence.objects.select_related("id_eleve", "id_classe", "id_matiere").all()
     serializer_class = serializers.AbsenceSerializer
     permission_classes = [AccesModule]
     module = "presences"
     perimetre_famille = "id_eleve"
     perimetre_enseignant = "id_classe"
     actions_personnel = ("synthese",)
-    filterset_fields = ["id_eleve", "id_classe", "statut", "justifiee"]
+    filterset_fields = ["id_eleve", "id_classe", "id_matiere", "statut", "justifiee"]
     chemin_annee = "id_classe__id_annee_scolaire"
+
+    @extend_schema(
+        request={"multipart/form-data": {
+            "type": "object",
+            "properties": {"fichier": {"type": "string", "format": "binary",
+                                       "description": "Certificat ou mot des parents : PDF, JPEG, PNG ou WebP, 5 Mo au plus."}},
+        }},
+        responses={200: None, 204: None},
+    )
+    @action(detail=True, methods=["get", "post", "delete"],
+            parser_classes=[MultiPartParser, FormParser])
+    def justificatif(self, request, pk=None):
+        """
+        Pièce justificative d'une absence (certificat médical, mot des
+        parents) : GET pour la relire, POST (champ `fichier`) pour la déposer,
+        DELETE pour la retirer. Elle reste derrière l'authentification : un
+        certificat médical ne se publie pas.
+        """
+        absence = self.get_object()
+        return _justificatif(
+            request, absence, entite="absence",
+            designation=(f"l'absence de {absence.id_eleve.prenom} {absence.id_eleve.nom} "
+                         f"du {absence.date_absence:%d/%m/%Y}"))
 
     @extend_schema(responses=dict)
     @action(detail=False, methods=["get"])
@@ -1959,17 +2104,66 @@ class SalleViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, Eco
 
 class EmploiDuTempsViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, FiltreParAnneeMixin,
                            viewsets.ModelViewSet):
-    queryset = models.EmploiDuTemps.objects.select_related("id_matiere", "id_enseignant", "id_salle").all()
+    """
+    Planning des cours. Une séance vaut toute l'année, un mois ou une semaine
+    (`periodicite`) ; la liste se restreint à une classe (`?classe=`) et à une
+    fenêtre (`?vue=mensuelle|hebdomadaire&date=AAAA-MM-JJ`), qui montre les
+    séances annuelles et celles qui tombent dans le mois ou la semaine.
+    """
+    queryset = models.EmploiDuTemps.objects.select_related(
+        "id_classe", "id_matiere", "id_enseignant", "id_salle").all()
     serializer_class = serializers.EmploiDuTempsSerializer
     permission_classes = [AccesModule]
     module = "emploi_du_temps"
+    filterset_fields = ["id_classe", "id_enseignant", "id_salle", "jour_semaine", "periodicite"]
 
     def get_queryset(self):
         qs = super().get_queryset().filter(id_classe__id_ecole_id=self.request.user.id_ecole_id)
-        id_classe = self.request.query_params.get("classe")
+        params = self.request.query_params
+        id_classe = params.get("classe")
         if id_classe:
             qs = qs.filter(id_classe=id_classe)
-        return qs
+        fenetre = self._fenetre()
+        if fenetre is not None:
+            qs = qs.filter(serializers.q_periode(*fenetre))
+        # Rangé pour la lecture : par classe, du lundi au samedi, puis à
+        # l'heure. Le jour est un texte : trié tel quel, jeudi passait avant lundi.
+        rang_jour = Case(*[When(jour_semaine=j, then=Value(i))
+                           for i, j in enumerate(serializers.JOURS_SEMAINE)],
+                         output_field=IntegerField())
+        return qs.annotate(rang_jour=rang_jour).order_by(
+            "id_classe__id_niveau__ordre", "id_classe__ordre", "id_classe__nom",
+            "rang_jour", "heure_debut")
+
+    def _fenetre(self):
+        """(premier, dernier jour) de la vue demandée, ou `None` pour l'année entière."""
+        params = self.request.query_params
+        vue = params.get("vue") or models.EmploiDuTemps.Periodicite.ANNUELLE
+        if vue == models.EmploiDuTemps.Periodicite.ANNUELLE:
+            return None
+        if vue not in models.EmploiDuTemps.Periodicite.values:
+            raise ValidationError({"vue": "Vue attendue : annuelle, mensuelle ou hebdomadaire."})
+        try:
+            reference = date_type.fromisoformat(params.get("date") or timezone.localdate().isoformat())
+        except ValueError:
+            raise ValidationError({"date": "Date attendue au format AAAA-MM-JJ."})
+        return serializers.bornes_periode_seance(vue, reference)
+
+    @action(detail=False, methods=["get"])
+    def pdf(self, request):
+        """
+        GET /api/emplois-du-temps/pdf/?classe=&id_annee_scolaire=&vue=&date=
+
+        L'emploi du temps à afficher ou à remettre : une page par classe, les
+        mêmes filtres que la liste.
+        """
+        seances = list(self.filter_queryset(self.get_queryset()))
+        fenetre = self._fenetre()
+        return _fichier(request, pedagogie_documents.emploi_du_temps(
+            request.user.id_ecole, seances,
+            periode=None if fenetre is None else serializers.libelle_periode_seance(
+                request.query_params.get("vue"), *fenetre)),
+            description="Export de l'emploi du temps", entite="emploi_du_temps")
 
 
 # ---------- Module financier ----------
@@ -2205,20 +2399,31 @@ class PaiementViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, Journ
                           .values_list("pk", flat=True))
 
         try:
-            paiements = finances.affecter_paiement(
-                ecole,
-                donnees["id_eleve"],
-                donnees["montant"],
-                donnees["methode"],
-                annee=donnees.get("id_annee_scolaire"),
-                type_frais=donnees.get("id_type_frais"),
-                mois=donnees.get("mois"),
-                frais=donnees.get("frais"),
-                reference=donnees.get("reference_transaction"),
-                commentaire=donnees.get("commentaire"),
-                date_paiement=donnees.get("date_paiement"),
-                utilisateur=request.user,
-            )
+            # Une seule transaction : un mois émis pour être payé d'avance ne
+            # reste pas facturé si l'encaissement est refusé.
+            with transaction.atomic():
+                frais = donnees.get("frais")
+                if donnees.get("mois_d_avance"):
+                    annee_avance = (donnees.get("id_annee_scolaire")
+                                    or getattr(finances._inscription_de_lannee(donnees["id_eleve"]),
+                                               "id_annee_scolaire", None))
+                    emis = finances.emettre_mois_d_avance(
+                        donnees["id_eleve"], annee_avance, donnees["mois_d_avance"])
+                    frais = list(frais or []) + [f.pk for f in emis]
+                paiements = finances.affecter_paiement(
+                    ecole,
+                    donnees["id_eleve"],
+                    donnees["montant"],
+                    donnees["methode"],
+                    annee=donnees.get("id_annee_scolaire"),
+                    type_frais=donnees.get("id_type_frais"),
+                    mois=donnees.get("mois"),
+                    frais=frais,
+                    reference=donnees.get("reference_transaction"),
+                    commentaire=donnees.get("commentaire"),
+                    date_paiement=donnees.get("date_paiement"),
+                    utilisateur=request.user,
+                )
         except finances.ErreurFinance as exc:
             raise ValidationError({"detail": str(exc)})
 
@@ -2454,37 +2659,8 @@ class DepenseViewSet(CoherenceEcoleMixin, CorbeilleMixin, JournalisationMixin, E
         dépenses ; la déposer, de pouvoir les écrire.
         """
         depense = self.get_object()
-
-        if request.method == "GET":
-            fichier = justificatifs.chemin(depense)
-            if fichier is None:
-                return Response({"detail": "Aucun justificatif pour cette dépense."},
-                                status=status.HTTP_404_NOT_FOUND)
-            reponse = FileResponse(open(fichier, "rb"),
-                                   content_type=justificatifs.type_mime(fichier))
-            reponse["Content-Disposition"] = (
-                f'attachment; filename="{justificatifs.nom_telechargement(depense, fichier)}"')
-            reponse["Cache-Control"] = "private, no-store"
-            return reponse
-
-        if request.method == "DELETE":
-            justificatifs.supprimer(depense)
-            journaliser(request, models.JournalActivite.Action.MODIFICATION, entite="depense",
-                        id_entite=depense.pk,
-                        description=f"Justificatif retiré de la dépense « {depense.motif} »")
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        envoye = request.FILES.get("fichier")
-        if envoye is None:
-            raise ValidationError({"fichier": "Aucun fichier reçu."})
-        try:
-            justificatifs.enregistrer(depense, envoye)
-        except justificatifs.ErreurJustificatif as exc:
-            raise ValidationError({"fichier": str(exc)})
-        journaliser(request, models.JournalActivite.Action.MODIFICATION, entite="depense",
-                    id_entite=depense.pk,
-                    description=f"Justificatif joint à la dépense « {depense.motif} »")
-        return Response({"a_justificatif": True})
+        return _justificatif(request, depense, entite="depense",
+                             designation=f"la dépense « {depense.motif} »")
 
     @action(detail=False, methods=["get"], url_path="export")
     def exporter(self, request):
@@ -3111,7 +3287,7 @@ class GrilleTarifsView(APIView):
     ORDRE_NATURES = {"inscription": 0, "mensualite": 1, "autre": 2}
 
     def _grille(self, ecole):
-        niveaux = models.Niveau.objects.filter(id_ecole=ecole).order_by("libelle")
+        niveaux = models.Niveau.objects.filter(id_ecole=ecole).order_by("ordre", "libelle")
         # Les frais dus d'office en premier : ce sont les colonnes qu'on remplit toujours.
         types = sorted(models.TypeFrais.objects.filter(id_ecole=ecole),
                        key=lambda t: (self.ORDRE_NATURES.get(t.nature, 9), t.libelle.lower()))

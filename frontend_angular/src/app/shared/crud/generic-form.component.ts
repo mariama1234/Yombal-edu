@@ -100,7 +100,20 @@ export class GenericFormComponent implements OnInit {
    */
   private valeurParDefaut(field: FieldConfig): string {
     if (field.defaut === 'aujourdhui') return dateDuJour();
+    // L'année d'une nouvelle classe, d'une période ou d'un coefficient est
+    // celle sur laquelle on travaille, affichée dans le bandeau haut.
+    if (field.key === this.config.champAnnee && this.annees.idAnnee() !== null) {
+      return String(this.annees.idAnnee());
+    }
     return '';
+  }
+
+  /** Un champ `visibleSi` ne s'affiche que si son champ de référence a l'une des valeurs. */
+  champVisible(field: FieldConfig): boolean {
+    const regle = field.visibleSi;
+    if (!regle) return true;
+    const valeur = this.form.get(regle.champ)?.value;
+    return regle.valeurs.some((v) => String(v) === String(valeur ?? ''));
   }
 
   /** Borne haute du sélecteur de date : aujourd'hui pour un champ `pasDansLeFutur`. */
@@ -350,6 +363,8 @@ export class GenericFormComponent implements OnInit {
       if (vide && ['number', 'date', 'time', 'select'].includes(field.type)) {
         delete payload[field.key];
       }
+      // Un champ masqué n'a pas de sens pour la ligne : il n'est pas envoyé.
+      if (!this.champVisible(field)) delete payload[field.key];
     }
 
     const requete = this.modeEdition

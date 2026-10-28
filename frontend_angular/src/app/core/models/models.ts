@@ -114,6 +114,8 @@ export interface EnfantDuParent {
   id_eleve: number;
   nom_complet: string;
   matricule: string;
+  /** Classe de sa dernière année, ou `null` s'il n'est inscrit nulle part. */
+  classe: string | null;
   lien: 'pere' | 'mere' | 'tuteur' | 'autre';
   lien_libelle: string;
   contact_principal: boolean;
@@ -216,11 +218,20 @@ export interface EleveInscriptionPayload {
 export interface Enseignant {
   id: number;
   id_ecole: number;
-  nom?: string;
-  prenom?: string;
+  nom: string;
+  prenom: string;
+  /** « Prénom Nom », ou le matricule tant que la fiche n'a pas de nom. */
+  nom_complet: string;
   matricule: string;
+  fonction: string;
+  fonction_libelle: string;
+  telephone?: string | null;
+  email?: string | null;
   specialite?: string;
   date_embauche?: string;
+  annee_recrutement?: number | null;
+  type_contrat?: string | null;
+  type_contrat_libelle?: string | null;
   statut: 'actif' | 'inactif';
 }
 
@@ -299,6 +310,7 @@ export interface EmploiDuTemps {
   matiere_nom?: string;
   id_enseignant: number;
   enseignant_matricule?: string;
+  enseignant_nom?: string;
   id_salle?: number;
   salle_nom?: string;
   id_annee_scolaire: number;
@@ -641,12 +653,18 @@ export interface ResultatReinscription {
   ignores: number;
   /** Élèves de la classe de départ décochés : ils restent à réinscrire. */
   non_retenus: number;
+  /** Parmi les réinscrits : ceux qui passent en classe supérieure, ceux qui redoublent. */
+  montent?: number;
+  redoublent?: number;
+  classe_redoublement?: string | null;
   eleves: {
     id: number;
     matricule: string;
     nom_complet: string;
     deja_inscrit: boolean;
     retenu: boolean;
+    /** Faux : l'élève ne monte pas, il va dans la classe des redoublants. */
+    passe?: boolean;
     /** Âge hors de la fourchette du niveau visé, ou date de naissance manquante. */
     alerte_age: { code: string; message: string; bloquant: boolean } | null;
   }[];
@@ -980,6 +998,8 @@ export interface SituationFinanciereEleve {
     premier_mois_restant: number;
   } | null;
   frais: LigneFrais[];
+  /** Mois dont la mensualité n'est pas encore émise, qu'on peut régler d'avance. */
+  mois_d_avance?: { mois: string; libelle: string; montant: number }[];
   echeancier: LigneEcheancier[];
   paiements: LignePaiement[];
 }

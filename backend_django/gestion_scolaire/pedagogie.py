@@ -507,7 +507,7 @@ def synthese(ecole, periode):
 
     classes = (models.Classe.objects
                .filter(id_ecole=ecole, id_annee_scolaire=periode.id_annee_scolaire_id)
-               .order_by("nom"))
+               .order_by("id_niveau__ordre", "ordre", "nom"))
 
     moyennes_ecole = []
     par_classe, sans_notes = [], []

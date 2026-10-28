@@ -177,7 +177,7 @@ class TestEcritureImposeeSurSonEcole(BaseAPI):
         ("parents", {"nom": "Diouf", "prenom": "Awa", "telephone": "+221770000009"}),
         ("types-depenses", {"libelle": "Fournitures"}),
         ("types-frais", {"libelle": "transport", "montant_defaut": "5000.00"}),
-        ("enseignants", {"matricule": "ENS-777", "specialite": "Anglais"}),
+        ("enseignants", {"matricule": "ENS-777", "nom": "Sarr", "prenom": "Moussa", "specialite": "Anglais"}),
     ]
 
     def test_creation_d_une_classe(self):
@@ -6893,3 +6893,316 @@ class TestRetoursPremierDeploiement(BaseFinances):
         avant = tresorerie()
         self.assertEqual(self._depenser("7000").status_code, 201)
         self.assertEqual(tresorerie(), avant - Decimal("7000"))
+
+
+# =====================================================================
+# Retours de la formation du 27/10/2026 (école MIC CITE)
+# =====================================================================
+
+class TestOrdreDesListes(BaseAPI):
+    """Les niveaux suivent le cursus, et chaque liste se réordonne à la main."""
+
+    def _libelles(self, endpoint):
+        return [l.get("libelle", l.get("nom"))
+                for l in self.resultats(self.client.get(f"/api/{endpoint}/"))]
+
+    def test_un_niveau_connu_nait_a_sa_place_dans_le_cursus(self):
+        for libelle in ("CP", "Club lecture", "CI", "CE1"):
+            self.assertEqual(self.client.post("/api/niveaux/", {"libelle": libelle},
+                                              format="json").status_code, 201)
+        libelles = [l for l in self._libelles("niveaux") if l != "6ème"]
+        self.assertEqual(libelles, ["CI", "CP", "CE1", "Club lecture"])
+
+    def test_reordonner_les_niveaux(self):
+        ids = [self.client.post("/api/niveaux/", {"libelle": l}, format="json").data["id"]
+               for l in ("CI", "CP")]
+        ordre = [ids[1], self.niveau.pk, ids[0]]
+        r = self.client.post("/api/niveaux/reordonner/", {"ids": ordre}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual([n["id"] for n in self.resultats(self.client.get("/api/niveaux/"))], ordre)
+
+    def test_reordonner_refuse_la_ligne_d_une_autre_ecole(self):
+        etranger = models.Niveau.objects.create(id_ecole=self.autre, libelle="CI")
+        r = self.client.post("/api/niveaux/reordonner/",
+                             {"ids": [self.niveau.pk, etranger.pk]}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_reordonner_les_matieres(self):
+        francais = models.Matiere.objects.create(id_ecole=self.ecole, nom="Français")
+        r = self.client.post("/api/matieres/reordonner/",
+                             {"ids": [francais.pk, self.matiere.pk]}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(self._libelles("matieres"), ["Français", "Mathématiques"])
+
+    def test_reordonner_reserve_a_qui_ecrit(self):
+        r = self._client(self.parent_user.email).post(
+            "/api/niveaux/reordonner/", {"ids": [self.niveau.pk]}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+
+class TestFicheDuPersonnel(BaseAPI):
+    def test_fiche_complete_et_matricule_attribue(self):
+        r = self.client.post("/api/enseignants/", {
+            "nom": "Faye", "prenom": "Aminata", "fonction": "secretaire",
+            "date_embauche": "2019-09-15", "type_contrat": "cdi",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["nom_complet"], "Aminata Faye")
+        self.assertTrue(r.data["matricule"].startswith("P"))
+        self.assertEqual(r.data["annee_recrutement"], 2019, "déduite de la date d'embauche")
+        self.assertEqual(r.data["fonction_libelle"], "Secrétaire")
+
+    def test_le_nom_est_obligatoire(self):
+        r = self.client.post("/api/enseignants/", {"matricule": "ENS-9"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("nom", r.data)
+
+    def test_les_listes_nomment_l_enseignant(self):
+        self.enseignant.nom, self.enseignant.prenom = "Ndiaye", "Fatou"
+        self.enseignant.save()
+        self.classe.id_enseignant_principal = self.enseignant
+        self.classe.save()
+        r = self.client.get(f"/api/classes/{self.classe.pk}/")
+        self.assertEqual(r.data["enseignant_nom"], "Fatou Ndiaye")
+
+    def test_sans_nom_le_matricule_reste_lisible(self):
+        fiche = models.Enseignant.objects.create(id_ecole=self.ecole, matricule="ENS-50")
+        self.assertEqual(fiche.nom_complet, "ENS-50")
+
+
+class TestClasseDesEnfants(BaseAPI):
+    def test_la_fiche_du_parent_donne_la_classe(self):
+        eleve = models.Eleve.objects.create(id_ecole=self.ecole, matricule="E-9",
+                                            nom="Diop", prenom="Awa")
+        models.Inscription.objects.create(id_eleve=eleve, id_classe=self.classe,
+                                          id_annee_scolaire=self.annee,
+                                          date_inscription=self.annee.date_debut)
+        parent = models.ParentTuteur.objects.create(id_ecole=self.ecole, nom="Diop",
+                                                    prenom="Mame", telephone="+221770000001")
+        models.EleveParent.objects.create(id_eleve=eleve, id_parent=parent, lien_parente="mere")
+        r = self.client.get(f"/api/parents/{parent.pk}/")
+        self.assertEqual(r.data["enfants"][0]["classe"], "6ème A")
+        self.assertEqual(r.data["enfants_noms"], "Awa Diop (6ème A)")
+
+
+class TestAbsencesDetaillees(BasePedagogie):
+    def setUp(self):
+        super().setUp()
+        import shutil
+        import tempfile
+        from django.test import override_settings
+
+        dossier = tempfile.mkdtemp()
+        reglage = override_settings(MEDIA_ROOT=dossier)
+        reglage.enable()
+        self.addCleanup(shutil.rmtree, dossier, ignore_errors=True)
+        self.addCleanup(reglage.disable)
+
+    def _absence(self, **extra):
+        corps = {"id_eleve": self.eleve.pk, "id_classe": self.classe.pk,
+                 "date_absence": "2026-11-16T07:00:00Z", "statut": "absent"}
+        corps.update(extra)
+        return self.client.post("/api/absences/", corps, format="json")
+
+    def test_plage_horaire_et_duree(self):
+        r = self._absence(heure_debut="08:00", heure_fin="09:30")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["duree"], "1 h 30")
+        self.assertEqual(r.data["horaire"], "08:00 – 09:30")
+
+    def test_fin_avant_debut_refusee(self):
+        self.assertEqual(self._absence(heure_debut="10:00", heure_fin="09:00").status_code, 400)
+
+    def test_matiere_lue_a_l_emploi_du_temps(self):
+        # Le 16/11/2026 est un lundi.
+        models.EmploiDuTemps.objects.create(
+            id_classe=self.classe, id_matiere=self.matiere, id_enseignant=self.enseignant,
+            id_annee_scolaire=self.annee, jour_semaine="lundi",
+            heure_debut="08:00", heure_fin="10:00")
+        r = self._absence(heure_debut="08:30", heure_fin="09:00")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["matiere_nom"], "Mathématiques")
+
+    def test_piece_justificative(self):
+        absence = self._absence().data["id"]
+        fichier = SimpleUploadedFile("certificat.pdf", b"%PDF-1.4 certificat", "application/pdf")
+        r = self.client.post(f"/api/absences/{absence}/justificatif/", {"fichier": fichier},
+                             format="multipart")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertTrue(self.client.get(f"/api/absences/{absence}/").data["a_justificatif"])
+        r = self.client.get(f"/api/absences/{absence}/justificatif/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(b"".join(r.streaming_content), b"%PDF-1.4 certificat")
+        # Une autre école ne la lit pas.
+        self.assertEqual(self.client_autre.get(f"/api/absences/{absence}/justificatif/").status_code, 404)
+
+
+class TestEmploiDuTempsSouple(BasePedagogie):
+    def _seance(self, **extra):
+        charge = {
+            "id_classe": self.classe.pk, "id_matiere": self.matiere.pk,
+            "id_enseignant": self.enseignant.pk, "id_salle": self.salle.pk,
+            "jour_semaine": "lundi", "heure_debut": "08:00", "heure_fin": "10:00",
+        }
+        charge.update(extra)
+        return self.client.post("/api/emplois-du-temps/", charge, format="json")
+
+    def test_deux_mois_differents_sur_le_meme_creneau(self):
+        r = self._seance(periodicite="mensuelle", date_debut="2026-11-17")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual((r.data["date_debut"], r.data["date_fin"]), ("2026-11-01", "2026-11-30"))
+        self.assertEqual(r.data["periode_libelle"], "Novembre 2026")
+        self.assertEqual(self._seance(periodicite="mensuelle", date_debut="2026-12-03").status_code, 201)
+        # Le même mois, le créneau est pris.
+        self.assertEqual(self._seance(periodicite="mensuelle", date_debut="2026-11-02").status_code, 400)
+
+    def test_une_seance_annuelle_croise_toutes_les_autres(self):
+        self.assertEqual(self._seance(periodicite="hebdomadaire", date_debut="2026-11-18").status_code, 201)
+        r = self._seance(heure_debut="09:00", heure_fin="11:00")
+        self.assertEqual(r.status_code, 400, "les heures se chevauchent sur cette semaine-là")
+        self.assertIn("id_classe", r.data)
+
+    def test_semaine_du_lundi_au_dimanche(self):
+        r = self._seance(periodicite="hebdomadaire", date_debut="2026-11-18")
+        self.assertEqual((r.data["date_debut"], r.data["date_fin"]), ("2026-11-16", "2026-11-22"))
+
+    def test_date_requise_et_dans_l_annee(self):
+        self.assertEqual(self._seance(periodicite="mensuelle").status_code, 400)
+        self.assertEqual(self._seance(periodicite="mensuelle", date_debut="2028-01-10").status_code, 400)
+
+    def test_vue_mensuelle_et_tri_par_jour(self):
+        self._seance(jour_semaine="jeudi")
+        self._seance(jour_semaine="mardi")
+        self._seance(jour_semaine="lundi", periodicite="mensuelle", date_debut="2026-12-01")
+        r = self.client.get("/api/emplois-du-temps/", {"vue": "mensuelle", "date": "2026-11-10"})
+        self.assertEqual([s["jour_semaine"] for s in self.resultats(r)], ["mardi", "jeudi"])
+        r = self.client.get("/api/emplois-du-temps/", {"vue": "mensuelle", "date": "2026-12-10"})
+        self.assertEqual([s["jour_semaine"] for s in self.resultats(r)], ["lundi", "mardi", "jeudi"])
+        self.assertEqual(self.resultats(r)[0]["classe_nom"], "6ème A")
+
+    def test_pdf(self):
+        self._seance()
+        r = self.client.get("/api/emplois-du-temps/pdf/", {"classe": self.classe.pk})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        self.assertTrue(r.content.startswith(b"%PDF-"))
+
+
+class TestAffectationsEtCoefficients(BaseAPI):
+    def test_le_coefficient_se_saisit_avec_l_affectation(self):
+        r = self.client.post("/api/affectations/", {
+            "id_enseignant": self.enseignant.pk, "id_matiere": self.matiere.pk,
+            "id_classe": self.classe.pk, "id_annee_scolaire": self.annee.pk,
+            "volume_horaire": 4, "coefficient": 3,
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["coefficient"], 3.0)
+        coefficient = models.CoefficientMatiere.objects.get(id_matiere=self.matiere, id_classe=self.classe)
+        self.assertEqual(coefficient.coefficient, 3)
+        ligne = self.resultats(self.client.get("/api/coefficients/"))[0]
+        self.assertEqual(ligne["enseignants"], self.enseignant.nom_complet)
+        self.assertEqual(ligne["volume_horaire"], 4.0)
+
+
+class TestEnvoiDesIdentifiants(BaseAPI):
+    def test_le_compte_recoit_ses_parametres(self):
+        from django.core import mail
+
+        r = self.client.post(f"/api/utilisateurs/{self.enseignant_user.pk}/envoyer-identifiants/")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, [self.enseignant_user.email])
+        mot_de_passe = message.body.split("Mot de passe provisoire : ")[1].split()[0]
+        self.enseignant_user.refresh_from_db()
+        self.assertTrue(self.enseignant_user.check_password(mot_de_passe))
+        self.assertFalse(self.enseignant_user.check_password(MDP), "l'ancien n'est plus valable")
+
+    def test_reserve_a_la_direction_et_a_son_ecole(self):
+        url = f"/api/utilisateurs/{self.enseignant_user.pk}/envoyer-identifiants/"
+        self.assertEqual(self._client(self.enseignant_user.email).post(url).status_code, 403)
+        self.assertEqual(self.client_autre.post(url).status_code, 404)
+
+    def test_creer_un_acces_et_l_envoyer(self):
+        from django.core import mail
+
+        parent = models.ParentTuteur.objects.create(
+            id_ecole=self.ecole, nom="Sy", prenom="Omar", email="omar.sy@exemple.sn")
+        r = self.client.post(f"/api/parents/{parent.pk}/creer-acces/",
+                             {"envoyer_par_mail": True}, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertTrue(r.data["mail_envoye"])
+        self.assertEqual(mail.outbox[0].to, ["omar.sy@exemple.sn"])
+
+
+class TestPassageEnClasseSuperieure(TestReinscription):
+    def setUp(self):
+        super().setUp()
+        self.classe_redoublants = models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee_suivante,
+            id_niveau=self.niveau, nom="6ème A (2027)", capacite_max=40)
+
+    def test_les_redoublants_restent_au_niveau(self):
+        r = self._reinscrire(redoublants=[self.eleves[2].pk],
+                             id_classe_redoublement=self.classe_redoublants.pk)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual((r.data["montent"], r.data["redoublent"]), (2, 1))
+        classes = dict(models.Inscription.objects.filter(id_annee_scolaire=self.annee_suivante)
+                       .values_list("id_eleve_id", "id_classe_id"))
+        self.assertEqual(classes[self.eleves[0].pk], self.classe_suivante.pk)
+        self.assertEqual(classes[self.eleves[2].pk], self.classe_redoublants.pk)
+        self.assertTrue(models.HistoriqueScolaire.objects.filter(
+            id_eleve=self.eleves[2], motif__startswith="Redoublement").exists())
+
+    def test_la_classe_des_redoublants_est_exigee(self):
+        r = self._reinscrire(redoublants=[self.eleves[2].pk])
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(models.Inscription.objects.filter(id_annee_scolaire=self.annee_suivante).exists())
+
+
+class TestPaiementDAvance(BaseDossierFinancier):
+    def test_un_mois_a_venir_se_regle_d_avance(self):
+        self._frais(25000, date(2026, 10, 5))
+        situation = self.client.get(f"/api/eleves/{self.eleve.pk}/finances/").data
+        mois = [m["mois"] for m in situation["mois_d_avance"]]
+        self.assertNotIn("2026-10", mois, "octobre est déjà émis")
+        self.assertIn("2026-12", mois)
+
+        r = self.client.post("/api/paiements/encaisser/", {
+            "id_eleve": self.eleve.pk, "id_annee_scolaire": self.annee.pk,
+            "montant": 25000, "methode": "especes", "mois_d_avance": ["2026-12"],
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        decembre = models.FraisEleve.objects.get(id_eleve=self.eleve, echeance__month=12)
+        self.assertEqual(decembre.echeance, date(2026, 12, 5), "même jour que la première mensualité")
+        self.assertEqual(decembre.solde_restant, 0)
+        self.assertEqual(models.FraisEleve.objects.get(echeance=date(2026, 10, 5)).solde_restant, 25000,
+                         "le paiement ne va que sur le mois choisi")
+
+        # Générer décembre ensuite ne le facture pas une seconde fois.
+        r = self._generer(echeances=["2026-12-01"])
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(models.FraisEleve.objects.filter(id_eleve=self.eleve, echeance__month=12).count(), 1)
+
+    def test_un_mois_deja_emis_est_refuse_et_rien_ne_reste(self):
+        self._frais(25000, date(2026, 11, 5))
+        r = self.client.post("/api/paiements/encaisser/", {
+            "id_eleve": self.eleve.pk, "id_annee_scolaire": self.annee.pk,
+            "montant": 50000, "methode": "especes", "mois_d_avance": ["2026-12", "2026-11"],
+        }, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(models.FraisEleve.objects.filter(echeance__month=12).exists())
+
+
+class TestEnvoiSansMessagerie(BaseAPI):
+    def test_sans_messagerie_rien_ne_change(self):
+        from django.core import mail
+        from django.test import override_settings
+
+        with override_settings(ENVOI_COURRIELS_ACTIF=False):
+            r = self.client.post(f"/api/utilisateurs/{self.enseignant_user.pk}/envoyer-identifiants/")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("messagerie", r.data["detail"])
+        self.assertEqual(len(mail.outbox), 0)
+        self.enseignant_user.refresh_from_db()
+        self.assertTrue(self.enseignant_user.check_password(MDP), "le mot de passe reste valable")

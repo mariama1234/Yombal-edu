@@ -21,6 +21,10 @@
         <tr><td>Promotion</td><td class="mono">{{ r.classe_source }} → {{ r.classe_cible }}</td></tr>
         <tr><td>Années</td><td class="mono">{{ r.annee_source }} → {{ r.annee_cible }}</td></tr>
         <tr><td>Élèves réinscrits</td><td class="mono">{{ r.reinscrits }}</td></tr>
+        <tr><td>Passent en classe supérieure ({{ r.classe_cible }})</td><td class="mono">{{ r.montent ?? r.reinscrits }}</td></tr>
+        @if (r.redoublent) {
+          <tr><td>Redoublent ({{ r.classe_redoublement }})</td><td class="mono">{{ r.redoublent }}</td></tr>
+        }
         <tr><td>Non retenus (restent à réinscrire)</td><td class="mono">{{ r.non_retenus }}</td></tr>
         <tr><td>Lignes de frais émises</td><td class="mono">{{ r.frais_emis }}</td></tr>
         <tr><td>Déjà inscrits (ignorés)</td><td class="mono">{{ r.ignores }}</td></tr>
@@ -99,7 +103,7 @@
       <div class="field">
         <label for="date">Date d'inscription</label>
         <input class="input" id="date" type="date" formControlName="date_inscription">
-        <span class="hint">Vide = premier jour de l'année d'arrivée.</span>
+        <span class="hint">La date du jour par défaut. Vide = premier jour de l'année d'arrivée.</span>
       </div>
     </div>
 
@@ -134,9 +138,9 @@
       </div>
 
       <p style="font-size:13px; color:var(--ink-600); margin:0 0 10px;">
-        Décoche les élèves qui ne suivent pas la classe (départ, redoublement, changement de classe).
-        Ils restent dans la file « À réinscrire » : tu pourras les réinscrire ailleurs ou
-        enregistrer leur départ depuis leur dossier.
+        Colonne « Réinscrire » : décoche les élèves qui ne reviennent pas (départ, changement d'école).
+        Ils restent dans la file « À réinscrire ». Colonne « Monte » : décoche ceux qui ne passent pas
+        en classe supérieure ; ils sont réinscrits dans la classe des redoublants choisie plus bas.
       </p>
       <div style="display:flex; gap:14px; margin-bottom:8px;">
         <button type="button" class="panel-link" (click)="toutCocher()">Tout cocher</button>
@@ -145,7 +149,7 @@
 
       <table class="simple">
         <thead>
-          <tr><th style="width:36px;"></th><th>Élève</th><th>Matricule</th><th></th></tr>
+          <tr><th style="width:70px;">Réinscrire</th><th style="width:60px;">Monte</th><th>Élève</th><th>Matricule</th><th></th></tr>
         </thead>
         <tbody>
           @for (e of a.eleves; track e.id) {
@@ -154,8 +158,17 @@
                 <input type="checkbox" [checked]="coches().includes(e.id)" [disabled]="e.deja_inscrit"
                        (change)="basculer(e.id)" [attr.aria-label]="'Réinscrire ' + e.nom_complet">
               </td>
+              <td>
+                <input type="checkbox" [checked]="!redoublants().includes(e.id)"
+                       [disabled]="e.deja_inscrit || !coches().includes(e.id)"
+                       (change)="basculerPassage(e.id)"
+                       [attr.aria-label]="e.nom_complet + ' passe en classe supérieure'">
+              </td>
               <td [style.color]="coches().includes(e.id) || e.deja_inscrit ? null : 'var(--ink-400)'">
                 {{ e.nom_complet }}
+                @if (coches().includes(e.id) && redoublants().includes(e.id)) {
+                  <span class="pill en_retard" style="margin-left:6px;">Redouble</span>
+                }
                 @if (e.alerte_age; as al) {
                   <div style="font-size:12px;" [style.color]="al.bloquant ? 'var(--red-500, #c0392b)' : 'var(--orange-500)'">
                     ⚠ {{ al.message }}
@@ -184,6 +197,22 @@
         Pour chaque élève réinscrit : droits d'inscription et mensualités émis d'office,
         et reconduction des frais au choix de l'an passé (transport, demi-pension…).
       </p>
+      @if (redoublantsCoches().length) {
+        <div class="field" style="margin:12px 0; max-width:360px;">
+          <label for="classe-redoublement">Classe des {{ redoublantsCoches().length }} redoublant(s)</label>
+          <select class="input" id="classe-redoublement" (change)="choisirClasseRedoublement($any($event.target).value)">
+            <option value="" [selected]="!classeRedoublement()">— choisir —</option>
+            @for (c of classesCible(); track c.id) {
+              @if (c.id !== form.value.id_classe_cible) {
+                <option [value]="c.id" [selected]="classeRedoublement() === c.id">
+                  {{ c.nom }} ({{ c.effectif }}/{{ c.capacite_max }})
+                </option>
+              }
+            }
+          </select>
+          <span class="hint">Une classe de l'année d'arrivée, d'ordinaire du même niveau que la classe de départ.</span>
+        </div>
+      }
       @if (avertissement()) {
         <div class="form-error">⚠ {{ avertissement() }}</div>
       }
@@ -207,7 +236,8 @@
       }
 
       <div class="form-actions">
-        <button class="btn-primary" (click)="valider(false)" [disabled]="occupe() || coches().length === 0">
+        <button class="btn-primary" (click)="valider(false)"
+                [disabled]="occupe() || coches().length === 0 || (redoublantsCoches().length > 0 && !classeRedoublement())">
           {{ occupe() ? 'Réinscription…' : 'Réinscrire ' + coches().length + ' élève(s)' }}
         </button>
       </div>

@@ -166,7 +166,7 @@
 
         @if (erreur()) { <div class="form-error">{{ erreur() }}</div> }
 
-        @if (sansFrais()) {
+        @if (sansFrais() && !moisPayablesDAvance().length) {
           <p style="font-size:13px; color:var(--ink-600); margin:0 0 14px;">
             Aucun frais n'a été émis pour {{ s.eleve.prenom }} en {{ s.annee?.libelle }} : il n'y a
             rien sur quoi imputer un paiement.
@@ -187,6 +187,9 @@
                 Coche les frais payés. Sans case cochée, le montant solde les frais du plus ancien au plus récent.
               </span>
               <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px; max-height:240px; overflow-y:auto; border:1px solid var(--line); border-radius:10px; padding:10px 12px;">
+                @if (!fraisOuverts().length) {
+                  <span class="hint">Aucun frais ouvert : tout ce qui a été émis est réglé.</span>
+                }
                 @for (f of fraisOuverts(); track f.id) {
                   <label style="display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:400; cursor:pointer;">
                     <input type="checkbox" [checked]="fraisCoches().includes(f.id)" (change)="basculerFrais(f.id)">
@@ -200,13 +203,31 @@
               </div>
             </div>
 
+            @if (moisPayablesDAvance().length) {
+              <div class="field">
+                <label>Régler des mois d'avance</label>
+                <span class="hint">
+                  Mois dont la mensualité n'est pas encore émise : cochés, ils sont facturés et réglés maintenant.
+                </span>
+                <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px; max-height:200px; overflow-y:auto; border:1px dashed var(--line); border-radius:10px; padding:10px 12px;">
+                  @for (m of moisPayablesDAvance(); track m.mois) {
+                    <label style="display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:400; cursor:pointer;">
+                      <input type="checkbox" [checked]="moisAvance().includes(m.mois)" (change)="basculerAvance(m.mois)">
+                      <span style="flex:1;">Mensualité {{ m.libelle }}</span>
+                      <span class="mono">{{ m.montant | number:'1.0-0' }} F</span>
+                    </label>
+                  }
+                </div>
+              </div>
+            }
+
             <div class="form-grid">
               <div class="field">
                 <label for="montant">Montant payé (F CFA)</label>
                 <input class="input" id="montant" type="number" formControlName="montant" [max]="plafond()">
                 <span class="hint">
-                  @if (fraisCoches().length) {
-                    Frais cochés : {{ totalCoche() | number:'1.0-0' }} F
+                  @if (selection()) {
+                    Cochés : {{ totalCoche() + totalAvance() | number:'1.0-0' }} F
                   } @else {
                     Reste à payer : {{ reste() | number:'1.0-0' }} F
                   }

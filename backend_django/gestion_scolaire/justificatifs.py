@@ -1,10 +1,11 @@
 """
-Justificatifs des dépenses : facture, reçu, bon de commande numérisé.
+Justificatifs : facture ou reçu d'une dépense, certificat médical ou mot des
+parents d'une absence.
 
 Une pièce comptable n'est pas un fichier public : comme les photos d'élèves,
 elle est lue par l'API, derrière l'authentification et le cloisonnement par
-école, et vit sous `MEDIA_ROOT/justificatifs/<école>/`. `Depense.justificatif_url`
-en garde le chemin relatif.
+école, et vit sous `MEDIA_ROOT/justificatifs/<école>/`. Le champ
+`justificatif_url` de la ligne (dépense, absence) en garde le chemin relatif.
 
 Le format est reconnu aux premiers octets plutôt qu'au nom du fichier ou au
 type annoncé par le navigateur : les deux se falsifient d'un renommage. Un
@@ -43,9 +44,15 @@ def _racine():
     return Path(settings.MEDIA_ROOT).resolve()
 
 
-def chemin(depense):
+def _ecole(objet):
+    """École de la ligne : directe sur une dépense, par l'élève sur une absence."""
+    ecole = getattr(objet, "id_ecole_id", None)
+    return ecole if ecole is not None else objet.id_eleve.id_ecole_id
+
+
+def chemin(objet):
     """Fichier du justificatif, ou `None` s'il n'y en a pas sur le disque."""
-    relatif = depense.justificatif_url
+    relatif = objet.justificatif_url
     # Le champ acceptait autrefois une adresse externe saisie à la main : ce
     # n'est pas un fichier que l'école détient.
     if not relatif or "://" in relatif:
@@ -64,10 +71,15 @@ def type_mime(fichier):
     return trouve[1] if trouve else "application/octet-stream"
 
 
-def nom_telechargement(depense, fichier):
+def nom_telechargement(objet, fichier):
     """Nom lisible à l'enregistrement, plutôt que l'identifiant tiré au sort."""
-    motif = "".join(c if c.isalnum() else "-" for c in (depense.motif or "depense")).strip("-")
-    return f"justificatif-{motif.lower()[:40]}-{depense.date_depense:%Y-%m-%d}{fichier.suffix}"
+    if hasattr(objet, "date_depense"):
+        libelle, jour = objet.motif or "depense", objet.date_depense
+    else:
+        libelle = f"absence {objet.id_eleve.prenom} {objet.id_eleve.nom}"
+        jour = objet.date_absence
+    motif = "".join(c if c.isalnum() else "-" for c in libelle).strip("-")
+    return f"justificatif-{motif.lower()[:40]}-{jour:%Y-%m-%d}{fichier.suffix}"
 
 
 def _effacer(fichier):
@@ -85,7 +97,7 @@ def _effacer(fichier):
         pass
 
 
-def enregistrer(depense, fichier_envoye):
+def enregistrer(objet, fichier_envoye):
     """Dépose ou remplace le justificatif ; l'ancien part une fois le nouveau en place."""
     if fichier_envoye.size > TAILLE_MAX:
         raise ErreurJustificatif(
@@ -96,24 +108,26 @@ def enregistrer(depense, fichier_envoye):
         raise ErreurJustificatif(f"Format non reconnu : envoyez un fichier {FORMATS}.")
     extension, _ = trouve
 
-    ancien = chemin(depense)
+    ancien = chemin(objet)
     # Un nom neuf à chaque dépôt : un navigateur ne ressert jamais l'ancien
-    # fichier depuis son cache.
-    relatif = (Path(DOSSIER) / str(depense.id_ecole_id)
-               / f"{depense.pk}-{uuid.uuid4().hex[:12]}.{extension}")
+    # fichier depuis son cache. Le préfixe distingue les pièces d'absence de
+    # celles des dépenses, qui partagent le dossier de l'école.
+    prefixe = "" if hasattr(objet, "date_depense") else "absence-"
+    relatif = (Path(DOSSIER) / str(_ecole(objet))
+               / f"{prefixe}{objet.pk}-{uuid.uuid4().hex[:12]}.{extension}")
     destination = _racine() / relatif
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(contenu)
 
-    depense.justificatif_url = relatif.as_posix()
-    depense.save(update_fields=["justificatif_url"])
+    objet.justificatif_url = relatif.as_posix()
+    objet.save(update_fields=["justificatif_url"])
     if ancien is not None:
         _effacer(ancien)
 
 
-def supprimer(depense):
-    fichier = chemin(depense)
-    depense.justificatif_url = None
-    depense.save(update_fields=["justificatif_url"])
+def supprimer(objet):
+    fichier = chemin(objet)
+    objet.justificatif_url = None
+    objet.save(update_fields=["justificatif_url"])
     if fichier is not None:
         _effacer(fichier)

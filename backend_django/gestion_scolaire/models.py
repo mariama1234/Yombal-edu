@@ -352,37 +352,85 @@ class Niveau(models.Model):
     # l'année scolaire. Vide d'un côté : pas de limite de ce côté-là.
     age_min = models.PositiveSmallIntegerField(blank=True, null=True)
     age_max = models.PositiveSmallIntegerField(blank=True, null=True)
+    # Rang d'affichage : l'ordre alphabétique rangeait « 3ème » avant « CI », et
+    # « CE1 » avant « CI ». Un niveau connu naît à sa place dans le cursus ;
+    # l'école déplace ensuite les siens depuis la liste.
+    ordre = models.PositiveIntegerField(default=0)
 
     class Meta:
         db_table = "niveau"
-        ordering = ["libelle"]
+        ordering = ["ordre", "libelle"]
 
     def __str__(self):
         return self.libelle
 
 
 class Enseignant(models.Model):
+    """
+    Fiche d'un membre de l'équipe : enseignant, ou personnel (secrétariat,
+    surveillance, entretien…). La fonction les distingue.
+
+    Le nom et le prénom vivent sur la fiche : un enseignant sans compte de
+    connexion n'était connu que par son matricule, et c'est ce matricule que
+    les listes de choix proposaient.
+    """
+
     class Statut(models.TextChoices):
         ACTIF = "actif", "Actif"
         INACTIF = "inactif", "Inactif"
+
+    class Fonction(models.TextChoices):
+        ENSEIGNANT = "enseignant", "Enseignant"
+        DIRECTEUR = "directeur", "Directeur"
+        CENSEUR = "censeur", "Censeur"
+        SURVEILLANT = "surveillant", "Surveillant"
+        SECRETAIRE = "secretaire", "Secrétaire"
+        COMPTABLE = "comptable", "Comptable"
+        CAISSIER = "caissier", "Caissier"
+        GARDIEN = "gardien", "Gardien"
+        ENTRETIEN = "entretien", "Agent d'entretien"
+        CHAUFFEUR = "chauffeur", "Chauffeur"
+        AUTRE = "autre", "Autre"
+
+    class TypeContrat(models.TextChoices):
+        CDI = "cdi", "CDI"
+        CDD = "cdd", "CDD"
+        VACATAIRE = "vacataire", "Vacataire"
+        STAGIAIRE = "stagiaire", "Stagiaire"
+        PRESTATAIRE = "prestataire", "Prestataire"
+        BENEVOLE = "benevole", "Bénévole"
 
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="enseignants", db_column="id_ecole")
     id_utilisateur = models.ForeignKey(Utilisateur, on_delete=models.SET_NULL, null=True, blank=True,
                                         related_name="enseignant_profil", db_column="id_utilisateur")
     matricule = models.CharField(max_length=30)
+    nom = models.CharField(max_length=100, blank=True, default="")
+    prenom = models.CharField(max_length=100, blank=True, default="")
+    fonction = models.CharField(max_length=20, choices=Fonction.choices, default=Fonction.ENSEIGNANT)
+    telephone = models.CharField(max_length=30, blank=True, null=True)
+    email = models.EmailField(max_length=150, blank=True, null=True)
     specialite = models.CharField(max_length=100, blank=True, null=True)
     date_embauche = models.DateField(blank=True, null=True)
+    # Distincte de la date d'embauche : l'école connaît souvent l'année d'un
+    # recrutement ancien sans en connaître le jour.
+    annee_recrutement = models.PositiveSmallIntegerField(blank=True, null=True)
+    type_contrat = models.CharField(max_length=20, choices=TypeContrat.choices, blank=True, null=True)
     statut = models.CharField(max_length=20, choices=Statut.choices, default=Statut.ACTIF)
 
     class Meta:
         db_table = "enseignant"
-        ordering = ["matricule"]
+        ordering = ["nom", "prenom", "matricule"]
         constraints = [
             models.UniqueConstraint(fields=["id_ecole", "matricule"], name="uq_enseignant_matricule_ecole")
         ]
 
+    @property
+    def nom_complet(self):
+        """« Prénom Nom », ou le matricule tant que la fiche n'a pas de nom."""
+        return f"{self.prenom} {self.nom}".strip() or self.matricule
+
     def __str__(self):
-        return f"{self.prenom if hasattr(self,'prenom') else ''} {self.nom if hasattr(self,'nom') else self.matricule}"
+        return self.nom_complet
 
 
 class Classe(models.Model):
@@ -397,10 +445,13 @@ class Classe(models.Model):
     capacite_max = models.PositiveIntegerField()
     id_enseignant_principal = models.ForeignKey(Enseignant, on_delete=models.SET_NULL, null=True, blank=True,
                                                   related_name="classes_dirigees", db_column="id_enseignant_principal")
+    # Rang d'affichage parmi les classes du même niveau (6ème A, 6ème B…).
+    ordre = models.PositiveIntegerField(default=0)
 
     class Meta:
         db_table = "classe"
-        ordering = ["nom"]
+        # Rangées comme le cursus : par niveau, puis dans le niveau.
+        ordering = ["id_niveau__ordre", "ordre", "nom"]
 
     def __str__(self):
         return self.nom
@@ -524,10 +575,12 @@ class HistoriqueScolaire(models.Model):
 class Matiere(models.Model):
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="matieres", db_column="id_ecole")
     nom = models.CharField(max_length=100)
+    # Rang d'affichage, celui du bulletin : le français avant le dessin.
+    ordre = models.PositiveIntegerField(default=0)
 
     class Meta:
         db_table = "matiere"
-        ordering = ["nom"]
+        ordering = ["ordre", "nom"]
 
     def __str__(self):
         return self.nom
@@ -652,9 +705,15 @@ class Absence(models.Model):
     id_classe = models.ForeignKey(Classe, on_delete=models.CASCADE, related_name="absences", db_column="id_classe")
     id_matiere = models.ForeignKey(Matiere, on_delete=models.SET_NULL, null=True, blank=True, related_name="absences", db_column="id_matiere")
     date_absence = models.DateTimeField()
+    # Plage manquée, de telle heure à telle heure. Vides : la journée entière.
+    heure_debut = models.TimeField(blank=True, null=True)
+    heure_fin = models.TimeField(blank=True, null=True)
     statut = models.CharField(max_length=10, choices=Statut.choices)
     justifiee = models.BooleanField(default=False)
     motif = models.CharField(max_length=255, blank=True, null=True)
+    # Pièce justificative (certificat médical, mot des parents) : chemin sous
+    # MEDIA_ROOT, lue par l'API comme le justificatif d'une dépense.
+    justificatif_url = models.CharField(max_length=255, blank=True, null=True)
 
     class Meta:
         db_table = "absence"
@@ -679,6 +738,14 @@ class Salle(models.Model):
 
 
 class EmploiDuTemps(models.Model):
+    class Periodicite(models.TextChoices):
+        # Toute l'année : le cas courant.
+        ANNUELLE = "annuelle", "Annuelle"
+        # Un mois, ou une semaine : un aménagement (examens, ramadan,
+        # remplacement) qui ne remet pas en cause le planning annuel.
+        MENSUELLE = "mensuelle", "Mensuelle"
+        HEBDOMADAIRE = "hebdomadaire", "Hebdomadaire"
+
     class JourSemaine(models.TextChoices):
         LUNDI = "lundi", "Lundi"
         MARDI = "mardi", "Mardi"
@@ -695,14 +762,20 @@ class EmploiDuTemps(models.Model):
     jour_semaine = models.CharField(max_length=10, choices=JourSemaine.choices)
     heure_debut = models.TimeField()
     heure_fin = models.TimeField()
+    periodicite = models.CharField(max_length=15, choices=Periodicite.choices,
+                                   default=Periodicite.ANNUELLE)
+    # Bornes d'une séance mensuelle (le mois) ou hebdomadaire (du lundi au
+    # dimanche). Vides pour une séance annuelle, valable toute l'année.
+    date_debut = models.DateField(blank=True, null=True)
+    date_fin = models.DateField(blank=True, null=True)
 
     class Meta:
         db_table = "emploi_du_temps"
-        ordering = ["jour_semaine", "heure_debut"]
+        ordering = ["heure_debut"]
+        # Plus d'unicité sur le créneau : deux séances de deux mois différents
+        # occupent légitimement le même. Les conflits — heures et dates qui se
+        # chevauchent — sont refusés par le serializer.
         constraints = [
-            models.UniqueConstraint(fields=["id_classe", "jour_semaine", "heure_debut", "id_annee_scolaire"], name="uq_seance_classe_creneau"),
-            models.UniqueConstraint(fields=["id_enseignant", "jour_semaine", "heure_debut", "id_annee_scolaire"], name="uq_seance_enseignant_creneau"),
-            models.UniqueConstraint(fields=["id_salle", "jour_semaine", "heure_debut", "id_annee_scolaire"], name="uq_seance_salle_creneau"),
             models.CheckConstraint(condition=models.Q(heure_fin__gt=models.F("heure_debut")), name="chk_seance_horaire"),
         ]
 

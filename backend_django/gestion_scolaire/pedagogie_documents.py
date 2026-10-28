@@ -227,3 +227,53 @@ def moyennes_classe(ecole, resultat, format="xlsx"):
 
     contenu = exports.classeur_xlsx([(resultat["classe"][:31], entetes, lignes)])
     return contenu, nom("xlsx"), XLSX
+
+
+# ---------------------------------------------------------------------------
+# Emploi du temps
+# ---------------------------------------------------------------------------
+
+def emploi_du_temps(ecole, seances, periode=None):
+    """
+    Emploi du temps imprimable, une section par classe, du lundi au samedi.
+
+    `seances` arrive déjà trié (classe, jour, heure) par la vue : le document
+    reprend l'ordre de l'écran. `periode` (« Novembre 2026 ») précise la
+    fenêtre affichée quand ce n'est pas l'année entière.
+    """
+    document = exports.DocumentPDF(
+        titre="Emploi du temps",
+        sous_titre=_sous_titre(ecole, periode or "Toute l'année"),
+        pied=ecole.nom, paysage=True,
+    )
+    par_classe = {}
+    for seance in seances:
+        par_classe.setdefault(seance.id_classe.nom, []).append(seance)
+
+    for classe, lignes in par_classe.items():
+        document.section(classe)
+        document.tableau(
+            [("Jour", 70, "g"), ("Horaire", 80, "g"), ("Matière", 140, "g"),
+             ("Enseignant", 140, "g"), ("Salle", 70, "g"), ("Période", 110, "g")],
+            [[s.get_jour_semaine_display(),
+              f"{s.heure_debut:%H:%M} – {s.heure_fin:%H:%M}",
+              s.id_matiere.nom,
+              s.id_enseignant.nom_complet,
+              _texte(s.id_salle.nom if s.id_salle_id else None),
+              _periode_seance(s)]
+             for s in lignes],
+        )
+        document.espace(8)
+
+    if not par_classe:
+        document.paragraphe("Aucun cours planifié pour cette sélection.")
+
+    nom = exports.nom_document("emploi-du-temps",
+                               *(par_classe if len(par_classe) == 1 else []),
+                               periode or "", ecole.nom)
+    return document.rendu(), nom, PDF
+
+
+def _periode_seance(seance):
+    from .serializers import libelle_periode_seance
+    return libelle_periode_seance(seance.periodicite, seance.date_debut, seance.date_fin)

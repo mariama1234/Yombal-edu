@@ -221,11 +221,43 @@ MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', BASE_DIR / 'media'))
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+# Sans `EMAIL_HOST`, les courriels (paramètres de connexion envoyés à un
+# compte) s'affichent dans la console du serveur : rien ne part par erreur
+# d'un poste de développement. En production, renseigner EMAIL_HOST,
+# EMAIL_PORT, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, EMAIL_USE_TLS (ou
+# EMAIL_USE_SSL) et DEFAULT_FROM_EMAIL.
+if os.environ.get('EMAIL_HOST'):
+    MAILERS = {
+        'default': {
+            'BACKEND': 'django.core.mail.backends.smtp.EmailBackend',
+            'OPTIONS': {
+                'host': os.environ['EMAIL_HOST'],
+                'port': int(os.environ.get('EMAIL_PORT', '587')),
+                'username': os.environ.get('EMAIL_HOST_USER', ''),
+                'password': os.environ.get('EMAIL_HOST_PASSWORD', ''),
+                'use_tls': os.environ.get('EMAIL_USE_TLS', 'true').strip().lower() in ('1', 'true', 'oui'),
+                'use_ssl': os.environ.get('EMAIL_USE_SSL', 'false').strip().lower() in ('1', 'true', 'oui'),
+                'timeout': 20,
+            },
+        },
+    }
+else:
+    MAILERS = {
+        'default': {
+            'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+        },
+    }
+
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'YombalEdu <no-reply@yombaledu.local>')
+
+# Envoyer des identifiants change le mot de passe du compte : en production
+# sans messagerie, le courriel finirait dans la console et la personne ne
+# recevrait rien. L'envoi n'est alors pas proposé ; en développement, la
+# console suffit pour lire le message.
+ENVOI_COURRIELS_ACTIF = bool(os.environ.get('EMAIL_HOST')) or DEBUG
+
+# Adresse de l'application, rappelée dans les courriels envoyés aux comptes.
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:4200')
 
 
 AUTH_USER_MODEL = 'gestion_scolaire.Utilisateur'

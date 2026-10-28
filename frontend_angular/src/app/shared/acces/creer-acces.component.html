@@ -16,7 +16,9 @@
 
     @if (resultat(); as r) {
       <p style="font-size:13px; color:var(--ink-600); margin:0 0 14px;">
-        Le compte est créé et rattaché à la fiche. Transmettez ces identifiants :
+        Le compte est créé et rattaché à la fiche.
+        @if (r.mail_envoye) { Les identifiants ont été envoyés à <strong>{{ r.email }}</strong>. Pour mémoire : }
+        @else { Transmettez ces identifiants : }
         <strong>le mot de passe ne sera plus affiché</strong>, et la personne pourra le
         changer après sa première connexion.
       </p>
@@ -61,6 +63,12 @@
             @if (form.controls.email.touched && form.controls.email.invalid) {
               <span class="hint hint-error">Une adresse e-mail valide est obligatoire : c'est l'identifiant.</span>
             }
+          </div>
+          <div class="field" style="grid-column:1 / -1;">
+            <label class="radio-pill" style="justify-content:flex-start; gap:10px;">
+              <input type="checkbox" formControlName="envoyer_par_mail">
+              Envoyer les paramètres de connexion par e-mail
+            </label>
           </div>
         </div>
         <div class="form-actions">

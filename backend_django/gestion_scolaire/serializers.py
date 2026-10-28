@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from rest_framework import serializers
@@ -6,6 +7,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
+from django.db.models import Max, Q
 from django.utils import timezone
 from . import finances, justificatifs, matricules, models, scolarite
 from .permissions import ROLES_DIRECTION, peut_ecrire, peut_lire
@@ -373,12 +375,26 @@ class NiveauSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        """Un niveau connu de la grille naît avec sa fourchette d'âge, modifiable ensuite."""
+        """
+        Un niveau connu de la grille naît avec sa fourchette d'âge et à son rang
+        dans le cursus ; un niveau propre à l'école, à la fin de la liste.
+        """
         if validated_data.get("age_min") is None and validated_data.get("age_max") is None:
             fourchette = scolarite.fourchette_par_defaut(validated_data.get("libelle"))
             if fourchette:
                 validated_data["age_min"], validated_data["age_max"] = fourchette
+        if not validated_data.get("ordre"):
+            requete = self.context.get("request")
+            ecole = requete.user.id_ecole_id if requete else None
+            validated_data["ordre"] = (scolarite.rang_par_defaut(validated_data.get("libelle"))
+                                       or ordre_suivant(models.Niveau.objects.filter(id_ecole_id=ecole)))
         return super().create(validated_data)
+
+
+def ordre_suivant(queryset):
+    """Rang qui place une nouvelle ligne après les autres de la même liste."""
+    dernier = queryset.aggregate(m=Max("ordre"))["m"] or 0
+    return dernier + scolarite.PAS_ORDRE
 
 
 class ClasseSerializer(serializers.ModelSerializer):
@@ -393,12 +409,20 @@ class ClasseSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "capacite_max": {"min_value": 1, "error_messages": {
                 "min_value": "La capacité doit être d'au moins une place."}},
+            "ordre": {"required": False},
         }
 
     def get_enseignant_nom(self, obj) -> str | None:
-        if obj.id_enseignant_principal:
-            return f"{obj.id_enseignant_principal.prenom if hasattr(obj.id_enseignant_principal,'prenom') else ''} {obj.id_enseignant_principal.nom if hasattr(obj.id_enseignant_principal,'nom') else obj.id_enseignant_principal.matricule}"
-        return None
+        enseignant = obj.id_enseignant_principal
+        return enseignant.nom_complet if enseignant else None
+
+    def create(self, validated_data):
+        """Une nouvelle classe se range après les autres classes de son niveau."""
+        if not validated_data.get("ordre"):
+            validated_data["ordre"] = ordre_suivant(models.Classe.objects.filter(
+                id_annee_scolaire=validated_data.get("id_annee_scolaire"),
+                id_niveau=validated_data.get("id_niveau")))
+        return super().create(validated_data)
 
 
 class CreationAccesSerializer(serializers.Serializer):
@@ -415,6 +439,9 @@ class CreationAccesSerializer(serializers.Serializer):
     mot_de_passe = serializers.CharField(min_length=8, required=False, allow_blank=True,
                                          help_text="Vide : un mot de passe provisoire est tiré au sort.")
     telephone = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    envoyer_par_mail = serializers.BooleanField(
+        required=False, default=False,
+        help_text="Écrit à la personne son identifiant et son mot de passe provisoire.")
 
 
 class AccesFicheMixin(serializers.ModelSerializer):
@@ -445,19 +472,37 @@ class ParentTuteurSerializer(AccesFicheMixin):
         # Le ViewSet précharge les liens : pas de requête par ligne.
         return sorted(obj.liens_eleves.all(), key=lambda l: (l.id_eleve.prenom, l.id_eleve.nom))
 
+    @staticmethod
+    def _classe(eleve):
+        """
+        Classe de l'enfant : celle de sa dernière année, une inscription annulée
+        mise à part. Lue sur les inscriptions préchargées par le ViewSet.
+        """
+        inscriptions = [i for i in eleve.inscriptions.all()
+                        if i.statut != models.Inscription.Statut.ANNULEE]
+        if not inscriptions:
+            return None
+        return max(inscriptions, key=lambda i: i.id_annee_scolaire.date_debut).id_classe.nom
+
     def get_enfants(self, obj) -> list:
         return [{
             "id_lien": lien.pk,
             "id_eleve": lien.id_eleve_id,
             "nom_complet": f"{lien.id_eleve.prenom} {lien.id_eleve.nom}".strip(),
             "matricule": lien.id_eleve.matricule,
+            "classe": self._classe(lien.id_eleve),
             "lien": lien.lien_parente,
             "lien_libelle": lien.get_lien_parente_display(),
             "contact_principal": lien.contact_principal,
         } for lien in self._liens(obj)]
 
     def get_enfants_noms(self, obj) -> str:
-        return ", ".join(f"{l.id_eleve.prenom} {l.id_eleve.nom}".strip() for l in self._liens(obj))
+        noms = []
+        for lien in self._liens(obj):
+            nom = f"{lien.id_eleve.prenom} {lien.id_eleve.nom}".strip()
+            classe = self._classe(lien.id_eleve)
+            noms.append(f"{nom} ({classe})" if classe else nom)
+        return ", ".join(noms)
 
 
 class EleveParentSerializer(serializers.ModelSerializer):
@@ -903,6 +948,11 @@ class ReinscriptionSerializer(serializers.Serializer):
     # Élèves cochés à l'aperçu. Absent : toute la classe de départ.
     eleves = serializers.ListField(child=serializers.IntegerField(), required=False,
                                    allow_null=True)
+    # Parmi les cochés, ceux qui ne montent pas, et la classe qui les reçoit.
+    redoublants = serializers.ListField(child=serializers.IntegerField(), required=False,
+                                        allow_null=True)
+    id_classe_redoublement = serializers.PrimaryKeyRelatedField(
+        queryset=models.Classe.objects.all(), required=False, allow_null=True)
     valider = serializers.BooleanField(default=False)
     derogation_age = serializers.BooleanField(required=False, default=False)
 
@@ -947,28 +997,62 @@ class FicheSanitaireSerializer(serializers.ModelSerializer):
 
 class EnseignantSerializer(UniciteParEcoleMixin, AccesFicheMixin):
     champ_unique = "matricule"
-    message_unicite = "Un enseignant porte déjà ce matricule dans votre école."
+    message_unicite = "Un membre du personnel porte déjà ce matricule dans votre école."
 
-    # Un enseignant n'a ni nom ni prénom en propre : ils vivent sur son compte.
-    nom = serializers.SerializerMethodField()
-    prenom = serializers.SerializerMethodField()
-    nom_complet = serializers.SerializerMethodField()
+    nom_complet = serializers.CharField(read_only=True)
+    fonction_libelle = serializers.CharField(source="get_fonction_display", read_only=True)
+    type_contrat_libelle = serializers.CharField(source="get_type_contrat_display", read_only=True,
+                                                 allow_null=True)
 
     class Meta:
         model = models.Enseignant
         fields = "__all__"
         read_only_fields = ["id_ecole", "id_utilisateur"]
+        extra_kwargs = {
+            # Vide : attribué à l'enregistrement (P0001, P0002…). Une école
+            # qui n'en tient pas n'a pas à en inventer pour sa femme de ménage.
+            "matricule": {"required": False, "allow_blank": True},
+            "annee_recrutement": {"min_value": 1950, "max_value": 2100, "error_messages": {
+                "min_value": "Année de recrutement invalide.",
+                "max_value": "Année de recrutement invalide."}},
+        }
 
-    def get_nom(self, obj):
-        return obj.id_utilisateur.nom if obj.id_utilisateur_id else None
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        nom = attrs.get("nom", getattr(self.instance, "nom", ""))
+        if not (nom or "").strip():
+            raise serializers.ValidationError({"nom": "Indiquez le nom."})
+        embauche = attrs.get("date_embauche", getattr(self.instance, "date_embauche", None))
+        recrutement = attrs.get("annee_recrutement",
+                                getattr(self.instance, "annee_recrutement", None))
+        if embauche and recrutement and recrutement > embauche.year:
+            raise serializers.ValidationError({
+                "annee_recrutement": "L'année de recrutement ne peut pas suivre la date d'embauche."})
+        return attrs
 
-    def get_prenom(self, obj):
-        return obj.id_utilisateur.prenom if obj.id_utilisateur_id else None
+    def _completer(self, validated_data):
+        """Année de recrutement déduite de l'embauche ; matricule attribué s'il manque."""
+        embauche = validated_data.get("date_embauche")
+        if embauche and not validated_data.get("annee_recrutement"):
+            validated_data["annee_recrutement"] = embauche.year
+        return validated_data
 
-    def get_nom_complet(self, obj):
-        if not obj.id_utilisateur_id:
-            return obj.matricule
-        return f"{obj.id_utilisateur.prenom} {obj.id_utilisateur.nom}".strip()
+    def create(self, validated_data):
+        validated_data = self._completer(validated_data)
+        if not (validated_data.get("matricule") or "").strip():
+            ecole = validated_data.get("id_ecole") or self.context["request"].user.id_ecole
+            existants = set(models.Enseignant.objects.filter(id_ecole=ecole)
+                            .values_list("matricule", flat=True))
+            numero = len(existants) + 1
+            while f"P{numero:04d}" in existants:
+                numero += 1
+            validated_data["matricule"] = f"P{numero:04d}"
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if "matricule" in validated_data and not (validated_data["matricule"] or "").strip():
+            validated_data.pop("matricule")
+        return super().update(instance, self._completer(validated_data))
 
 
 class MatiereSerializer(serializers.ModelSerializer):
@@ -1038,9 +1122,85 @@ class GenerationBulletinsSerializer(serializers.Serializer):
 
 
 class AbsenceSerializer(serializers.ModelSerializer):
+    eleve_nom = serializers.SerializerMethodField()
+    classe_nom = serializers.CharField(source="id_classe.nom", read_only=True)
+    matiere_nom = serializers.CharField(source="id_matiere.nom", read_only=True, allow_null=True)
+    horaire = serializers.SerializerMethodField()
+    duree = serializers.SerializerMethodField()
+    # La pièce se dépose par POST /absences/{id}/justificatif/, comme pour une
+    # dépense : le chemin interne n'a pas à sortir de l'API.
+    a_justificatif = serializers.SerializerMethodField()
+
     class Meta:
         model = models.Absence
-        fields = "__all__"
+        exclude = ["justificatif_url"]
+
+    def get_eleve_nom(self, obj) -> str:
+        return f"{obj.id_eleve.prenom} {obj.id_eleve.nom}".strip()
+
+    def get_horaire(self, obj) -> str | None:
+        if obj.heure_debut and obj.heure_fin:
+            return f"{obj.heure_debut:%H:%M} – {obj.heure_fin:%H:%M}"
+        if obj.heure_debut:
+            return f"dès {obj.heure_debut:%H:%M}"
+        return None
+
+    def get_duree(self, obj) -> str | None:
+        """« 1 h 30 » : ce que l'élève a manqué, quand la plage est connue."""
+        if not (obj.heure_debut and obj.heure_fin):
+            return None
+        minutes = ((obj.heure_fin.hour * 60 + obj.heure_fin.minute)
+                   - (obj.heure_debut.hour * 60 + obj.heure_debut.minute))
+        heures, reste = divmod(max(minutes, 0), 60)
+        if not heures:
+            return f"{reste} min"
+        return f"{heures} h {reste:02d}" if reste else f"{heures} h"
+
+    def get_a_justificatif(self, obj) -> bool:
+        return justificatifs.chemin(obj) is not None
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        debut = attrs.get("heure_debut", getattr(self.instance, "heure_debut", None))
+        fin = attrs.get("heure_fin", getattr(self.instance, "heure_fin", None))
+        if fin and not debut:
+            raise serializers.ValidationError({"heure_debut": "Indiquez aussi l'heure de début."})
+        if debut and fin and fin <= debut:
+            raise serializers.ValidationError({"heure_fin": "L'heure de fin doit suivre l'heure de début."})
+
+        # La matière manquée se lit à l'emploi du temps quand elle n'est pas
+        # saisie : le cours de la classe ce jour-là, à cette heure-là.
+        if debut and not attrs.get("id_matiere") and not getattr(self.instance, "id_matiere_id", None):
+            classe = attrs.get("id_classe", getattr(self.instance, "id_classe", None))
+            jour = attrs.get("date_absence", getattr(self.instance, "date_absence", None))
+            if classe is not None and jour is not None:
+                seance = seance_a(classe, jour, debut)
+                if seance is not None:
+                    attrs["id_matiere"] = seance.id_matiere
+        return attrs
+
+
+JOURS_SEMAINE = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+
+
+def seance_a(classe, instant, heure):
+    """La séance de la classe en cours à cette heure, ce jour-là, ou `None`."""
+    if isinstance(instant, datetime):
+        instant = timezone.localtime(instant) if timezone.is_aware(instant) else instant
+        instant = instant.date()
+    jour = instant
+    return (models.EmploiDuTemps.objects
+            .filter(id_classe=classe, jour_semaine=JOURS_SEMAINE[jour.weekday()],
+                    heure_debut__lte=heure, heure_fin__gt=heure)
+            .filter(q_periode(jour, jour))
+            .select_related("id_matiere")
+            .first())
+
+
+def q_periode(debut, fin):
+    """Séances valables sur au moins un jour de [debut, fin] : les annuelles, et les autres qui s'y croisent."""
+    return (Q(date_debut__isnull=True)
+            | (Q(date_debut__lte=fin) & (Q(date_fin__isnull=True) | Q(date_fin__gte=debut))))
 
 
 # ---------- Emploi du temps ----------
@@ -1057,13 +1217,26 @@ class SalleSerializer(serializers.ModelSerializer):
 
 
 class EmploiDuTempsSerializer(serializers.ModelSerializer):
+    classe_nom = serializers.CharField(source="id_classe.nom", read_only=True)
     matiere_nom = serializers.CharField(source="id_matiere.nom", read_only=True)
     enseignant_matricule = serializers.CharField(source="id_enseignant.matricule", read_only=True)
+    enseignant_nom = serializers.CharField(source="id_enseignant.nom_complet", read_only=True)
     salle_nom = serializers.CharField(source="id_salle.nom", read_only=True)
+    jour_libelle = serializers.CharField(source="get_jour_semaine_display", read_only=True)
+    periode_libelle = serializers.SerializerMethodField()
 
     class Meta:
         model = models.EmploiDuTemps
         fields = "__all__"
+        extra_kwargs = {
+            # Une date du mois ou de la semaine visés suffit : le serializer
+            # en tire les bornes. La fin ne se saisit pas.
+            "date_debut": {"help_text": "Une date du mois ou de la semaine concernés."},
+            "date_fin": {"read_only": True},
+        }
+
+    def get_periode_libelle(self, obj) -> str:
+        return libelle_periode_seance(obj.periodicite, obj.date_debut, obj.date_fin)
 
     def to_internal_value(self, data):
         """
@@ -1095,7 +1268,85 @@ class EmploiDuTempsSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"heure_fin": "La fin du cours doit suivre son début."}
             )
+
+        periodicite = attrs.get("periodicite", getattr(self.instance, "periodicite", None)
+                                or models.EmploiDuTemps.Periodicite.ANNUELLE)
+        reference = attrs.get("date_debut", getattr(self.instance, "date_debut", None))
+        annee = annee or getattr(self.instance, "id_annee_scolaire", None)
+        bornes = bornes_periode_seance(periodicite, reference)
+        if periodicite != models.EmploiDuTemps.Periodicite.ANNUELLE:
+            if bornes is None:
+                raise serializers.ValidationError({
+                    "date_debut": "Choisissez une date du mois ou de la semaine concernés."})
+            if annee and not (annee.date_debut <= reference <= annee.date_fin):
+                raise serializers.ValidationError({
+                    "date_debut": "Cette date sort de l'année scolaire "
+                                  f"({annee.date_debut:%d/%m/%Y} — {annee.date_fin:%d/%m/%Y})."})
+        attrs["date_debut"], attrs["date_fin"] = bornes or (None, None)
+
+        jour = attrs.get("jour_semaine", getattr(self.instance, "jour_semaine", None))
+        if annee and jour and debut and fin:
+            self._refuser_conflits(attrs, annee, jour, debut, fin, bornes)
         return attrs
+
+    def _refuser_conflits(self, attrs, annee, jour, debut, fin, bornes):
+        """
+        Une classe, un enseignant ou une salle ne tient pas deux cours à la fois.
+
+        Deux séances se gênent quand leurs heures se chevauchent le même jour,
+        sur des dates qui se croisent : une séance annuelle croise toutes les
+        autres, deux séances de deux mois différents ne se croisent pas.
+        """
+        seances = models.EmploiDuTemps.objects.filter(
+            id_annee_scolaire=annee, jour_semaine=jour,
+            heure_debut__lt=fin, heure_fin__gt=debut)
+        if bornes is not None:
+            seances = seances.filter(q_periode(*bornes))
+        if self.instance is not None:
+            seances = seances.exclude(pk=self.instance.pk)
+
+        def valeur(champ):
+            return attrs.get(champ, getattr(self.instance, champ, None))
+
+        for champ, message in (
+                ("id_classe", "La classe a déjà cours sur ce créneau"),
+                ("id_enseignant", "L'enseignant fait déjà cours sur ce créneau"),
+                ("id_salle", "La salle est déjà occupée sur ce créneau")):
+            objet = valeur(champ)
+            if objet is None:
+                continue
+            autre = (seances.filter(**{champ: objet})
+                     .select_related("id_classe", "id_matiere").first())
+            if autre is not None:
+                raise serializers.ValidationError({champ: (
+                    f"{message} : {autre.id_matiere.nom} en {autre.id_classe.nom}, "
+                    f"{autre.heure_debut:%H:%M}–{autre.heure_fin:%H:%M}"
+                    f" ({libelle_periode_seance(autre.periodicite, autre.date_debut, autre.date_fin)}).")})
+
+
+def bornes_periode_seance(periodicite, reference):
+    """
+    (premier jour, dernier jour) de validité d'une séance : le mois de la date
+    de référence, ou sa semaine du lundi au dimanche. `None` pour une séance
+    annuelle, ou quand la date manque.
+    """
+    if periodicite == models.EmploiDuTemps.Periodicite.ANNUELLE or reference is None:
+        return None
+    if periodicite == models.EmploiDuTemps.Periodicite.MENSUELLE:
+        from calendar import monthrange
+        premier = reference.replace(day=1)
+        return premier, reference.replace(day=monthrange(reference.year, reference.month)[1])
+    lundi = reference - timedelta(days=reference.weekday())
+    return lundi, lundi + timedelta(days=6)
+
+
+def libelle_periode_seance(periodicite, debut, fin):
+    """« Toute l'année », « Novembre 2026 » ou « Semaine du 02/11/2026 »."""
+    if periodicite == models.EmploiDuTemps.Periodicite.MENSUELLE and debut:
+        return finances.libelle_mois(debut)
+    if periodicite == models.EmploiDuTemps.Periodicite.HEBDOMADAIRE and debut:
+        return f"Semaine du {debut:%d/%m/%Y}"
+    return "Toute l'année"
 
 
 # ---------- Module financier ----------
@@ -1298,10 +1549,28 @@ class PaiementSerializer(serializers.ModelSerializer):
 class CoefficientMatiereSerializer(serializers.ModelSerializer):
     matiere_nom = serializers.CharField(source="id_matiere.nom", read_only=True)
     classe_nom = serializers.CharField(source="id_classe.nom", read_only=True)
+    # Le pendant des affectations : qui enseigne cette matière dans cette
+    # classe, et pour combien d'heures. Un coefficient sans enseignant se voit.
+    enseignants = serializers.SerializerMethodField()
+    volume_horaire = serializers.SerializerMethodField()
 
     class Meta:
         model = models.CoefficientMatiere
         fields = "__all__"
+
+    def _affectations(self, obj):
+        return (models.AffectationEnseignant.objects
+                .filter(id_matiere_id=obj.id_matiere_id, id_classe_id=obj.id_classe_id,
+                        id_annee_scolaire_id=obj.id_annee_scolaire_id)
+                .select_related("id_enseignant"))
+
+    def get_enseignants(self, obj) -> str | None:
+        noms = [a.id_enseignant.nom_complet for a in self._affectations(obj)]
+        return ", ".join(noms) or None
+
+    def get_volume_horaire(self, obj) -> float | None:
+        heures = [a.volume_horaire for a in self._affectations(obj) if a.volume_horaire is not None]
+        return float(sum(heures)) if heures else None
 
     def validate_coefficient(self, value):
         if value <= 0:
@@ -1336,13 +1605,56 @@ class CoefficientMatiereSerializer(serializers.ModelSerializer):
 
 
 class AffectationEnseignantSerializer(serializers.ModelSerializer):
+    """
+    Qui enseigne quelle matière dans quelle classe — et ce que pèse cette
+    matière dans la classe.
+
+    Le coefficient vit sur `CoefficientMatiere` (matière, classe, année) ; il
+    est lu et saisi ici pour que l'affectation dise d'emblée le poids de ce
+    qu'on confie à l'enseignant. Le saisir crée ou met à jour le coefficient,
+    le même que celui de l'écran Coefficients. Vide, il n'y touche pas.
+    """
     enseignant_matricule = serializers.CharField(source="id_enseignant.matricule", read_only=True)
+    enseignant_nom = serializers.CharField(source="id_enseignant.nom_complet", read_only=True)
     matiere_nom = serializers.CharField(source="id_matiere.nom", read_only=True)
     classe_nom = serializers.CharField(source="id_classe.nom", read_only=True)
+    coefficient = serializers.DecimalField(max_digits=4, decimal_places=2, required=False,
+                                           allow_null=True, min_value=Decimal("0.01"))
 
     class Meta:
         model = models.AffectationEnseignant
         fields = "__all__"
+
+    def to_representation(self, instance):
+        donnees = super().to_representation(instance)
+        coefficient = (models.CoefficientMatiere.objects
+                       .filter(id_matiere_id=instance.id_matiere_id, id_classe_id=instance.id_classe_id,
+                               id_annee_scolaire_id=instance.id_annee_scolaire_id)
+                       .values_list("coefficient", flat=True).first())
+        donnees["coefficient"] = None if coefficient is None else float(coefficient)
+        return donnees
+
+    def _poser_coefficient(self, affectation, valeur):
+        if valeur is None:
+            return
+        models.CoefficientMatiere.objects.update_or_create(
+            id_matiere_id=affectation.id_matiere_id, id_classe_id=affectation.id_classe_id,
+            id_annee_scolaire_id=affectation.id_annee_scolaire_id,
+            defaults={"coefficient": valeur})
+
+    def create(self, validated_data):
+        valeur = validated_data.pop("coefficient", None)
+        with transaction.atomic():
+            affectation = super().create(validated_data)
+            self._poser_coefficient(affectation, valeur)
+        return affectation
+
+    def update(self, instance, validated_data):
+        valeur = validated_data.pop("coefficient", None)
+        with transaction.atomic():
+            affectation = super().update(instance, validated_data)
+            self._poser_coefficient(affectation, valeur)
+        return affectation
 
     def validate(self, attrs):
         enseignant = attrs.get("id_enseignant", getattr(self.instance, "id_enseignant", None))
@@ -1476,6 +1788,11 @@ class EncaissementSerializer(serializers.Serializer):
     # solde les frais ouverts du plus ancien au plus récent.
     frais = serializers.ListField(child=serializers.IntegerField(), required=False,
                                   allow_null=True, allow_empty=True)
+    # Mois à régler avant leur échéance (« 2026-12 ») : leur mensualité est
+    # émise puis encaissée dans la même opération.
+    mois_d_avance = serializers.ListField(
+        child=serializers.RegexField(r"^\d{4}-\d{2}$"), required=False, allow_null=True,
+        allow_empty=True)
 
     def validate_date_paiement(self, valeur):
         return refuser_date_future(valeur)

@@ -70,6 +70,19 @@ export class EleveFinancesComponent implements OnInit {
   /** Frais cochés dans la fenêtre d'encaissement : le paiement ne va que sur eux. */
   fraisCoches = signal<number[]>([]);
 
+  /**
+   * Mois à venir cochés (« 2026-12 ») : leur mensualité, pas encore émise, est
+   * créée et réglée dans le même encaissement.
+   */
+  moisAvance = signal<string[]>([]);
+  moisPayablesDAvance = computed(() => this.situation()?.mois_d_avance ?? []);
+  totalAvance = computed(() =>
+    this.moisPayablesDAvance()
+      .filter((m) => this.moisAvance().includes(m.mois))
+      .reduce((somme, m) => somme + Number(m.montant), 0));
+  /** Quelque chose est coché : un frais ouvert ou un mois à venir. */
+  selection = computed(() => this.fraisCoches().length + this.moisAvance().length > 0);
+
   /** Fenêtre « Ajouter des frais » : frais au choix souscrits en cours d'année. */
   ajoutOuvert = signal(false);
   disponibles = signal<FraisDisponibles | null>(null);
@@ -140,7 +153,8 @@ export class EleveFinancesComponent implements OnInit {
   peutEncaisser = computed(() => {
     const situation = this.situation();
     if (!situation?.annee) return false;
-    return this.sansFrais() || this.reste() > 0;
+    // Tout est soldé, mais un mois à venir peut se régler d'avance.
+    return this.sansFrais() || this.reste() > 0 || this.moisPayablesDAvance().length > 0;
   });
 
   /** Frais encore ouverts, proposés en cases à cocher. */
@@ -151,8 +165,8 @@ export class EleveFinancesComponent implements OnInit {
       .filter((f) => this.fraisCoches().includes(f.id))
       .reduce((somme, f) => somme + Number(f.reste), 0));
 
-  /** Ce qu'on peut encaisser : les frais cochés, ou à défaut tout le reste de l'année. */
-  plafond = computed(() => (this.fraisCoches().length ? this.totalCoche() : this.reste()));
+  /** Ce qu'on peut encaisser : ce qui est coché, ou à défaut tout le reste de l'année. */
+  plafond = computed(() => (this.selection() ? this.totalCoche() + this.totalAvance() : this.reste()));
 
   ngOnInit(): void {
     this.charger();
@@ -190,6 +204,7 @@ export class EleveFinancesComponent implements OnInit {
     this.message.set(null);
     this.erreur.set(null);
     this.fraisCoches.set([]);
+    this.moisAvance.set([]);
     this.formPaiement.reset({ methode: 'especes', date_paiement: dateDuJour(),
                               reference_transaction: '', commentaire: '' });
   }
@@ -197,7 +212,19 @@ export class EleveFinancesComponent implements OnInit {
   /** Cocher un frais propose d'en régler le reste : le montant suit les cases. */
   basculerFrais(id: number): void {
     this.fraisCoches.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
-    this.formPaiement.patchValue({ montant: this.fraisCoches().length ? this.totalCoche() : null });
+    this.suivreLaSelection();
+  }
+
+  /** Cocher un mois à venir le fait régler d'avance, à sa mensualité. */
+  basculerAvance(mois: string): void {
+    this.moisAvance.update((m) => (m.includes(mois) ? m.filter((x) => x !== mois) : [...m, mois]));
+    this.suivreLaSelection();
+  }
+
+  private suivreLaSelection(): void {
+    this.formPaiement.patchValue({
+      montant: this.selection() ? this.totalCoche() + this.totalAvance() : null,
+    });
   }
 
   ouvrirRemise(frais: LigneFrais): void {
@@ -216,8 +243,8 @@ export class EleveFinancesComponent implements OnInit {
     if (this.formPaiement.invalid) return this.formPaiement.markAllAsTouched();
     const v = this.formPaiement.getRawValue();
     if (Number(v.montant) > this.plafond()) {
-      this.erreur.set(this.fraisCoches().length
-        ? 'Le montant dépasse le reste des frais cochés.'
+      this.erreur.set(this.selection()
+        ? 'Le montant dépasse le total des frais et des mois cochés.'
         : 'Le montant dépasse le reste à payer.');
       return;
     }
@@ -231,6 +258,7 @@ export class EleveFinancesComponent implements OnInit {
         montant: v.montant,
         methode: v.methode,
         frais: this.fraisCoches().length ? this.fraisCoches() : null,
+        mois_d_avance: this.moisAvance().length ? this.moisAvance() : null,
         // Le champ HTML rend « 2026-10-05 » ; l'API attend un instant. Omis
         // (aujourd'hui), le serveur date le paiement de maintenant.
         date_paiement: instantDuPaiement(v.date_paiement) ?? null,
@@ -251,6 +279,7 @@ export class EleveFinancesComponent implements OnInit {
           }
           this.saisieOuverte.set(false);
           this.fraisCoches.set([]);
+          this.moisAvance.set([]);
           this.occupe.set(false);
         },
         error: (e) => {

@@ -15,6 +15,7 @@ import { ToastService } from '../../core/services/toast.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 import { AlerteAge, alerteAge } from './alerte-age';
 import { AlerteAgeDialogComponent } from './alerte-age-dialog.component';
+import { dateDuJour } from '../../shared/dates';
 
 /**
  * Réinscription d'une classe en bloc — le cas d'exception.
@@ -55,6 +56,16 @@ export class ReinscriptionComponent implements OnInit {
   /** Élèves cochés à l'aperçu : ceux qui suivent la classe. */
   coches = signal<number[]>([]);
 
+  /**
+   * Parmi les cochés, ceux qui ne montent pas en classe supérieure : ils sont
+   * réinscrits dans la classe des redoublants. Par défaut, tout le monde monte.
+   */
+  redoublants = signal<number[]>([]);
+  classeRedoublement = signal<number | null>(null);
+
+  /** Redoublants retenus : cochés pour la réinscription, et décochés « monte ». */
+  redoublantsCoches = computed(() => this.redoublants().filter((id) => this.coches().includes(id)));
+
   form = this.fb.group({
     id_annee_source: [null as number | null, Validators.required],
     id_annee_cible: [null as number | null, Validators.required],
@@ -63,7 +74,8 @@ export class ReinscriptionComponent implements OnInit {
     // les classes » proposait en un clic.
     id_classe_source: [null as number | null, Validators.required],
     id_classe_cible: [null as number | null, Validators.required],
-    date_inscription: [''],
+    // Le jour même par défaut : c'est le jour où l'on réinscrit.
+    date_inscription: [dateDuJour()],
   });
 
   private anneeSource = signal<number | null>(null);
@@ -79,8 +91,19 @@ export class ReinscriptionComponent implements OnInit {
   /** L'aperçu comptait toute la classe ; l'effectif suit les cases cochées. */
   effectifVise = computed(() => {
     const a = this.apercu();
-    return a ? a.effectif_cible - a.reinscrits + this.coches().length : 0;
+    return a ? a.effectif_cible - a.reinscrits + this.coches().length - this.redoublantsCoches().length : 0;
   });
+
+  /**
+   * Classe proposée aux redoublants : une classe de l'année d'arrivée du même
+   * niveau que la classe de départ.
+   */
+  private classeDuMemeNiveau(): number | null {
+    const source = this.classes().find((c) => c.id === this.form.value.id_classe_source);
+    const meme = this.classesCible().find((c) => source?.id_niveau && c.id_niveau === source.id_niveau
+                                                  && c.id !== this.classeCible());
+    return meme?.id ?? null;
+  }
 
   nonRetenus = computed(() => {
     const a = this.apercu();
@@ -141,6 +164,8 @@ export class ReinscriptionComponent implements OnInit {
       date_inscription: v.date_inscription || null,
       // L'aperçu porte sur toute la classe ; la validation, sur les cochés.
       eleves: valider ? this.coches() : null,
+      redoublants: this.redoublantsCoches(),
+      id_classe_redoublement: this.redoublantsCoches().length ? this.classeRedoublement() : null,
       valider,
       derogation_age: derogation,
     };
@@ -169,10 +194,21 @@ export class ReinscriptionComponent implements OnInit {
   }
 
   previsualiser(): void {
+    this.redoublants.set([]);
     this.appeler(false, (r) => {
       this.apercu.set(r);
       this.coches.set(r.eleves.filter((e) => e.retenu).map((e) => e.id));
+      this.classeRedoublement.set(this.classeDuMemeNiveau());
     });
+  }
+
+  /** « Monte en classe supérieure » : décoché, l'élève redouble. */
+  basculerPassage(id: number): void {
+    this.redoublants.update((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
+  }
+
+  choisirClasseRedoublement(valeur: string): void {
+    this.classeRedoublement.set(valeur ? Number(valeur) : null);
   }
 
   /** `derogation` : renvoi après l'avertissement d'âge, confirmé par la personne. */
@@ -180,7 +216,8 @@ export class ReinscriptionComponent implements OnInit {
     this.appeler(true, (r) => {
       this.resultat.set(r);
       this.apercu.set(null);
-      this.toast.succes('Réinscription de la classe enregistrée', `${this.coches().length} élève(s) retenu(s).`);
+      this.toast.succes('Réinscription de la classe enregistrée',
+                        `${r.montent ?? this.coches().length} montent, ${r.redoublent ?? 0} redoublent.`);
     }, derogation);
   }
 
@@ -248,6 +285,7 @@ export class ReinscriptionComponent implements OnInit {
     this.resultat.set(null);
     this.apercu.set(null);
     this.coches.set([]);
+    this.redoublants.set([]);
   }
 
   private message(erreur: unknown): string {
