@@ -71,6 +71,7 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
       { key: 'libelle', label: 'Niveau' },
       { key: 'age_min', label: 'Âge min.', type: 'number' },
       { key: 'age_max', label: 'Âge max.', type: 'number' },
+      { key: 'periodicite_edt_libelle', label: 'Emploi du temps' },
     ],
     fields: [
       {
@@ -84,6 +85,16 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
           + 'est prérempli à sa création.',
       },
       { key: 'age_max', label: 'Âge maximal (ans)', type: 'number', min: 0 },
+      {
+        key: 'periodicite_edt', label: 'Emploi du temps', type: 'select', required: true,
+        options: [
+          { value: 'annuelle', label: 'Annuel — le même toute l’année' },
+          { value: 'mensuelle', label: 'Mensuel — refait chaque mois' },
+          { value: 'hebdomadaire', label: 'Hebdomadaire — refait chaque semaine' },
+        ],
+        aide: 'Les cours de toutes les classes de ce niveau suivent ce rythme. Les cours '
+          + 'déjà saisis gardent le leur.',
+      },
     ],
   },
 
@@ -390,9 +401,10 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     titre: 'Emploi du temps',
     titreSingulier: 'un cours',
     eyebrow: 'Pédagogie',
-    description: 'Les cours de chaque classe, rangés par classe puis du lundi au samedi. Un cours vaut '
-      + 'toute l’année, un mois ou une semaine : affichez l’année, un mois ou une semaine, '
-      + 'filtrez une classe, et imprimez en PDF ce qui est affiché.',
+    description: 'Les cours de chaque classe, rangés par classe puis du lundi au samedi. Selon son '
+      + 'niveau, une classe a un emploi du temps annuel, mensuel ou hebdomadaire (réglé dans '
+      + 'Niveaux) : affichez l’année, un mois ou une semaine, filtrez une classe, et imprimez '
+      + 'en PDF ce qui est affiché.',
     selecteurPeriode: true,
     telechargement: { label: 'Imprimer en PDF', chemin: 'pdf' },
     filtres: [
@@ -426,7 +438,9 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
           { value: 'mensuelle', label: 'Un mois' },
           { value: 'hebdomadaire', label: 'Une semaine' },
         ],
-        aide: 'Un mois ou une semaine : un aménagement (examens, remplacement) à côté du planning de l’année.',
+        imposePar: { champ: 'id_classe', cle: 'periodicite_edt' },
+        aide: 'Réglé sur le niveau de la classe, dans l’écran Niveaux. Une classe sans niveau '
+          + 'choisit librement.',
       },
       {
         key: 'date_debut', label: 'Une date du mois ou de la semaine', type: 'date',

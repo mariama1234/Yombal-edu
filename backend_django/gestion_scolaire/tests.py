@@ -7047,7 +7047,50 @@ class TestEmploiDuTempsSouple(BasePedagogie):
         charge.update(extra)
         return self.client.post("/api/emplois-du-temps/", charge, format="json")
 
+    def _rythme(self, periodicite, niveau=None):
+        niveau = niveau or self.niveau
+        niveau.periodicite_edt = periodicite
+        niveau.save()
+
+    def _classe_du_primaire(self):
+        """Une classe d'un niveau au planning annuel, à côté du collège."""
+        cm2 = models.Niveau.objects.create(id_ecole=self.ecole, libelle="CM2")
+        return models.Classe.objects.create(
+            id_ecole=self.ecole, id_annee_scolaire=self.annee, id_niveau=cm2,
+            nom="CM2 A", capacite_max=40)
+
+    def test_le_rythme_suit_le_niveau(self):
+        self._rythme("mensuelle")
+        # Sans périodicité envoyée : celle du niveau.
+        r = self._seance(date_debut="2026-11-17")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["periodicite"], "mensuelle")
+        # Une autre que celle du niveau est refusée.
+        r = self._seance(periodicite="annuelle", jour_semaine="mardi")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("periodicite", r.data)
+        # Le primaire, lui, reste annuel.
+        r = self._seance(id_classe=self._classe_du_primaire().pk, id_salle=None,
+                         jour_semaine="mardi", id_enseignant=self.enseignant.pk)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.data["periode_libelle"], "Toute l'année")
+
+    def test_la_classe_annonce_le_rythme_de_son_niveau(self):
+        self._rythme("hebdomadaire")
+        r = self.client.get(f"/api/classes/{self.classe.pk}/")
+        self.assertEqual(r.data["periodicite_edt"], "hebdomadaire")
+        r = self.client.get(f"/api/niveaux/{self.niveau.pk}/")
+        self.assertEqual(r.data["periodicite_edt_libelle"], "Hebdomadaire")
+
+    def test_une_classe_sans_niveau_choisit_librement(self):
+        self.classe.id_niveau = None
+        self.classe.save()
+        self.assertEqual(self._seance().status_code, 201)
+        self.assertEqual(self._seance(periodicite="mensuelle", date_debut="2026-11-17",
+                                      jour_semaine="mardi").status_code, 201)
+
     def test_deux_mois_differents_sur_le_meme_creneau(self):
+        self._rythme("mensuelle")
         r = self._seance(periodicite="mensuelle", date_debut="2026-11-17")
         self.assertEqual(r.status_code, 201, r.content)
         self.assertEqual((r.data["date_debut"], r.data["date_fin"]), ("2026-11-01", "2026-11-30"))
@@ -7057,28 +7100,36 @@ class TestEmploiDuTempsSouple(BasePedagogie):
         self.assertEqual(self._seance(periodicite="mensuelle", date_debut="2026-11-02").status_code, 400)
 
     def test_une_seance_annuelle_croise_toutes_les_autres(self):
+        # Un enseignant du collège (hebdomadaire) qui fait aussi cours au primaire (annuel).
+        self._rythme("hebdomadaire")
         self.assertEqual(self._seance(periodicite="hebdomadaire", date_debut="2026-11-18").status_code, 201)
-        r = self._seance(heure_debut="09:00", heure_fin="11:00")
+        r = self._seance(id_classe=self._classe_du_primaire().pk, id_salle=None,
+                         heure_debut="09:00", heure_fin="11:00")
         self.assertEqual(r.status_code, 400, "les heures se chevauchent sur cette semaine-là")
-        self.assertIn("id_classe", r.data)
+        self.assertIn("id_enseignant", r.data)
 
     def test_semaine_du_lundi_au_dimanche(self):
+        self._rythme("hebdomadaire")
         r = self._seance(periodicite="hebdomadaire", date_debut="2026-11-18")
         self.assertEqual((r.data["date_debut"], r.data["date_fin"]), ("2026-11-16", "2026-11-22"))
 
     def test_date_requise_et_dans_l_annee(self):
+        self._rythme("mensuelle")
         self.assertEqual(self._seance(periodicite="mensuelle").status_code, 400)
         self.assertEqual(self._seance(periodicite="mensuelle", date_debut="2028-01-10").status_code, 400)
 
     def test_vue_mensuelle_et_tri_par_jour(self):
-        self._seance(jour_semaine="jeudi")
-        self._seance(jour_semaine="mardi")
+        # Le primaire, annuel, se montre chaque mois ; le collège, mensuel, dans le sien.
+        primaire = self._classe_du_primaire()
+        self._seance(id_classe=primaire.pk, id_salle=None, jour_semaine="jeudi")
+        self._seance(id_classe=primaire.pk, id_salle=None, jour_semaine="mardi")
+        self._rythme("mensuelle")
         self._seance(jour_semaine="lundi", periodicite="mensuelle", date_debut="2026-12-01")
         r = self.client.get("/api/emplois-du-temps/", {"vue": "mensuelle", "date": "2026-11-10"})
         self.assertEqual([s["jour_semaine"] for s in self.resultats(r)], ["mardi", "jeudi"])
         r = self.client.get("/api/emplois-du-temps/", {"vue": "mensuelle", "date": "2026-12-10"})
-        self.assertEqual([s["jour_semaine"] for s in self.resultats(r)], ["lundi", "mardi", "jeudi"])
-        self.assertEqual(self.resultats(r)[0]["classe_nom"], "6ème A")
+        self.assertEqual({(s["classe_nom"], s["jour_semaine"]) for s in self.resultats(r)},
+                         {("6ème A", "lundi"), ("CM2 A", "mardi"), ("CM2 A", "jeudi")})
 
     def test_pdf(self):
         self._seance()

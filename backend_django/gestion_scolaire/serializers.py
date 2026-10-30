@@ -351,6 +351,7 @@ class NiveauSerializer(serializers.ModelSerializer):
     # Montant de chaque frais pour ce niveau, par identifiant de type de frais.
     # Un frais absent applique son montant par défaut.
     tarifs = serializers.SerializerMethodField()
+    periodicite_edt_libelle = serializers.CharField(source="get_periodicite_edt_display", read_only=True)
 
     class Meta:
         model = models.Niveau
@@ -400,6 +401,8 @@ def ordre_suivant(queryset):
 class ClasseSerializer(serializers.ModelSerializer):
     niveau_libelle = serializers.CharField(source="id_niveau.libelle", read_only=True, allow_null=True)
     enseignant_nom = serializers.SerializerMethodField()
+    # Rythme imposé à ses cours par son niveau ; `None` sans niveau : libre.
+    periodicite_edt = serializers.CharField(source="id_niveau.periodicite_edt", read_only=True, allow_null=True)
 
     class Meta:
         model = models.Classe
@@ -1271,6 +1274,16 @@ class EmploiDuTempsSerializer(serializers.ModelSerializer):
 
         periodicite = attrs.get("periodicite", getattr(self.instance, "periodicite", None)
                                 or models.EmploiDuTemps.Periodicite.ANNUELLE)
+        # Le rythme se règle sur le niveau : une séance « du mois » dans une
+        # classe au planning annuel ne serait montrée nulle part comme il faut.
+        classe = classe or getattr(self.instance, "id_classe", None)
+        niveau = classe.id_niveau if classe is not None else None
+        if niveau is not None:
+            if "periodicite" in attrs and periodicite != niveau.periodicite_edt:
+                raise serializers.ValidationError({"periodicite": (
+                    f"Les cours de {classe.nom} suivent l'emploi du temps "
+                    f"{niveau.get_periodicite_edt_display().lower()} du niveau {niveau.libelle}.")})
+            periodicite = attrs["periodicite"] = niveau.periodicite_edt
         reference = attrs.get("date_debut", getattr(self.instance, "date_debut", None))
         annee = annee or getattr(self.instance, "id_annee_scolaire", None)
         bornes = bornes_periode_seance(periodicite, reference)

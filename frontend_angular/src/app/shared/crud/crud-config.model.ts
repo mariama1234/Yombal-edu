@@ -109,6 +109,13 @@ export interface FieldConfig {
    * seulement quand elle n'est pas annuelle.
    */
   visibleSi?: { champ: string; valeurs: (string | number | boolean)[] };
+  /**
+   * Valeur imposée par l'option choisie dans un autre champ : lue sur elle à
+   * la clé `cle`, posée dans ce champ, qui se verrouille. Une option sans
+   * valeur à cette clé laisse le champ libre. Ex : le rythme des cours, réglé
+   * sur le niveau de la classe.
+   */
+  imposePar?: { champ: string; cle: string };
 }
 
 /**

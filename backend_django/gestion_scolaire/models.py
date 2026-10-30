@@ -343,6 +343,17 @@ class FicheSanitaire(models.Model):
         db_table = "fiche_sanitaire"
 
 
+class PeriodiciteEmploiDuTemps(models.TextChoices):
+    """
+    Rythme d'un emploi du temps. Il se règle par niveau : le primaire garde
+    souvent le même planning toute l'année quand le collège le refait chaque
+    mois ou chaque semaine.
+    """
+    ANNUELLE = "annuelle", "Annuelle"
+    MENSUELLE = "mensuelle", "Mensuelle"
+    HEBDOMADAIRE = "hebdomadaire", "Hebdomadaire"
+
+
 class Niveau(models.Model):
     id_ecole = models.ForeignKey(Ecole, on_delete=models.CASCADE, related_name="niveaux", db_column="id_ecole")
     libelle = models.CharField(max_length=50)
@@ -356,6 +367,10 @@ class Niveau(models.Model):
     # « CE1 » avant « CI ». Un niveau connu naît à sa place dans le cursus ;
     # l'école déplace ensuite les siens depuis la liste.
     ordre = models.PositiveIntegerField(default=0)
+    # Les cours des classes de ce niveau valent toute l'année, un mois ou une
+    # semaine (voir `EmploiDuTemps.periodicite`).
+    periodicite_edt = models.CharField(max_length=15, choices=PeriodiciteEmploiDuTemps.choices,
+                                       default=PeriodiciteEmploiDuTemps.ANNUELLE)
 
     class Meta:
         db_table = "niveau"
@@ -738,13 +753,8 @@ class Salle(models.Model):
 
 
 class EmploiDuTemps(models.Model):
-    class Periodicite(models.TextChoices):
-        # Toute l'année : le cas courant.
-        ANNUELLE = "annuelle", "Annuelle"
-        # Un mois, ou une semaine : un aménagement (examens, ramadan,
-        # remplacement) qui ne remet pas en cause le planning annuel.
-        MENSUELLE = "mensuelle", "Mensuelle"
-        HEBDOMADAIRE = "hebdomadaire", "Hebdomadaire"
+    # Celle du niveau de la classe ; libre pour une classe sans niveau.
+    Periodicite = PeriodiciteEmploiDuTemps
 
     class JourSemaine(models.TextChoices):
         LUNDI = "lundi", "Lundi"

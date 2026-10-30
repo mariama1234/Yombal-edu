@@ -71,6 +71,7 @@ export class GenericFormComponent implements OnInit {
           this.remplissageEnCours = true;
           this.form.patchValue(item);
           this.remplissageEnCours = false;
+          this.appliquerValeursImposees();
           this.rechargerListesDependantes();
         });
       }
@@ -152,7 +153,36 @@ export class GenericFormComponent implements OnInit {
       for (const key of Object.keys(resultats)) {
         this.optionsParChamp[key] = resultats[key].results;
       }
+      this.appliquerValeursImposees();
     });
+  }
+
+  /**
+   * Pose dans chaque champ `imposePar` la valeur de l'option choisie, et le
+   * verrouille ; le libère quand l'option n'impose rien. Le champ verrouillé
+   * part quand même dans le payload (`getRawValue`).
+   */
+  private appliquerValeursImposees(): void {
+    for (const field of this.config.fields) {
+      const regle = field.imposePar;
+      const controle = regle && this.form.get(field.key);
+      if (!regle || !controle) continue;
+      const choisi = this.form.get(regle.champ)?.value;
+      const option = (this.optionsParChamp[regle.champ] ?? [])
+        .find((o) => String(o.id) === String(choisi));
+      const valeur = option?.[regle.cle];
+      if (valeur === undefined || valeur === null || valeur === '') {
+        controle.enable({ emitEvent: false });
+      } else {
+        controle.setValue(valeur);
+        controle.disable({ emitEvent: false });
+      }
+    }
+  }
+
+  /** Vrai quand le champ est verrouillé par l'option choisie ailleurs. */
+  champImpose(field: FieldConfig): boolean {
+    return !!field.imposePar && !!this.form.get(field.key)?.disabled;
   }
 
   /**
@@ -161,6 +191,9 @@ export class GenericFormComponent implements OnInit {
    * n'appartient plus à la classe affichée.
    */
   private suivreLesChampsSources(): void {
+    for (const champ of new Set(this.config.fields.map((f) => f.imposePar?.champ).filter(Boolean))) {
+      this.form.get(champ!)?.valueChanges.subscribe(() => this.appliquerValeursImposees());
+    }
     for (const field of this.config.fields) {
       const lien = field.optionsFiltrePar;
       if (!lien) continue;
