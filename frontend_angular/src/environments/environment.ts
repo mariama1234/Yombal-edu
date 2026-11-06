@@ -1,5 +1,5 @@
 export const environment = {
-  production: false,
+  production: true,
   apiUrl: 'http://yombal-edu.com/api',
   // Page de présentation (site Laravel), proposée depuis la page de connexion
   // aux visiteurs qui n'ont pas encore de compte. Vide : le lien reste affiché
