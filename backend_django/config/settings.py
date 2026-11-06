@@ -74,7 +74,11 @@ SECRET_KEY = _cle_secrete()
 _hotes = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
 ALLOWED_HOSTS = [h.strip() for h in _hotes.split(',') if h.strip()]
 if not ALLOWED_HOSTS:
-    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]'] if DEBUG else []
+    ALLOWED_HOSTS = ['yombal-edu.com',
+    'www.yombal-edu.com',
+    'api.yombal-edu.com',
+    '127.0.0.1',
+    'localhost'] if DEBUG else []
 
 
 # Application definition
