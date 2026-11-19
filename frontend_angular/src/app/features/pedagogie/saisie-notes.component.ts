@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
@@ -13,6 +13,7 @@ import {
   PeriodeScolaire,
 } from '../../core/models/models';
 import { PedagogieService } from './pedagogie.service';
+import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /** Une ligne de la grille, avec la note en cours d'édition. */
@@ -41,9 +42,10 @@ interface LigneSaisie {
   imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective],
   templateUrl: './saisie-notes.component.html',
 })
-export class SaisieNotesComponent implements OnInit {
+export class SaisieNotesComponent {
   private http = inject(HttpClient);
   private pedagogie = inject(PedagogieService);
+  private annees = inject(AnneeScolaireService);
 
   classes = signal<Classe[]>([]);
   periodes = signal<PeriodeScolaire[]>([]);
@@ -77,15 +79,30 @@ export class SaisieNotesComponent implements OnInit {
     return notes.reduce((a, b) => a + b, 0) / notes.length;
   });
 
-  ngOnInit(): void {
+  constructor() {
+    // Les listes suivent l'année du bandeau haut. Sans `page_size`, l'API
+    // n'en renvoyait que les vingt premières lignes, toutes années
+    // confondues : une classe nouvellement créée n'apparaissait pas.
+    effect(() => {
+      const annee = this.annees.idAnnee();
+      untracked(() => this.chargerListes(annee));
+    });
+  }
+
+  private chargerListes(annee: number | null): void {
     const api = environment.apiUrl;
-    this.http.get<Paginated<Classe>>(`${api}/classes/`)
+    const params: Record<string, string> = { page_size: '200' };
+    if (annee !== null) params['id_annee_scolaire'] = String(annee);
+    this.idClasse.set(null);
+    this.idPeriode.set(null);
+    this.reinitialiser();
+    this.http.get<Paginated<Classe>>(`${api}/classes/`, { params })
       .subscribe((r) => this.classes.set(r.results ?? []));
-    this.http.get<Paginated<PeriodeScolaire>>(`${api}/periodes/`)
+    this.http.get<Paginated<PeriodeScolaire>>(`${api}/periodes/`, { params })
       .subscribe((r) => this.periodes.set(r.results ?? []));
-    this.http.get<Paginated<Matiere>>(`${api}/matieres/`)
+    this.http.get<Paginated<Matiere>>(`${api}/matieres/`, { params: { page_size: '200' } })
       .subscribe((r) => this.matieres.set(r.results ?? []));
-    this.http.get<Paginated<Evaluation>>(`${api}/evaluations/`)
+    this.http.get<Paginated<Evaluation>>(`${api}/evaluations/`, { params })
       .subscribe((r) => this.evaluations.set(r.results ?? []));
   }
 

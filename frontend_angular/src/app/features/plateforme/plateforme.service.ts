@@ -30,4 +30,13 @@ export class PlateformeService {
   ajouterAdmin(id: number, corps: Record<string, unknown>): Observable<AdminEcole> {
     return this.http.post<AdminEcole>(`${this.base}/${id}/admins/`, corps);
   }
+
+  /** Corrige un administrateur ; `password` vide laisse le mot de passe inchangé. */
+  modifierAdmin(idEcole: number, idAdmin: number, corps: Record<string, unknown>): Observable<AdminEcole> {
+    return this.http.patch<AdminEcole>(`${this.base}/${idEcole}/admins/${idAdmin}/`, corps);
+  }
+
+  supprimerAdmin(idEcole: number, idAdmin: number): Observable<void> {
+    return this.http.delete<void>(`${this.base}/${idEcole}/admins/${idAdmin}/`);
+  }
 }

@@ -40,7 +40,7 @@ export class BilanFinancierComponent implements OnInit {
 
   ngOnInit(): void {
     this.http
-      .get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/`)
+      .get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/?page_size=200`)
       .subscribe((r) => this.annees.set(r.results ?? []));
     this.charger();
   }

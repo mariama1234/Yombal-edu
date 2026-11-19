@@ -20,6 +20,7 @@ import io
 import re
 import unicodedata
 import zipfile
+from datetime import date
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -103,6 +104,9 @@ def deviner_classe(texte):
     classe fantôme.
     """
     brut = _sans_accent(_nettoyer(texte)).upper()
+    # « CE2A » tapé sans espace : on sépare la section du niveau, sinon le
+    # niveau n'est pas reconnu et toute la liste reste sans classe.
+    brut = re.sub(r"\b(CI|CP|CE1|CE2|CM1|CM2)([A-C])\b", r"\1 \2", brut)
     for motif, niveau in _NIVEAUX:
         trouve = re.search(motif, brut)
         if not trouve:
@@ -130,6 +134,8 @@ class LigneEleve:
     telephone: str = ""
     sexe: str = ""
     matricule: str = ""
+    date_naissance: str = ""   # AAAA-MM-JJ, vide si absente ou illisible
+    lieu_naissance: str = ""
     mention: str = ""       # annotation entre parenthèses trouvée dans la liste
     source: str = ""        # d'où vient la ligne, pour situer une anomalie
     anomalies: list = field(default_factory=list)
@@ -212,8 +218,11 @@ def _lire_tableau_docx(tableau, classe):
     colonnes = _reperer_colonnes(entetes)
     # Sans en-tête reconnaissable on retombe sur la disposition des listes de
     # l'école : numéro, prénoms, noms.
+    # Les autres colonnes reconnues (date de naissance…) sont gardées : un
+    # en-tête mal tapé (« PRERNOMS ») ne doit pas faire perdre les dates.
     if "nom" not in colonnes or "prenom" not in colonnes:
-        colonnes = {"prenom": 1, "nom": 2}
+        autres = {k: v for k, v in colonnes.items() if k not in ("nom", "prenom")}
+        colonnes = {"prenom": 1, "nom": 2, **autres}
         rangees_donnees = rangees
     else:
         rangees_donnees = rangees[1:]
@@ -237,7 +246,58 @@ _ALIAS = {
     "telephone": {"telephone", "tel", "telephones", "contact", "numero", "portable"},
     "sexe": {"sexe", "genre"},
     "matricule": {"matricule", "matricules", "immatriculation"},
+    # « DATE ET LIEU DE NAISSANCE » dans les listes de Mic Cité : la même
+    # cellule porte la date puis le lieu (« 25-2-2021   BATAL »).
+    "date_naissance": {"datedenaissance", "datenaissance", "dateetlieudenaissance",
+                       "dateetlieunaissance", "nele", "naissance"},
+    "lieu_naissance": {"lieudenaissance", "lieunaissance", "nea", "lieu"},
 }
+
+
+def lire_lieu_naissance(texte):
+    """
+    Le lieu, une fois la date retirée : « 25-2-2021   BATAL » → « Batal ».
+
+    Un texte sans date (« AGE ») n'est pas pris pour un lieu : c'est une
+    annotation, signalée par `lire_date_naissance`. Un « à » ou « a » placé
+    devant le lieu (« né le 2-9-2020 à THIES ») est retiré.
+    """
+    texte = _nettoyer(texte)
+    trouve = _DATE.search(texte)
+    if not trouve:
+        return ""
+    reste = _nettoyer(texte[:trouve.start()] + " " + texte[trouve.end():])
+    reste = re.sub(r"^(?:[AÀaà]|NE LE|N[EÉ]E? A|LE)\s+", "", reste).strip(" ,;-/")
+    return normaliser_nom(reste)[:100] if reste else ""
+
+_DATE = re.compile(r"(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{2,4})")
+
+
+def lire_date_naissance(texte):
+    """
+    « 25-2-2021   BATAL » → ("2021-02-25", "").
+
+    Renvoie (date ISO, problème). Une cellule vide n'est pas un problème ;
+    une date impossible (31-02) ou absurde (dans le futur, avant 1990) est
+    signalée sans bloquer l'élève : mieux vaut l'importer sans date que de
+    l'écarter, la fiche se complète ensuite.
+    """
+    texte = _nettoyer(texte)
+    if not texte:
+        return "", ""
+    trouve = _DATE.search(texte)
+    if not trouve:
+        return "", f"Date de naissance illisible : « {texte} »."
+    jour, mois, annee = (int(x) for x in trouve.groups())
+    if annee < 100:
+        annee += 2000
+    try:
+        valeur = date(annee, mois, jour)
+    except ValueError:
+        return "", f"Date de naissance impossible : « {trouve.group(0)} »."
+    if not (1990 <= valeur.year <= date.today().year):
+        return "", f"Date de naissance improbable : « {trouve.group(0)} »."
+    return valeur.isoformat(), ""
 
 
 def _reperer_colonnes(entetes):
@@ -270,6 +330,11 @@ def _ligne_depuis_cellules(cellules, colonnes, classe_defaut, source):
     mention = " / ".join(m for m in (mention_nom, mention_prenom) if m)
 
     sexe = _cle(valeur("sexe"))[:1].upper()
+    date_naissance, probleme_date = lire_date_naissance(valeur("date_naissance"))
+    # Colonne « lieu » à part si le fichier en a une, sinon la fin de la
+    # cellule « date et lieu ».
+    lieu_naissance = (normaliser_nom(valeur("lieu_naissance"))[:100]
+                      or lire_lieu_naissance(valeur("date_naissance")))
     ligne = LigneEleve(
         nom=normaliser_nom(nom),
         prenom=normaliser_nom(prenom),
@@ -277,9 +342,14 @@ def _ligne_depuis_cellules(cellules, colonnes, classe_defaut, source):
         telephone=valeur("telephone"),
         sexe=sexe if sexe in ("M", "F") else "",
         matricule=valeur("matricule"),
+        date_naissance=date_naissance,
+        lieu_naissance=lieu_naissance,
         mention=mention,
         source=source,
     )
+    if probleme_date:
+        # Signalé, pas bloquant : l'élève est importé sans date.
+        ligne.mention = " / ".join(m for m in (ligne.mention, probleme_date) if m)
     if not ligne.nom:
         ligne.anomalies.append("Nom manquant.")
     if not ligne.prenom:
@@ -422,10 +492,10 @@ class _Compteur:
                         .values_list("matricule", flat=True))
         self.dernier = matricules.dernier_numero(self.pris)
 
-    def suivant(self, sexe=""):
+    def suivant(self, sexe="", date_naissance=None):
         while True:
             self.dernier += 1
-            candidat = matricules.composer(self.code, self.dernier, sexe, None)
+            candidat = matricules.composer(self.code, self.dernier, sexe, date_naissance)
             if candidat not in self.pris:
                 self.pris.add(candidat)
                 return candidat
@@ -481,6 +551,8 @@ def construire_plan(ecole, annee, lignes):
             "classe": ligne.classe,
             "telephone": ligne.telephone,
             "sexe": ligne.sexe,
+            "date_naissance": ligne.date_naissance,
+            "lieu_naissance": ligne.lieu_naissance,
             "mention": ligne.mention,
             "matricule": "",
             "decision": "creation",
@@ -519,7 +591,8 @@ def construire_plan(ecole, annee, lignes):
             entrees.append(entree)
             continue
 
-        matricule = compteur.reserver(ligne.matricule) or compteur.suivant(ligne.sexe)
+        naissance = date.fromisoformat(ligne.date_naissance) if ligne.date_naissance else None
+        matricule = compteur.reserver(ligne.matricule) or compteur.suivant(ligne.sexe, naissance)
         entree["matricule"] = matricule
         vus_dans_le_fichier[identite + (cle_classe,)] = ligne.source
 
@@ -593,6 +666,9 @@ def appliquer_plan(ecole, annee, plan):
             nom=entree["nom"],
             prenom=entree["prenom"],
             sexe=entree["sexe"] or None,
+            date_naissance=(date.fromisoformat(entree["date_naissance"])
+                            if entree.get("date_naissance") else None),
+            lieu_naissance=entree.get("lieu_naissance") or None,
             date_premiere_inscription=date_reference,
         )
         models.Inscription.objects.create(

@@ -207,6 +207,8 @@ class Eleve(models.Model):
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
     date_naissance = models.DateField(blank=True, null=True)
+    # Ville ou village, tel qu'il figure sur l'extrait de naissance.
+    lieu_naissance = models.CharField(max_length=100, blank=True, null=True)
     sexe = models.CharField(max_length=1, choices=Sexe.choices, blank=True, null=True)
     adresse = models.CharField(max_length=255, blank=True, null=True)
     photo_url = models.CharField(max_length=255, blank=True, null=True)
@@ -467,6 +469,12 @@ class Classe(models.Model):
         db_table = "classe"
         # Rangées comme le cursus : par niveau, puis dans le niveau.
         ordering = ["id_niveau__ordre", "ordre", "nom"]
+        # Pas deux « 6ème A » la même année dans une école (voir
+        # `ClasseSerializer.validate`, qui donne le message lisible).
+        constraints = [
+            models.UniqueConstraint(fields=["id_ecole", "id_annee_scolaire", "nom"],
+                                    name="uq_classe_ecole_annee_nom"),
+        ]
 
     def __str__(self):
         return self.nom

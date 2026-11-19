@@ -41,12 +41,12 @@
 </div>
 
 <div class="panel">
-  @if (loading()) {
+  @if (loading() && mouvements().length === 0) {
     <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
   } @else if (mouvements().length === 0) {
     <p style="color:var(--ink-400); font-size:13px;">Aucun mouvement sur cette période.</p>
   } @else {
-    <table class="simple">
+    <table class="simple" [class.chargement]="loading()">
       <thead>
         <tr><th>Date</th><th>Journal</th><th>Libellé</th><th>Débit</th><th>Crédit</th><th>Solde après</th></tr>
       </thead>
@@ -67,5 +67,7 @@
         }
       </tbody>
     </table>
+    <app-pagination [page]="page()" [total]="total()" [taillePage]="taillePage" libelle="mouvement(s)"
+                    [desactive]="loading()" (changer)="allerPage($event)"></app-pagination>
   }
 </div>

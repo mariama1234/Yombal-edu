@@ -900,13 +900,14 @@ def fiches_de_classe(ecole, classe):
         "matricule": i.id_eleve.matricule,
         "nom_complet": _nom(i.id_eleve),
         "date_naissance": i.id_eleve.date_naissance,
+        "lieu_naissance": i.id_eleve.lieu_naissance,
         "sexe": i.id_eleve.sexe,
         "numero_registre": i.id_eleve.numero_registre,
         "incomplete": i.id_eleve.date_naissance is None or not i.id_eleve.sexe,
     } for i in inscriptions]
 
 
-CHAMPS_COMPLETABLES = ("date_naissance", "sexe", "numero_registre")
+CHAMPS_COMPLETABLES = ("date_naissance", "lieu_naissance", "sexe", "numero_registre")
 
 
 @transaction.atomic
@@ -1040,6 +1041,7 @@ def dossier(ecole, eleve):
             "prenom": eleve.prenom,
             "sexe": eleve.get_sexe_display() if eleve.sexe else None,
             "date_naissance": eleve.date_naissance,
+            "lieu_naissance": eleve.lieu_naissance,
             "adresse": eleve.adresse,
             "photo_url": eleve.photo_url,
             # La photo se lit par GET /api/eleves/{id}/photo/, jamais par une URL publique.

@@ -110,7 +110,9 @@
   }
 
   <div class="panel">
-    @if (loading()) {
+    <!-- Au changement de page, l'ancienne page reste affichée (estompée) le
+         temps du chargement : le tableau ne disparaît pas, rien ne saute. -->
+    @if (loading() && items().length === 0) {
       <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
     } @else if (items().length === 0) {
       <p style="color:var(--ink-400); font-size:13px;">
@@ -124,7 +126,7 @@
       </p>
     } @else {
       <!-- Au téléphone, chaque ligne devient une carte (voir .liste-cartes). -->
-      <table class="simple liste-cartes">
+      <table class="simple liste-cartes" [class.chargement]="loading()">
         <thead>
           <tr>
             @for (col of config.columns; track col.key) {
@@ -134,7 +136,7 @@
           </tr>
         </thead>
         <tbody>
-          @for (item of items(); track item.id; let i = $index, premier = $first, dernier = $last) {
+          @for (item of items(); track item.id; let i = $index) {
             <tr>
               @for (col of config.columns; track col.key) {
                 <td [class.mono]="col.type === 'number' || col.type === 'date'" [attr.data-label]="col.label">
@@ -153,9 +155,9 @@
                    aucun ne traîne en bout de ligne quand une action manque. -->
               <td class="cellule-actions actions-ligne" style="text-align:right; white-space:nowrap;">
                 @if (config.reordonnable && modifiable()) {
-                  <button class="panel-link" [disabled]="premier || occupe()" (click)="deplacer(i, -1)"
+                  <button class="panel-link" [disabled]="!peutDeplacer(i, -1) || occupe()" (click)="deplacer(i, -1)"
                           title="Monter" aria-label="Monter d’un rang">↑</button>
-                  <button class="panel-link" [disabled]="dernier || occupe()" (click)="deplacer(i, 1)"
+                  <button class="panel-link" [disabled]="!peutDeplacer(i, 1) || occupe()" (click)="deplacer(i, 1)"
                           title="Descendre" aria-label="Descendre d’un rang">↓</button>
                 }
                 @for (action of config.actions ?? []; track action.chemin) {
@@ -182,9 +184,12 @@
           }
         </tbody>
       </table>
-      <div class="pagination">
-        <span>{{ total() }} résultat(s)</span>
-      </div>
+      @if (config.reordonnable) {
+        <div class="pagination"><span>{{ total() }} résultat(s)</span></div>
+      } @else {
+        <app-pagination [page]="page()" [total]="total()" [taillePage]="taillePage"
+                        [desactive]="loading()" (changer)="allerPage($event)"></app-pagination>
+      }
     }
   </div>
 }

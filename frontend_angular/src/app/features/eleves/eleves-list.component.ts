@@ -6,6 +6,7 @@ import { environment } from '../../../environments/environment';
 import { EleveService } from './eleve.service';
 import { AuthService } from '../../core/services/auth.service';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
+import { PaginationComponent } from '../../shared/pagination/pagination.component';
 import {
   Classe,
   Eleve,
@@ -32,7 +33,7 @@ const VUES: Vue[] = ['inscrits', 'attente', 'a_reinscrire'];
 @Component({
   selector: 'app-eleves-list',
   standalone: true,
-  imports: [CommonModule, RouterLink],
+  imports: [CommonModule, RouterLink, PaginationComponent],
   templateUrl: './eleves-list.component.html',
 })
 export class ElevesListComponent {
@@ -120,6 +121,7 @@ export class ElevesListComponent {
       // Depuis la liste des classes : « Élèves » ouvre la liste sur cette classe.
       const classe = params.get('classe');
       if (classe) this.filtreClasse.set(classe);
+      this.page.set(1);
       this.charger();
     });
 
@@ -139,15 +141,20 @@ export class ElevesListComponent {
     // La liste suit l'année choisie dans le bandeau haut.
     effect(() => {
       this.annees.idAnnee();
-      untracked(() => this.retirerClasseDuneAutreAnnee());
-      this.charger();
-      this.chargerReferentiels();
+      // Seule l'année doit relancer cet effet : la page, la recherche et les
+      // filtres rechargent déjà la liste eux-mêmes.
+      untracked(() => {
+        this.retirerClasseDuneAutreAnnee();
+        this.page.set(1);
+        this.charger();
+        this.chargerReferentiels();
+      });
     });
   }
 
   private chargerReferentiels(): void {
     this.http
-      .get<Paginated<Niveau>>(`${environment.apiUrl}/niveaux/`)
+      .get<Paginated<Niveau>>(`${environment.apiUrl}/niveaux/?page_size=200`)
       .subscribe({ next: (r) => this.niveaux.set(r.results ?? []), error: () => {} });
   }
 
@@ -186,6 +193,9 @@ export class ElevesListComponent {
 
     const params: Record<string, string> = {};
     const recherche = this.recherche().trim();
+    // Les inscrits sont paginés comme la file : vingt par page.
+    params['page'] = String(this.page());
+    params['page_size'] = String(this.taillePage);
     if (this.filtreStatut()) params['statut'] = this.filtreStatut();
     if (recherche) params['search'] = recherche;
 
@@ -208,10 +218,27 @@ export class ElevesListComponent {
       next: (res) => {
         this.eleves.set(res.results);
         this.total.set(res.count);
+        this.pages.set(Math.max(1, Math.ceil(res.count / this.taillePage)));
+        this.precedent.set(!!res.previous);
+        this.suivant.set(!!res.next);
         this.loading.set(false);
       },
-      error: () => this.loading.set(false),
+      error: (e) => {
+        // Page disparue entre-temps (un filtre a réduit la liste) : on repart de la première.
+        if (e?.status === 404 && this.page() > 1) {
+          this.page.set(1);
+          this.charger();
+          return;
+        }
+        this.loading.set(false);
+      },
     });
+  }
+
+  /** Vrai tant qu'il n'y a encore rien à montrer dans la vue courante. */
+  premierChargement(): boolean {
+    if (!this.loading()) return false;
+    return this.vue() === 'a_reinscrire' ? !this.aReinscrire().length : !this.eleves().length;
   }
 
   changerVue(vue: Vue): void {
@@ -234,8 +261,6 @@ export class ElevesListComponent {
     if (cible < 1 || cible > this.pages()) return;
     this.page.set(cible);
     this.charger();
-    // La pagination ne change pas d'URL : le retour en haut est explicite.
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   /** Retire le terme de l'URL : la liste redevient celle de l'année en cours. */
@@ -247,6 +272,7 @@ export class ElevesListComponent {
     this.filtreStatut.set(statut);
     // « Tous » montre tous les élèves inscrits, dans toutes les classes.
     if (!statut) this.filtreClasse.set('');
+    this.page.set(1);
     this.charger();
   }
 
@@ -260,6 +286,7 @@ export class ElevesListComponent {
 
   filtrerClasse(classe: string): void {
     this.filtreClasse.set(classe);
+    this.page.set(1);
     this.charger();
   }
 

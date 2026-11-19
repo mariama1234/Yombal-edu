@@ -5,6 +5,7 @@ import { RouterLink } from '@angular/router';
 import { Relance, ResultatRelances } from '../../core/models/models';
 import { FinanceService } from './finance.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
+import { PaginationComponent } from '../../shared/pagination/pagination.component';
 
 /**
  * Relances des impayés.
@@ -15,7 +16,7 @@ import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 @Component({
   selector: 'app-relances',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, SiAccesDirective],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink, SiAccesDirective, PaginationComponent],
   templateUrl: './relances.component.html',
 })
 export class RelancesComponent implements OnInit {
@@ -23,6 +24,9 @@ export class RelancesComponent implements OnInit {
   private finance = inject(FinanceService);
 
   historique = signal<Relance[]>([]);
+  page = signal(1);
+  total = signal(0);
+  readonly taillePage = 20;
   apercu = signal<ResultatRelances | null>(null);
   resultat = signal<ResultatRelances | null>(null);
   erreur = signal<string | null>(null);
@@ -39,9 +43,17 @@ export class RelancesComponent implements OnInit {
     this.form.valueChanges.subscribe(() => this.apercu.set(null));
   }
 
+  allerPage(page: number): void {
+    this.page.set(page);
+    this.chargerHistorique();
+  }
+
   private chargerHistorique(): void {
-    this.finance.relances().subscribe({
-      next: (r) => this.historique.set(r.results ?? []),
+    this.finance.relances({ page: this.page(), page_size: this.taillePage }).subscribe({
+      next: (r) => {
+        this.historique.set(r.results ?? []);
+        this.total.set(r.count ?? 0);
+      },
       error: () => {},
     });
   }
@@ -71,6 +83,8 @@ export class RelancesComponent implements OnInit {
     this.appeler(true, (r) => {
       this.resultat.set(r);
       this.apercu.set(null);
+      // Les relances qu'on vient d'envoyer sont en tête de la première page.
+      this.page.set(1);
       this.chargerHistorique();
     });
   }

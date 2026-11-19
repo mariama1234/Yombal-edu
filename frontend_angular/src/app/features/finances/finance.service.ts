@@ -159,8 +159,10 @@ export class FinanceService {
   }
 
   // ---- Relances --------------------------------------------------------
-  relances(): Observable<Paginated<Relance>> {
-    return this.http.get<Paginated<Relance>>(`${this.base}/relances/`);
+  relances(filtres: Filtres = {}): Observable<Paginated<Relance>> {
+    return this.http.get<Paginated<Relance>>(`${this.base}/relances/`, {
+      params: this.params(filtres),
+    });
   }
 
   genererRelances(corps: Record<string, unknown>): Observable<ResultatRelances> {

@@ -10,12 +10,14 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.db.models import ProtectedError, RestrictedError
 from django.db.models import Count, OuterRef, Prefetch, Subquery
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from . import matricules, models
@@ -64,6 +66,45 @@ class NouvelAdminSerializer(serializers.Serializer):
         return Utilisateur.objects.create_user(
             email=donnees.pop("email"), id_ecole=ecole, password=donnees.pop("password"),
             role=Utilisateur.Role.ADMIN, **donnees)
+
+
+class ModificationAdminSerializer(serializers.ModelSerializer):
+    """
+    Correction d'un compte de direction par la plateforme : identité, e-mail,
+    statut (actif / inactif) et, au besoin, un nouveau mot de passe — l'école
+    qui a perdu le sien n'a personne d'autre à qui le demander.
+    """
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = Utilisateur
+        fields = ["nom", "prenom", "email", "telephone", "statut", "password"]
+
+    def validate_email(self, value):
+        autres = Utilisateur.objects.filter(email__iexact=value).exclude(pk=self.instance.pk)
+        if autres.exists():
+            raise serializers.ValidationError("Cette adresse e-mail est déjà utilisée.")
+        return value
+
+    def validate_password(self, value):
+        if not value:
+            return value
+        try:
+            validate_password(value, self.instance)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
+
+    def update(self, instance, validated_data):
+        mot_de_passe = validated_data.pop("password", "")
+        for champ, valeur in validated_data.items():
+            setattr(instance, champ, valeur)
+        # Un compte désactivé ne doit plus pouvoir se connecter.
+        instance.is_active = instance.statut == Utilisateur.Statut.ACTIF
+        if mot_de_passe:
+            instance.set_password(mot_de_passe)
+        instance.save()
+        return instance
 
 
 class EcolePlateformeSerializer(serializers.ModelSerializer):
@@ -152,7 +193,9 @@ class EcolePlateformeViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
     """
     serializer_class = EcolePlateformeSerializer
     permission_classes = [EstSuperAdmin]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    # DELETE ne sert qu'aux comptes administrateurs (voir `admin`) : sans
+    # `DestroyModelMixin`, supprimer une école reste refusé (405).
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     search_fields = ["nom", "email", "telephone"]
     filterset_fields = ["plan_abonnement", "statut", "abonnement_paye"]
 
@@ -190,3 +233,44 @@ class EcolePlateformeViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
                     entite="utilisateur", id_entite=compte.pk,
                     description=f"Administrateur créé par la plateforme : {compte.email}")
         return Response(AdminEcoleSerializer(compte).data, status=status.HTTP_201_CREATED)
+
+    def _admin_de(self, ecole, id_admin):
+        """Un compte de direction de cette école, ou 404."""
+        try:
+            return Utilisateur.objects.get(pk=id_admin, id_ecole=ecole, role__in=ROLES_DIRECTION)
+        except Utilisateur.DoesNotExist:
+            raise NotFound("Aucun administrateur de cette école ne porte cet identifiant.")
+
+    @extend_schema(request=ModificationAdminSerializer, responses=AdminEcoleSerializer)
+    @action(detail=True, methods=["patch", "delete"], url_path=r"admins/(?P<id_admin>\d+)")
+    def admin(self, request, pk=None, id_admin=None):
+        """
+        Modifie ou supprime un administrateur de l'école :
+        PATCH / DELETE /api/plateforme/ecoles/{id}/admins/{id_admin}/
+        """
+        ecole = self.get_object()
+        compte = self._admin_de(ecole, id_admin)
+
+        if request.method == "DELETE":
+            libelle = compte.email
+            try:
+                with transaction.atomic():
+                    compte.delete()
+            except (ProtectedError, RestrictedError):
+                # Un compte qui a saisi des notes en reste l'auteur : on ne
+                # peut pas l'effacer sans effacer ces notes avec lui.
+                raise ValidationError({"detail": (
+                    "Ce compte ne peut pas être supprimé : des données de l'école "
+                    "(notes saisies…) y sont rattachées. Désactivez-le plutôt.")})
+            journaliser(request, models.JournalActivite.Action.SUPPRESSION, id_ecole=ecole.pk,
+                        entite="utilisateur", id_entite=int(id_admin),
+                        description=f"Administrateur supprimé par la plateforme : {libelle}")
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        entree = ModificationAdminSerializer(compte, data=request.data, partial=True)
+        entree.is_valid(raise_exception=True)
+        entree.save()
+        journaliser(request, models.JournalActivite.Action.MODIFICATION, id_ecole=ecole.pk,
+                    entite="utilisateur", id_entite=compte.pk,
+                    description=f"Administrateur modifié par la plateforme : {compte.email}")
+        return Response(AdminEcoleSerializer(compte).data)

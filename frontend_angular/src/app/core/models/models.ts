@@ -128,6 +128,7 @@ export interface Eleve {
   nom: string;
   prenom: string;
   date_naissance?: string;
+  lieu_naissance?: string | null;
   sexe?: 'M' | 'F';
   adresse?: string;
   photo_url?: string;
@@ -150,6 +151,9 @@ export interface LigneImport {
   classe: string;
   telephone: string;
   sexe: string;
+  /** AAAA-MM-JJ, vide si la liste n'en donne pas. */
+  date_naissance: string;
+  lieu_naissance: string;
   mention: string;
   matricule: string;
   decision: 'creation' | 'doublon' | 'ignore';
@@ -193,6 +197,7 @@ export interface EleveInscriptionPayload {
   nom: string;
   prenom: string;
   date_naissance?: string;
+  lieu_naissance?: string;
   sexe?: 'M' | 'F';
   adresse?: string;
   id_classe: number;
@@ -551,6 +556,7 @@ export interface DossierEleve {
     prenom: string;
     sexe: string | null;
     date_naissance: string | null;
+    lieu_naissance: string | null;
     adresse: string | null;
     photo_url: string | null;
     /** Une photo est enregistrée : elle se lit par GET /eleves/{id}/photo/. */

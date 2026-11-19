@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, effect, inject, signal, untracked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
@@ -12,6 +12,7 @@ import {
   ResultatBulletins,
 } from '../../core/models/models';
 import { PedagogieService } from './pedagogie.service';
+import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
 
 /**
@@ -34,6 +35,7 @@ export class BulletinsComponent implements OnInit {
   private fb = inject(FormBuilder);
   private http = inject(HttpClient);
   private pedagogie = inject(PedagogieService);
+  private annees = inject(AnneeScolaireService);
 
   classes = signal<Classe[]>([]);
   periodes = signal<PeriodeScolaire[]>([]);
@@ -57,12 +59,28 @@ export class BulletinsComponent implements OnInit {
 
   affichage = computed(() => this.apercu() ?? this.resultat());
 
-  ngOnInit(): void {
+  constructor() {
+    // Classes et périodes de l'année du bandeau haut. Sans `page_size`,
+    // l'API n'en renvoyait que vingt, toutes années confondues : une classe
+    // nouvellement créée n'apparaissait pas dans la liste.
+    effect(() => {
+      const annee = this.annees.idAnnee();
+      untracked(() => this.chargerListes(annee));
+    });
+  }
+
+  private chargerListes(annee: number | null): void {
     const api = environment.apiUrl;
-    this.http.get<Paginated<Classe>>(`${api}/classes/`)
+    const params: Record<string, string> = { page_size: '200' };
+    if (annee !== null) params['id_annee_scolaire'] = String(annee);
+    this.form.patchValue({ id_classe: null, id_periode: null });
+    this.http.get<Paginated<Classe>>(`${api}/classes/`, { params })
       .subscribe((r) => this.classes.set(r.results ?? []));
-    this.http.get<Paginated<PeriodeScolaire>>(`${api}/periodes/`)
+    this.http.get<Paginated<PeriodeScolaire>>(`${api}/periodes/`, { params })
       .subscribe((r) => this.periodes.set(r.results ?? []));
+  }
+
+  ngOnInit(): void {
 
     this.form.valueChanges.subscribe(() => {
       this.apercu.set(null);
@@ -112,7 +130,8 @@ export class BulletinsComponent implements OnInit {
     const v = this.form.getRawValue();
     this.http
       .get<Paginated<Bulletin>>(`${environment.apiUrl}/bulletins/`, {
-        params: { id_classe: String(v.id_classe), id_periode: String(v.id_periode) },
+        // Toute la classe : au-delà de vingt élèves, les derniers n'avaient pas leur PDF.
+        params: { id_classe: String(v.id_classe), id_periode: String(v.id_periode), page_size: '200' },
       })
       .subscribe((r) => this.bulletins.set(r.results ?? []));
   }

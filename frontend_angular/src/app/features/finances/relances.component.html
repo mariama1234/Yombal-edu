@@ -105,5 +105,7 @@
         }
       </tbody>
     </table>
+    <app-pagination [page]="page()" [total]="total()" [taillePage]="taillePage" libelle="relance(s)"
+                    (changer)="allerPage($event)"></app-pagination>
   }
 </div>

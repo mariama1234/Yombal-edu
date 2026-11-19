@@ -56,7 +56,7 @@ export class GenererFraisComponent implements OnInit {
 
   ngOnInit(): void {
     this.http
-      .get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/`)
+      .get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/?page_size=200`)
       .subscribe((r) => {
         const annees = r.results ?? [];
         this.annees.set(annees);
@@ -64,10 +64,10 @@ export class GenererFraisComponent implements OnInit {
         if (active) this.form.patchValue({ id_annee_scolaire: active.id });
       });
     this.http
-      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/`)
+      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/?page_size=200`)
       .subscribe((r) => this.classes.set(r.results ?? []));
     this.http
-      .get<Paginated<TypeFrais>>(`${environment.apiUrl}/types-frais/`)
+      .get<Paginated<TypeFrais>>(`${environment.apiUrl}/types-frais/?page_size=200`)
       .subscribe((r) => this.typesFrais.set(r.results ?? []));
 
     // Changer de type de frais réinitialise l'aperçu : il ne décrit plus la

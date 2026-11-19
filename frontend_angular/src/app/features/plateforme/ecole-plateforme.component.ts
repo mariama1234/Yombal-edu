@@ -2,7 +2,7 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { EcolePlateforme } from '../../core/models/models';
+import { AdminEcole, EcolePlateforme } from '../../core/models/models';
 import { ToastService } from '../../core/services/toast.service';
 import { PlateformeService } from './plateforme.service';
 
@@ -201,14 +201,45 @@ import { PlateformeService } from './plateforme.service';
               }
             </div>
             @for (a of e.admins; track a.id) {
-              <div class="pf-admin">
-                <span class="pf-mini-avatar">{{ a.prenom[0] }}{{ a.nom[0] }}</span>
-                <div>
-                  <strong>{{ a.prenom }} {{ a.nom }}</strong>
-                  <span>{{ a.email }}</span>
-                  <span class="hint">{{ a.role_libelle }}@if (a.telephone) { · {{ a.telephone }} }@if (a.statut !== 'actif') { · inactif }</span>
+              @if (enEdition()?.id === a.id) {
+                <form class="pf-ajout-admin" [formGroup]="formEdition" (ngSubmit)="enregistrerAdmin()">
+                  @if (erreurEdition()) { <div class="form-error">{{ erreurEdition() }}</div> }
+                  <div class="field"><label for="ed-prenom">Prénom *</label><input class="input" id="ed-prenom" formControlName="prenom"></div>
+                  <div class="field"><label for="ed-nom">Nom *</label><input class="input" id="ed-nom" formControlName="nom"></div>
+                  <div class="field"><label for="ed-email">E-mail de connexion *</label><input class="input" id="ed-email" type="email" formControlName="email"></div>
+                  <div class="field"><label for="ed-tel">Téléphone</label><input class="input" id="ed-tel" type="tel" formControlName="telephone"></div>
+                  <div class="field">
+                    <label for="ed-statut">Statut</label>
+                    <select class="input" id="ed-statut" formControlName="statut">
+                      <option value="actif">Actif</option>
+                      <option value="inactif">Inactif (ne peut plus se connecter)</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="ed-password">Nouveau mot de passe</label>
+                    <input class="input" id="ed-password" type="password" formControlName="password" autocomplete="new-password">
+                    <span class="hint">Laisser vide pour garder le mot de passe actuel.</span>
+                  </div>
+                  <div class="pf-actions">
+                    <button type="button" class="btn-ghost" (click)="enEdition.set(null)">Annuler</button>
+                    <button type="submit" class="btn-primary" [disabled]="enregistrement()">Enregistrer</button>
+                  </div>
+                </form>
+              } @else {
+                <div class="pf-admin">
+                  <span class="pf-mini-avatar">{{ a.prenom[0] }}{{ a.nom[0] }}</span>
+                  <div class="pf-admin-infos">
+                    <strong>{{ a.prenom }} {{ a.nom }}</strong>
+                    <span>{{ a.email }}</span>
+                    <span class="hint">{{ a.role_libelle }}@if (a.telephone) { · {{ a.telephone }} }@if (a.statut !== 'actif') { · inactif }</span>
+                  </div>
+                  <div class="pf-admin-actions">
+                    <button type="button" class="panel-link" [disabled]="enregistrement()" (click)="modifierAdmin(a)">Modifier</button>
+                    <button type="button" class="panel-link" style="color:var(--red);" [disabled]="enregistrement()"
+                            (click)="supprimerAdmin(e, a)">Supprimer</button>
+                  </div>
                 </div>
-              </div>
+              }
             } @empty {
               <p style="color:var(--red); font-size:13px; margin:0;">Aucun administrateur : personne ne peut se connecter à cette école.</p>
             }
@@ -250,6 +281,9 @@ export class EcolePlateformeComponent implements OnInit {
   erreurGenerale = signal<string | null>(null);
   ajoutOuvert = signal(false);
   erreurAdmin = signal<string | null>(null);
+  /** Administrateur en cours de modification, ou `null`. */
+  enEdition = signal<AdminEcole | null>(null);
+  erreurEdition = signal<string | null>(null);
 
   form = this.fb.group({
     nom: ['', Validators.required],
@@ -276,6 +310,15 @@ export class EcolePlateformeComponent implements OnInit {
     email: ['', [Validators.required, Validators.email]],
     telephone: [''],
     password: ['', [Validators.required, Validators.minLength(8)]],
+  });
+
+  formEdition = this.fb.group({
+    prenom: ['', Validators.required],
+    nom: ['', Validators.required],
+    email: ['', [Validators.required, Validators.email]],
+    telephone: [''],
+    statut: ['actif'],
+    password: ['', Validators.minLength(8)],
   });
 
   readonly offres = [
@@ -392,6 +435,65 @@ export class EcolePlateformeComponent implements OnInit {
         this.enregistrement.set(false);
         const corps = err?.error ?? {};
         this.erreurAdmin.set(Object.values(corps).flat().join(' ') || 'La création a échoué.');
+      },
+    });
+  }
+
+  modifierAdmin(a: AdminEcole): void {
+    this.ajoutOuvert.set(false);
+    this.erreurEdition.set(null);
+    this.formEdition.reset({
+      prenom: a.prenom, nom: a.nom, email: a.email, telephone: a.telephone ?? '',
+      statut: a.statut, password: '',
+    });
+    this.enEdition.set(a);
+  }
+
+  enregistrerAdmin(): void {
+    const e = this.ecole();
+    const a = this.enEdition();
+    if (!e || !a) return;
+    if (this.formEdition.invalid) {
+      this.formEdition.markAllAsTouched();
+      this.erreurEdition.set('Renseignez les champs obligatoires (mot de passe : 8 caractères au moins).');
+      return;
+    }
+    const corps: Record<string, unknown> = { ...this.formEdition.getRawValue() };
+    // Vide : le mot de passe actuel est conservé.
+    if (!corps['password']) delete corps['password'];
+    this.enregistrement.set(true);
+    this.erreurEdition.set(null);
+    this.plateforme.modifierAdmin(e.id, a.id, corps).subscribe({
+      next: (maj) => {
+        this.enregistrement.set(false);
+        this.enEdition.set(null);
+        this.toast.succes('Administrateur modifié', `${maj.prenom} ${maj.nom}`);
+        this.plateforme.lire(e.id).subscribe((fiche) => this.remplir(fiche));
+      },
+      error: (err) => {
+        this.enregistrement.set(false);
+        const corpsErreur = err?.error ?? {};
+        this.erreurEdition.set(Object.values(corpsErreur).flat().join(' ') || 'La modification a échoué.');
+      },
+    });
+  }
+
+  supprimerAdmin(e: EcolePlateforme, a: AdminEcole): void {
+    const dernier = e.admins.length === 1;
+    const message = `Supprimer définitivement le compte de ${a.prenom} ${a.nom} (${a.email}) ?`
+      + (dernier ? '\n\nC’est le dernier administrateur : plus personne ne pourra se connecter à cette école '
+        + 'tant que vous n’en aurez pas créé un autre.' : '');
+    if (!confirm(message)) return;
+    this.enregistrement.set(true);
+    this.plateforme.supprimerAdmin(e.id, a.id).subscribe({
+      next: () => {
+        this.enregistrement.set(false);
+        this.toast.succes('Administrateur supprimé', a.email);
+        this.plateforme.lire(e.id).subscribe((fiche) => this.remplir(fiche));
+      },
+      error: (err) => {
+        this.enregistrement.set(false);
+        this.toast.erreur('Suppression refusée', err?.error?.detail ?? 'Le compte n’a pas pu être supprimé.');
       },
     });
   }

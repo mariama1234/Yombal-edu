@@ -419,6 +419,45 @@ class ClasseSerializer(serializers.ModelSerializer):
         enseignant = obj.id_enseignant_principal
         return enseignant.nom_complet if enseignant else None
 
+    def validate_nom(self, valeur):
+        """« 6ème  A » et « 6ème A » sont la même classe : espaces normalisés."""
+        nom = " ".join((valeur or "").split())
+        if not nom:
+            raise serializers.ValidationError("Le nom de la classe est obligatoire.")
+        return nom
+
+    def validate(self, attrs):
+        """
+        Une école n'a pas deux classes du même nom la même année : les élèves,
+        les notes et les frais se répartiraient entre deux « 6ème A » qu'on ne
+        sait plus distinguer. La même classe d'une autre année reste permise —
+        c'est le cas normal d'une rentrée.
+
+        La comparaison ignore la casse : « 6ème a » double « 6ème A ».
+        La contrainte `uq_classe_ecole_annee_nom` en base couvre deux
+        créations simultanées ; ce contrôle-ci donne le message lisible.
+        """
+        attrs = super().validate(attrs)
+        requete = self.context.get("request")
+        if requete is None:
+            return attrs
+        nom = attrs.get("nom", getattr(self.instance, "nom", None))
+        annee = attrs.get("id_annee_scolaire", getattr(self.instance, "id_annee_scolaire", None))
+        if not nom or annee is None:
+            return attrs
+        # Comparaison faite ici plutôt qu'en `nom__iexact` : SQLite ne replie
+        # pas la casse des lettres accentuées (« 6ÈME » ≠ « 6ème »). Une année
+        # compte quelques dizaines de classes, la lecture reste légère.
+        autres = models.Classe.objects.filter(
+            id_ecole_id=requete.user.id_ecole_id, id_annee_scolaire=annee)
+        if self.instance is not None:
+            autres = autres.exclude(pk=self.instance.pk)
+        cle = nom.casefold()
+        if any(" ".join(n.split()).casefold() == cle for n in autres.values_list("nom", flat=True)):
+            raise serializers.ValidationError({
+                "nom": f"La classe « {nom} » existe déjà pour l'année {annee.libelle}."})
+        return attrs
+
     def create(self, validated_data):
         """Une nouvelle classe se range après les autres classes de son niveau."""
         if not validated_data.get("ordre"):
@@ -660,6 +699,8 @@ class EleveInscriptionSerializer(serializers.Serializer):
     prenom = serializers.CharField(max_length=100)
     # Exigés : le matricule en reprend le genre et l'année de naissance.
     date_naissance = serializers.DateField()
+    lieu_naissance = serializers.CharField(max_length=100, required=False, allow_blank=True,
+                                           allow_null=True)
     sexe = serializers.ChoiceField(choices=models.Eleve.Sexe.choices)
     adresse = serializers.CharField(max_length=255, required=False, allow_blank=True)
     photo_url = serializers.CharField(max_length=255, required=False, allow_blank=True)
@@ -773,6 +814,7 @@ class EleveInscriptionSerializer(serializers.Serializer):
             nom=validated_data["nom"],
             prenom=validated_data["prenom"],
             date_naissance=validated_data.get("date_naissance"),
+            lieu_naissance=(validated_data.get("lieu_naissance") or "").strip() or None,
             sexe=validated_data.get("sexe"),
             adresse=validated_data.get("adresse", ""),
             photo_url=validated_data.get("photo_url", ""),
@@ -963,6 +1005,8 @@ class ReinscriptionSerializer(serializers.Serializer):
 class LigneFicheSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     date_naissance = serializers.DateField(required=False, allow_null=True)
+    lieu_naissance = serializers.CharField(max_length=100, required=False, allow_null=True,
+                                           allow_blank=True)
     sexe = serializers.ChoiceField(choices=models.Eleve.Sexe.choices, required=False,
                                    allow_null=True, allow_blank=True)
     numero_registre = serializers.CharField(max_length=50, required=False, allow_null=True,

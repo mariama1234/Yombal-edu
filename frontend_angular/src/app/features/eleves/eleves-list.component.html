@@ -88,7 +88,9 @@
 }
 
 <div class="panel">
-  @if (loading()) {
+  <!-- Une page suivante se charge par-dessus la précédente, estompée : le
+       tableau reste en place au lieu de laisser place à « Chargement… ». -->
+  @if (premierChargement()) {
     <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
   } @else if (vue() === 'a_reinscrire') {
 
@@ -101,7 +103,7 @@
         }
       </p>
     } @else {
-      <table class="simple">
+      <table class="simple" [class.chargement]="loading()">
         <thead>
           <tr><th>Élève</th><th>Matricule</th><th>Dernière classe</th><th>Année</th><th></th></tr>
         </thead>
@@ -127,18 +129,8 @@
         </tbody>
       </table>
 
-      <div class="pagination">
-        <span>
-          {{ (page() - 1) * taillePage + 1 }}–{{ (page() - 1) * taillePage + aReinscrire().length }}
-          sur {{ total() }}
-        </span>
-        <span style="display:flex; gap:8px;">
-          <button type="button" class="btn-ghost" [disabled]="!precedent()"
-                  (click)="allerPage(-1)">← Précédent</button>
-          <button type="button" class="btn-ghost" [disabled]="!suivant()"
-                  (click)="allerPage(1)">Suivant →</button>
-        </span>
-      </div>
+      <app-pagination [page]="page()" [total]="total()" [taillePage]="taillePage"
+                      [desactive]="loading()" (changer)="allerPage($event - page())"></app-pagination>
     }
 
   } @else if (eleves().length === 0) {
@@ -155,7 +147,7 @@
       }
     </p>
   } @else {
-    <table class="simple">
+    <table class="simple" [class.chargement]="loading()">
       <thead>
         <tr><th>Élève</th><th>Matricule</th><th>Classe</th><th>Inscription</th><th>Statut</th><th></th></tr>
       </thead>
@@ -190,6 +182,7 @@
         }
       </tbody>
     </table>
-    <div class="pagination"><span>{{ total() }} résultat(s)</span></div>
+    <app-pagination [page]="page()" [total]="total()" [taillePage]="taillePage"
+                    [desactive]="loading()" (changer)="allerPage($event - page())"></app-pagination>
   }
 </div>

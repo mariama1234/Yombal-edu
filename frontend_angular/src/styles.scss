@@ -235,6 +235,12 @@ table.simple tr:hover td{background:var(--bg);}
 .chip.active{border-color:var(--navy-800);background:var(--navy-900);color:#fff;}
 
 .pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:16px;font-size:12.5px;color:var(--ink-400);}
+.pagination-boutons{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.pagination-boutons .btn-ghost{padding:6px 12px;font-size:12.5px;}
+.pagination-boutons .btn-ghost:disabled{opacity:.45;cursor:not-allowed;}
+table.chargement{opacity:.5;transition:opacity .15s;pointer-events:none;}
+.pagination-numero{white-space:nowrap;font-variant-numeric:tabular-nums;}
+@media (max-width:600px){.pagination{justify-content:center;text-align:center;}}
 
 /* ---------- Formulaires ---------- */
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;}
@@ -497,6 +503,9 @@ table.simple tr:hover td{background:var(--bg);}
 .pf-admin .pf-mini-avatar{width:34px;height:34px;font-size:12px;box-shadow:none;}
 .pf-admin > div strong{display:block;font-size:13.5px;color:var(--ink-900);}
 .pf-admin > div span{display:block;font-size:12.5px;color:var(--ink-600);overflow-wrap:anywhere;}
+.pf-admin > .pf-admin-infos{flex:1;min-width:0;}
+.pf-admin-actions{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
+.pf-admin-actions .panel-link{font-size:12.5px;}
 .pf-ajout-admin{margin-top:14px;padding-top:14px;border-top:1px solid var(--line);}
 .pf-ajout-admin .field{margin-bottom:10px;}
 .pill.offre.pro{background:linear-gradient(90deg, var(--navy-900), var(--navy-700));color:#fff;}

@@ -143,6 +143,7 @@
         <label>Date de naissance</label>
         <div class="mono">{{ d.eleve.date_naissance ? (d.eleve.date_naissance | date:'dd/MM/yyyy') : '—' }}</div>
       </div>
+      <div class="field"><label>Lieu de naissance</label><div class="mono">{{ d.eleve.lieu_naissance || '—' }}</div></div>
       <div class="field"><label>Adresse</label><div class="mono">{{ d.eleve.adresse ?? '—' }}</div></div>
       <div class="field"><label>N° de registre</label><div class="mono">{{ d.eleve.numero_registre ?? '—' }}</div></div>
       <div class="field">
@@ -166,11 +167,17 @@
           <div class="field"><label for="id-nom">Nom</label><input class="input" id="id-nom" formControlName="nom"></div>
           <div class="field"><label for="id-prenom">Prénom</label><input class="input" id="id-prenom" formControlName="prenom"></div>
         </div>
-        <div class="form-grid cols-3">
+        <div class="form-grid">
           <div class="field">
             <label for="id-naissance">Date de naissance</label>
             <input class="input" id="id-naissance" type="date" formControlName="date_naissance">
           </div>
+          <div class="field">
+            <label for="id-lieu">Lieu de naissance</label>
+            <input class="input" id="id-lieu" formControlName="lieu_naissance" maxlength="100">
+          </div>
+        </div>
+        <div class="form-grid">
           <div class="field">
             <label for="id-sexe">Sexe</label>
             <select class="input" id="id-sexe" formControlName="sexe">

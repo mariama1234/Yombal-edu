@@ -90,6 +90,7 @@ export class EleveFormComponent implements OnInit {
     prenom: ['', Validators.required],
     // Exigée : l'âge se contrôle par rapport au niveau.
     date_naissance: ['', Validators.required],
+    lieu_naissance: [''],
     sexe: ['F', Validators.required],
     adresse: [''],
     numero_registre: [''],
@@ -163,7 +164,7 @@ export class EleveFormComponent implements OnInit {
       niveaux: this.http.get<Paginated<Niveau>>(`${environment.apiUrl}/niveaux/?page_size=200`),
       // Toutes les classes : au-delà de vingt, la première page en oubliait.
       classes: this.http.get<Paginated<Classe>>(`${environment.apiUrl}/classes/?page_size=200`),
-      annees: this.http.get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/`),
+      annees: this.http.get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/?page_size=200`),
       // Le catalogue n'empêche pas d'inscrire s'il ne se charge pas.
       typesFrais: this.http
         .get<Paginated<TypeFrais>>(`${environment.apiUrl}/types-frais/?page_size=200`)
@@ -287,6 +288,7 @@ export class EleveFormComponent implements OnInit {
         nom: v.nom!,
         prenom: v.prenom!,
         date_naissance: v.date_naissance || undefined,
+        lieu_naissance: v.lieu_naissance?.trim() || undefined,
         sexe: v.sexe as any,
         adresse: v.adresse || undefined,
         numero_registre: v.numero_registre || undefined,

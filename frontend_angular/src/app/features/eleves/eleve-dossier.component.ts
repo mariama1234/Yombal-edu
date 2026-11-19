@@ -87,6 +87,7 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
     nom: ['', Validators.required],
     prenom: ['', Validators.required],
     date_naissance: [''],
+    lieu_naissance: [''],
     sexe: [''],
     adresse: [''],
     numero_registre: [''],
@@ -191,10 +192,10 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
     this.charger();
 
     this.http
-      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/`)
+      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/?page_size=200`)
       .subscribe((r) => this.classes.set(r.results ?? []));
     this.http
-      .get<Paginated<PeriodeScolaire>>(`${environment.apiUrl}/periodes/`)
+      .get<Paginated<PeriodeScolaire>>(`${environment.apiUrl}/periodes/?page_size=200`)
       .subscribe((r) => {
         const periodes = r.results ?? [];
         this.periodes.set(periodes);
@@ -301,6 +302,7 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
     if (!e) return;
     this.formIdentite.reset({
       nom: e.nom, prenom: e.prenom, date_naissance: e.date_naissance ?? '',
+      lieu_naissance: e.lieu_naissance ?? '',
       // Le dossier donne le libellé du sexe ; le formulaire, le code.
       sexe: e.sexe === 'Masculin' ? 'M' : e.sexe === 'Féminin' ? 'F' : '',
       adresse: e.adresse ?? '', numero_registre: e.numero_registre ?? '',
@@ -314,6 +316,7 @@ export class EleveDossierComponent implements OnInit, OnDestroy {
     this.enregistrer(
       this.scolarite.modifierEleve(this.idEleve, {
         nom: v.nom, prenom: v.prenom, date_naissance: v.date_naissance || null,
+        lieu_naissance: v.lieu_naissance?.trim() || null,
         sexe: v.sexe || null, adresse: v.adresse || null, numero_registre: v.numero_registre || null,
       }),
       'Identité de l’élève mise à jour.',

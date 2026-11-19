@@ -11,6 +11,7 @@ import io
 import zipfile
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
+from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -70,6 +71,59 @@ class BaseAPI(TestCase):
 
     def resultats(self, reponse):
         return reponse.data.get("results", reponse.data)
+
+
+class TestClassesSansDoublon(BaseAPI):
+    """Une classe ne figure qu'une fois par année ; d'une année à l'autre, si."""
+
+    def _creer(self, nom, annee=None):
+        return self.client.post("/api/classes/", {
+            "nom": nom, "id_annee_scolaire": (annee or self.annee).pk, "capacite_max": 30,
+        }, format="json")
+
+    def test_meme_nom_meme_annee_refuse(self):
+        r = self._creer("6ème A")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("existe déjà", str(r.data["nom"]))
+
+    def test_casse_et_espaces_ignores(self):
+        r = self._creer("  6ÈME   a ")
+        self.assertEqual(r.status_code, 400, r.content)
+
+    def test_meme_nom_autre_annee_accepte(self):
+        precedente = models.AnneeScolaire.objects.create(
+            id_ecole=self.ecole, libelle="2025-2026",
+            date_debut=date(2025, 10, 1), date_fin=date(2026, 7, 31))
+        r = self._creer("6ème A", precedente)
+        self.assertEqual(r.status_code, 201, r.content)
+
+    def test_meme_nom_autre_ecole_accepte(self):
+        annee_b = models.AnneeScolaire.objects.create(
+            id_ecole=self.autre, libelle="2026-2027",
+            date_debut=date(2026, 10, 1), date_fin=date(2027, 7, 31))
+        r = self.client_autre.post("/api/classes/", {
+            "nom": "6ème A", "id_annee_scolaire": annee_b.pk, "capacite_max": 30,
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+
+    def test_renommer_en_doublon_refuse(self):
+        autre = self._creer("6ème B")
+        self.assertEqual(autre.status_code, 201, autre.content)
+        r = self.client.patch(f"/api/classes/{autre.data['id']}/", {"nom": "6ème A"}, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+
+    def test_modifier_sans_changer_le_nom_accepte(self):
+        r = self.client.patch(f"/api/classes/{self.classe.pk}/", {"capacite_max": 45}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+
+    def test_liste_paginee_avec_page_suivante(self):
+        for i in range(25):
+            models.Classe.objects.create(id_ecole=self.ecole, id_annee_scolaire=self.annee,
+                                         nom=f"Classe {i:02d}", capacite_max=30)
+        r = self.client.get("/api/classes/", {"page": 2, "page_size": 20})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["count"], 26)
+        self.assertEqual(len(r.data["results"]), 6)
 
 
 class TestAuthentificationEtAudit(BaseAPI):
@@ -1385,8 +1439,76 @@ class TestReconnaissanceDesClasses(TestCase):
         self.assertEqual(lignes[0].mention, "NN")
 
 
+class TestImportDatesEtTitresColles(TestCase):
+    """Listes de Mic Cité 2026-2027 : titre « CE2A », colonne date et lieu de naissance."""
+
+    ENTETE = ["N°", "PRENOMS", "NOMS", "DATE ET LIEU DE NAISSANCE"]
+
+    def test_titre_colle_reconnu(self):
+        self.assertEqual(imports_eleves.deviner_classe("CE2A"), ("CE2 A", "CE2"))
+        self.assertEqual(imports_eleves.deviner_classe("CM1B 2027"), ("CM1 B", "CM1"))
+
+    def test_date_lue_lieu_ignore(self):
+        self.assertEqual(imports_eleves.lire_date_naissance("25-2-2021   BATAL"), ("2021-02-25", ""))
+        self.assertEqual(imports_eleves.lire_date_naissance("07-02-2021  THIES"), ("2021-02-07", ""))
+        self.assertEqual(imports_eleves.lire_date_naissance(""), ("", ""))
+
+    def test_date_illisible_ou_impossible_signalee(self):
+        self.assertEqual(imports_eleves.lire_date_naissance("AGE")[0], "")
+        self.assertIn("illisible", imports_eleves.lire_date_naissance("AGE")[1])
+        self.assertIn("impossible", imports_eleves.lire_date_naissance("31-2-2020 THIES")[1])
+
+    def test_ligne_importee_avec_sa_date(self):
+        lignes = imports_eleves.analyser_fichier("CE2A.docx", docx_de_test("CE2A", [
+            self.ENTETE,
+            ["1", "AWA", "BEYE", "24-10-2019  THIES"],
+            ["2", "SEYDINA", "COLY", "AGE"],
+        ]))
+        self.assertEqual([l.classe for l in lignes], ["CE2 A", "CE2 A"])
+        self.assertEqual(lignes[0].date_naissance, "2019-10-24")
+        self.assertEqual(lignes[0].lieu_naissance, "Thies")
+        self.assertEqual(lignes[1].lieu_naissance, "")
+        # Date illisible : l'élève est gardé, le problème est affiché.
+        self.assertEqual(lignes[1].date_naissance, "")
+        self.assertFalse(lignes[1].anomalies)
+        self.assertIn("illisible", lignes[1].mention)
+
+    def test_lieu_lu_apres_la_date(self):
+        lire = imports_eleves.lire_lieu_naissance
+        self.assertEqual(lire("25-2-2021   BATAL"), "Batal")
+        self.assertEqual(lire("30-5-2016   TIVAOUANE"), "Tivaouane")
+        self.assertEqual(lire("2-9-2020 à THIES"), "Thies")
+        # Pas de date : « AGE » est une annotation, pas un lieu.
+        self.assertEqual(lire("AGE"), "")
+        self.assertEqual(lire("6-5-2018"), "")
+
+    def test_entete_mal_tape_garde_la_date(self):
+        lignes = imports_eleves.analyser_fichier("CI A.docx", docx_de_test("CI A 2027", [
+            ["N°", "PRERNOMS", "NOMS", "DATE ET LIEU DE NAISSANCE"],
+            ["1", "AMINATA", "FALL", "11-09-2020  THIES"],
+        ]))
+        self.assertEqual(len(lignes), 1)
+        self.assertEqual((lignes[0].prenom, lignes[0].nom), ("Aminata", "Fall"))
+        self.assertEqual(lignes[0].date_naissance, "2020-09-11")
+
+
 class TestImportEleves(BaseAPI):
     """L'import crée élèves, classes et inscriptions en un seul geste."""
+
+    def test_date_et_lieu_de_naissance_enregistres(self):
+        r = self._importer(nom="CE2A.docx", contenu=docx_de_test("CE2A", [
+            ["N°", "PRENOMS", "NOMS", "DATE ET LIEU DE NAISSANCE"],
+            ["1", "HAMADY", "DIALLO", "14-3-2018   THIES"],
+            ["2", "RAMATA", "SALL", ""],
+        ]))
+        self.assertEqual(r.status_code, 201, r.content)
+        hamady = models.Eleve.objects.get(id_ecole=self.ecole, nom="Diallo", prenom="Hamady")
+        self.assertEqual((hamady.date_naissance, hamady.lieu_naissance), (date(2018, 3, 14), "Thies"))
+        # L'année de naissance entre dans le matricule.
+        self.assertTrue(hamady.matricule.endswith("-18"), hamady.matricule)
+        ramata = models.Eleve.objects.get(id_ecole=self.ecole, nom="Sall")
+        self.assertIsNone(ramata.lieu_naissance)
+        self.assertTrue(models.Classe.objects.filter(id_ecole=self.ecole, nom="CE2 A").exists())
 
     LISTE = [
         ["N°", "PRENOMS", "NOMS"],
@@ -3579,7 +3701,24 @@ class TestEncaissementDepuisLeDossier(BaseDossierFinancier):
         self.assertEqual(models.Paiement.objects.count(), 0)
 
 
-class TestSituationGlobale(BaseDossierFinancier):
+class AvantEcheanceMixin:
+    """
+    Fige « aujourd'hui » au 1er novembre 2026, avant les échéances du 5.
+
+    Ces tests distinguent « partiel » (une partie versée, échéance à venir) de
+    « en retard » (échéance dépassée). Avec la vraie date du jour, ils
+    basculaient tous en retard dès le 6 novembre 2026.
+    """
+    AUJOURDHUI = date(2026, 11, 1)
+
+    def setUp(self):
+        patcher = mock.patch("django.utils.timezone.localdate", return_value=self.AUJOURDHUI)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        super().setUp()
+
+
+class TestSituationGlobale(AvantEcheanceMixin, BaseDossierFinancier):
     """GET /api/frais-eleves/situation/ — un élève par ligne."""
 
     def setUp(self):
@@ -3687,7 +3826,7 @@ class TestRechercheDesPaiements(BaseDossierFinancier):
         self.assertEqual(len(self.resultats(reponse)), 1)
 
 
-class TestBilanEnrichi(BaseDossierFinancier):
+class TestBilanEnrichi(AvantEcheanceMixin, BaseDossierFinancier):
     def test_repartition_des_eleves_et_derniers_paiements(self):
         # Datés dans l'année scolaire : le bilan borne les recettes à sa période.
         self._droits_exoneres(self.eleves[0])
@@ -6670,6 +6809,22 @@ class TestCompleterLesFiches(BaseFinances):
         self.assertEqual((a.date_naissance, a.sexe, a.numero_registre), (date(2014, 3, 2), "F", "R-1"))
         self.assertEqual(b.date_naissance, date(2013, 11, 20))
 
+    def test_lieu_de_naissance_complete_et_modifiable(self):
+        a = self.eleves[0]
+        r = self.client.post(self.URL, {"eleves": [{"id": a.pk, "lieu_naissance": "  Tivaouane "}]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        a.refresh_from_db()
+        self.assertEqual(a.lieu_naissance, "Tivaouane")
+        fiche = next(e for e in self.client.get(self.URL, {"classe": self.classe.pk}).data["eleves"]
+                     if e["id"] == a.pk)
+        self.assertEqual(fiche["lieu_naissance"], "Tivaouane")
+        # La fiche de l'élève se corrige aussi directement.
+        r = self.client.patch(f"/api/eleves/{a.pk}/", {"lieu_naissance": "Thiès"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        a.refresh_from_db()
+        self.assertEqual(a.lieu_naissance, "Thiès")
+
     def test_tout_ou_rien(self):
         a, b, _ = self.eleves
         r = self.client.post(self.URL, {"eleves": [
@@ -7257,3 +7412,52 @@ class TestEnvoiSansMessagerie(BaseAPI):
         self.assertEqual(len(mail.outbox), 0)
         self.enseignant_user.refresh_from_db()
         self.assertTrue(self.enseignant_user.check_password(MDP), "le mot de passe reste valable")
+
+
+class TestPlateformeGestionDesAdmins(TestPlateformeSuperAdmin):
+    """Le super administrateur modifie ou supprime le compte admin d'une école."""
+
+    def _url(self, compte, ecole=None):
+        return f"/api/plateforme/ecoles/{(ecole or self.ecole).pk}/admins/{compte.pk}/"
+
+    def test_modifie_un_admin(self):
+        r = self.plateforme.patch(self._url(self.admin), {
+            "nom": "Diop", "email": "nouvel@a.sn", "password": "Nouveau!Passe2026"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.nom, "Diop")
+        self.assertEqual(self.admin.email, "nouvel@a.sn")
+        self.assertTrue(self.admin.check_password("Nouveau!Passe2026"))
+
+    def test_email_deja_pris_refuse(self):
+        r = self.plateforme.patch(self._url(self.admin), {"email": "admin@b.sn"}, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+
+    def test_desactiver_bloque_la_connexion(self):
+        r = self.plateforme.patch(self._url(self.admin), {"statut": "inactif"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        connexion = APIClient().post("/api/auth/token/",
+                                     {"email": self.admin.email, "password": MDP}, format="json")
+        self.assertEqual(connexion.status_code, 401)
+
+    def test_supprime_un_admin(self):
+        r = self.plateforme.delete(self._url(self.admin))
+        self.assertEqual(r.status_code, 204, r.content)
+        self.assertFalse(Utilisateur.objects.filter(pk=self.admin.pk).exists())
+
+    def test_admin_d_une_autre_ecole_introuvable(self):
+        r = self.plateforme.delete(self._url(self.admin_autre, self.ecole))
+        self.assertEqual(r.status_code, 404)
+        self.assertTrue(Utilisateur.objects.filter(pk=self.admin_autre.pk).exists())
+
+    def test_compte_hors_direction_introuvable(self):
+        r = self.plateforme.delete(self._url(self.parent_user))
+        self.assertEqual(r.status_code, 404)
+
+    def test_reserve_au_super_admin(self):
+        r = self.client.delete(self._url(self.admin))
+        self.assertEqual(r.status_code, 403)
+
+    def test_supprimer_une_ecole_reste_refuse(self):
+        r = self.plateforme.delete(f"/api/plateforme/ecoles/{self.ecole.pk}/")
+        self.assertEqual(r.status_code, 405)

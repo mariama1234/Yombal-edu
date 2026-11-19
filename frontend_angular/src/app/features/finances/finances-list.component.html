@@ -178,14 +178,14 @@
   </div>
 } @else {
 <div class="panel">
-  @if (loading()) {
+  @if (loading() && lignes().length === 0) {
     <p style="color:var(--ink-400); font-size:13px;">Chargement…</p>
   } @else if (lignes().length === 0) {
     <p style="color:var(--ink-400); font-size:13px;">
       {{ onglet() === 'impayes' ? 'Aucun impayé 🎉' : 'Aucun frais enregistré pour ce filtre.' }}
     </p>
   } @else {
-    <table class="simple">
+    <table class="simple" [class.chargement]="loading()">
       <thead>
         <tr>
           <th>Élève</th><th>Échéance</th><th>Montant dû</th><th>Payé</th>
@@ -213,7 +213,7 @@
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="2" style="font-weight:600;">Total affiché</td>
+          <td colspan="2" style="font-weight:600;">Total de la page</td>
           <td class="mono" style="font-weight:600;">{{ totalDu() | number:'1.0-0' }} F</td>
           <td class="mono" style="font-weight:600;">{{ totalPaye() | number:'1.0-0' }} F</td>
           <td class="mono" style="font-weight:600;">{{ totalSolde() | number:'1.0-0' }} F</td>
@@ -221,6 +221,8 @@
         </tr>
       </tfoot>
     </table>
+    <app-pagination [page]="page()" [total]="total()" [taillePage]="taillePage"
+                    [desactive]="loading()" (changer)="allerPage($event)"></app-pagination>
   }
 </div>
 }

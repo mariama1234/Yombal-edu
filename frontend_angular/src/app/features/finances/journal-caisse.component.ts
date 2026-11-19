@@ -5,11 +5,12 @@ import { RouterLink } from '@angular/router';
 import { JournalCaisse, Soldes } from '../../core/models/models';
 import { FinanceService } from './finance.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
+import { PaginationComponent } from '../../shared/pagination/pagination.component';
 
 @Component({
   selector: 'app-journal-caisse',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective],
+  imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective, PaginationComponent],
   templateUrl: './journal-caisse.component.html',
 })
 export class JournalCaisseComponent implements OnInit {
@@ -25,6 +26,10 @@ export class JournalCaisseComponent implements OnInit {
   debut = signal('');
   fin = signal('');
 
+  page = signal(1);
+  total = signal(0);
+  readonly taillePage = 20;
+
   ngOnInit(): void {
     this.charger();
     this.finance.soldes().subscribe({ next: (s) => this.soldes.set(s), error: () => {} });
@@ -34,12 +39,24 @@ export class JournalCaisseComponent implements OnInit {
     return { journal: this.journal(), debut: this.debut(), fin: this.fin() };
   }
 
+  /** Tout changement de filtre repart de la première page. */
   charger(): void {
+    this.page.set(1);
+    this.lire();
+  }
+
+  allerPage(page: number): void {
+    this.page.set(page);
+    this.lire();
+  }
+
+  private lire(): void {
     this.loading.set(true);
     this.erreur.set(null);
-    this.finance.journal(this.filtres).subscribe({
+    this.finance.journal({ ...this.filtres, page: this.page(), page_size: this.taillePage }).subscribe({
       next: (r) => {
         this.mouvements.set(r.results ?? []);
+        this.total.set(r.count ?? 0);
         this.loading.set(false);
       },
       error: () => {

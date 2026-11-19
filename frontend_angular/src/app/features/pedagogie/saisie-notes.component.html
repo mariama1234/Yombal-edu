@@ -16,23 +16,23 @@
     <div class="field">
       <label for="classe">Classe</label>
       <select class="input" id="classe" (change)="surClasse($any($event.target).value)">
-        <option value="">— toutes —</option>
-        @for (c of classes(); track c.id) { <option [value]="c.id">{{ c.nom }}</option> }
+        <option value="" [selected]="!idClasse()">— toutes —</option>
+        @for (c of classes(); track c.id) { <option [value]="c.id" [selected]="idClasse() === c.id">{{ c.nom }}</option> }
       </select>
     </div>
     <div class="field">
       <label for="periode">Période</label>
       <select class="input" id="periode" (change)="surPeriode($any($event.target).value)">
-        <option value="">— toutes —</option>
-        @for (p of periodes(); track p.id) { <option [value]="p.id">{{ p.libelle }}</option> }
+        <option value="" [selected]="!idPeriode()">— toutes —</option>
+        @for (p of periodes(); track p.id) { <option [value]="p.id" [selected]="idPeriode() === p.id">{{ p.libelle }}</option> }
       </select>
     </div>
     <div class="field">
       <label for="evaluation">Évaluation</label>
       <select class="input" id="evaluation" (change)="surEvaluation($any($event.target).value)">
-        <option value="">— choisir —</option>
+        <option value="" [selected]="!idEvaluation()">— choisir —</option>
         @for (e of evaluationsFiltrees(); track e.id) {
-          <option [value]="e.id">
+          <option [value]="e.id" [selected]="idEvaluation() === e.id">
             {{ nomMatiere(e.id_matiere) }} — {{ e.type }} du {{ e.date_evaluation | date:'dd/MM/yyyy' }}
             (/{{ e.bareme }}, coef. {{ e.coefficient }})
           </option>

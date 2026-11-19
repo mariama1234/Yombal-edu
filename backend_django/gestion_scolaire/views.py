@@ -2184,6 +2184,9 @@ class FraisEleveViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, Jou
     module = "frais"
     perimetre_famille = "id_eleve"
     actions_personnel = ("generer", "impayes_par_classe", "situation", "exporter_impayes")
+    # La liste est paginée : chercher un élève doit porter sur toutes les
+    # pages, pas seulement sur les vingt lignes affichées.
+    search_fields = ["id_eleve__nom", "id_eleve__prenom", "id_eleve__matricule"]
 
     def get_queryset(self):
         qs = super().get_queryset().filter(id_eleve__id_ecole_id=self.request.user.id_ecole_id)
@@ -2206,7 +2209,7 @@ class FraisEleveViewSet(PerimetreMixin, CoherenceEcoleMixin, CorbeilleMixin, Jou
     @action(detail=False, methods=["get"])
     def impayes(self, request):
         """GET /api/frais-eleves/impayes/ — écran Finances (admin) et parcours caissier."""
-        qs = self._impayes()
+        qs = self.filter_queryset(self._impayes())
         page = self.paginate_queryset(qs)
         serializer = self.get_serializer(page or qs, many=True)
         return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)

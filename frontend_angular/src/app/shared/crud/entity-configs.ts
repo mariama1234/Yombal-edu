@@ -463,11 +463,14 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     endpoint: 'classes',
     champAnnee: 'id_annee_scolaire',
     reordonnable: true,
+    groupeOrdre: 'id_niveau',
     titre: 'Classes',
     titreSingulier: 'une classe',
     eyebrow: 'Organisation scolaire',
     filtres: [
-      { param: 'id_niveau', tous: 'Tous les niveaux', optionsEndpoint: 'niveaux', optionsLabelKey: 'libelle', obligatoire: true },
+      // Facultatif : avec un niveau imposé, une classe créée sans niveau ou
+      // dans un autre niveau n'apparaissait pas dans la liste.
+      { param: 'id_niveau', tous: 'Tous les niveaux', optionsEndpoint: 'niveaux', optionsLabelKey: 'libelle' },
     ],
     description: 'Les classes de l’année affichée en haut, rangées par niveau, avec leur effectif '
       + 'et leur capacité. Les flèches ↑ ↓ changent leur ordre dans le niveau.',

@@ -129,7 +129,7 @@
       <table class="simple">
         <thead>
           <tr>
-            <th>Élève</th><th>Classe</th><th>Matricule</th>
+            <th>Élève</th><th>Classe</th><th>Naissance</th><th>Matricule</th>
             <th>État</th><th>Remarque</th>
           </tr>
         </thead>
@@ -143,6 +143,10 @@
                 }
               </td>
               <td>{{ e.classe || '—' }}</td>
+              <td class="mono">
+                {{ e.date_naissance ? (e.date_naissance | date:'dd/MM/yyyy') : '—' }}
+                @if (e.lieu_naissance) { <div class="hint">{{ e.lieu_naissance }}</div> }
+              </td>
               <td class="mono">{{ e.matricule || '—' }}</td>
               <td><span class="pill" [class]="classeDecision(e.decision)">
                 {{ libelleDecision(e.decision) }}

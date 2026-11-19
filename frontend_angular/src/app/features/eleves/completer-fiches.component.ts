@@ -13,6 +13,7 @@ interface LigneFiche {
   matricule: string;
   nom_complet: string;
   date_naissance: string | null;
+  lieu_naissance: string | null;
   sexe: 'M' | 'F' | null;
   numero_registre: string | null;
   incomplete: boolean;
@@ -20,11 +21,11 @@ interface LigneFiche {
 
 /** Une ligne en cours de saisie : les valeurs d'origine, et celles du formulaire. */
 interface LigneSaisie extends LigneFiche {
-  saisie: { date_naissance: string; sexe: string; numero_registre: string };
+  saisie: { date_naissance: string; lieu_naissance: string; sexe: string; numero_registre: string };
 }
 
 /**
- * Compléter les fiches d'une classe : date de naissance, sexe, n° de registre.
+ * Compléter les fiches d'une classe : date et lieu de naissance, sexe, n° de registre.
  *
  * Les listes importées n'ont ni date de naissance ni sexe. Sans date, l'âge
  * ne se contrôle pas et la réinscription s'arrête ; ouvrir cinq cents
@@ -100,6 +101,7 @@ export class CompleterFichesComponent implements OnInit {
             ...e,
             saisie: {
               date_naissance: e.date_naissance ?? '',
+              lieu_naissance: e.lieu_naissance ?? '',
               sexe: e.sexe ?? '',
               numero_registre: e.numero_registre ?? '',
             },
@@ -115,6 +117,7 @@ export class CompleterFichesComponent implements OnInit {
 
   changee(l: LigneSaisie): boolean {
     return l.saisie.date_naissance !== (l.date_naissance ?? '')
+      || l.saisie.lieu_naissance.trim() !== (l.lieu_naissance ?? '')
       || l.saisie.sexe !== (l.sexe ?? '')
       || l.saisie.numero_registre.trim() !== (l.numero_registre ?? '');
   }
@@ -133,6 +136,7 @@ export class CompleterFichesComponent implements OnInit {
     const eleves = lignes.map((l) => ({
       id: l.id,
       date_naissance: l.saisie.date_naissance || null,
+      lieu_naissance: l.saisie.lieu_naissance.trim() || null,
       sexe: l.saisie.sexe || null,
       numero_registre: l.saisie.numero_registre.trim() || null,
     }));

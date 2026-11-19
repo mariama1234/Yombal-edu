@@ -18,6 +18,7 @@ import { AnneeScolaireService } from '../../core/services/annee-scolaire.service
 import { AuthService } from '../../core/services/auth.service';
 import { FinanceService } from './finance.service';
 import { SiAccesDirective } from '../../shared/acces/si-acces.directive';
+import { PaginationComponent } from '../../shared/pagination/pagination.component';
 
 /**
  * Trois lectures du même argent : les échéances ouvertes, toutes les
@@ -29,7 +30,7 @@ type Onglet = 'impayes' | 'tous' | 'eleves';
 @Component({
   selector: 'app-finances-list',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective],
+  imports: [CommonModule, FormsModule, RouterLink, SiAccesDirective, PaginationComponent],
   templateUrl: './finances-list.component.html',
 })
 export class FinancesListComponent implements OnInit {
@@ -57,6 +58,11 @@ export class FinancesListComponent implements OnInit {
   echus = signal(false);
   recherche = signal('');
 
+  /** Pagination des onglets « Impayés » et « Tous les frais ». */
+  page = signal(1);
+  total = signal(0);
+  readonly taillePage = 20;
+
   readonly statuts: { value: StatutFinancier | ''; label: string }[] = [
     { value: '', label: 'Tous les statuts' },
     { value: 'a_jour', label: 'À jour' },
@@ -71,13 +77,8 @@ export class FinancesListComponent implements OnInit {
   peutEncaisser = computed(() => this.auth.peutEcrire('encaissement'));
   peutRelancer = computed(() => this.auth.peutEcrire('relances'));
 
-  lignes = computed(() => {
-    const terme = this.recherche().trim().toLowerCase();
-    if (!terme) return this.frais();
-    return this.frais().filter((f) =>
-      `${f.eleve_prenom ?? ''} ${f.eleve_nom ?? ''}`.toLowerCase().includes(terme),
-    );
-  });
+  /** La recherche est faite par le serveur, sur toutes les pages. */
+  lignes = computed(() => this.frais());
 
   /** Lignes de la vue « par élève » : le filtrage est fait par le serveur. */
   eleves = computed(() => this.situation()?.eleves ?? []);
@@ -103,13 +104,13 @@ export class FinancesListComponent implements OnInit {
     this.charger();
     this.finance.soldes().subscribe({ next: (s) => this.soldes.set(s), error: () => {} });
     this.http
-      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/`)
+      .get<Paginated<Classe>>(`${environment.apiUrl}/classes/?page_size=200`)
       .subscribe((r) => this.classes.set(r.results ?? []));
     this.http
-      .get<Paginated<TypeFrais>>(`${environment.apiUrl}/types-frais/`)
+      .get<Paginated<TypeFrais>>(`${environment.apiUrl}/types-frais/?page_size=200`)
       .subscribe({ next: (r) => this.typesFrais.set(r.results ?? []), error: () => {} });
     this.http
-      .get<Paginated<Niveau>>(`${environment.apiUrl}/niveaux/`)
+      .get<Paginated<Niveau>>(`${environment.apiUrl}/niveaux/?page_size=200`)
       .subscribe({ next: (r) => this.niveaux.set(r.results ?? []), error: () => {} });
   }
 
@@ -121,7 +122,21 @@ export class FinancesListComponent implements OnInit {
     };
   }
 
+  /**
+   * Recharge depuis la première page : tout changement de filtre passe par
+   * ici, et rester en page 4 d'une liste devenue plus courte afficherait vide.
+   */
   charger(): void {
+    this.page.set(1);
+    this.lire();
+  }
+
+  allerPage(page: number): void {
+    this.page.set(page);
+    this.lire();
+  }
+
+  private lire(): void {
     this.loading.set(true);
     this.erreur.set(null);
 
@@ -149,14 +164,22 @@ export class FinancesListComponent implements OnInit {
       return;
     }
 
+    const filtres = {
+      ...this.filtres,
+      search: this.recherche().trim(),
+      page: String(this.page()),
+      page_size: String(this.taillePage),
+    };
     const source =
       this.onglet() === 'impayes'
-        ? this.finance.impayes(this.filtres)
-        : this.finance.frais(this.filtres);
+        ? this.finance.impayes(filtres)
+        : this.finance.frais(filtres);
 
     source.subscribe({
       next: (res) => {
-        this.frais.set(res.results ?? (res as unknown as FraisEleve[]));
+        const lignes = res.results ?? (res as unknown as FraisEleve[]);
+        this.frais.set(lignes);
+        this.total.set(res.count ?? lignes.length);
         this.loading.set(false);
       },
       error: () => {
@@ -172,13 +195,18 @@ export class FinancesListComponent implements OnInit {
   }
 
   /**
-   * La vue « par élève » filtre côté serveur : la frappe doit donc relancer
-   * la requête, là où les deux autres onglets filtrent la liste déjà chargée.
+   * Tous les onglets filtrent côté serveur : les listes sont paginées, une
+   * recherche limitée à la page affichée manquerait les autres élèves.
    */
   surRecherche(terme: string): void {
     this.recherche.set(terme);
-    if (this.onglet() === 'eleves') this.charger();
+    // On attend la fin de la frappe : une requête par lettre tapée pourrait
+    // revenir dans le désordre et afficher le résultat d'un terme dépassé.
+    clearTimeout(this.minuterieRecherche);
+    this.minuterieRecherche = setTimeout(() => this.charger(), 300);
   }
+
+  private minuterieRecherche?: ReturnType<typeof setTimeout>;
 
   basculerEchus(): void {
     this.echus.update((v) => !v);

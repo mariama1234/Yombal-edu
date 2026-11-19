@@ -235,6 +235,12 @@ export interface EntityConfig {
    */
   reordonnable?: boolean;
   /**
+   * Champ qui groupe les lignes pour l'ordre (le niveau d'une classe) : la
+   * liste est triée d'abord par ce groupe, une ligne ne peut donc monter ou
+   * descendre qu'à côté d'une ligne du même groupe.
+   */
+  groupeOrdre?: string;
+  /**
    * Sélecteur de période au-dessus du tableau : vue de l'année entière, d'un
    * mois ou d'une semaine, autour d'une date. Envoie `vue` et `date`.
    */

@@ -95,6 +95,11 @@
             }
           </div>
           <div class="field">
+            <label for="lieu_naissance">Lieu de naissance</label>
+            <input class="input" id="lieu_naissance" formControlName="lieu_naissance"
+                   maxlength="100" placeholder="Ex. Thiès">
+          </div>
+          <div class="field">
             <label>Sexe</label>
             <div class="radio-pills">
               <label class="radio-pill" [class.checked]="form.get('sexe')?.value === 'F'">

@@ -7,6 +7,7 @@ import { GenericCrudService } from './generic-crud.service';
 import { ENTITY_CONFIGS } from './entity-configs';
 import { EntityConfig, EtapeSuivante, FiltreConfig, LienLigne, RowAction } from './crud-config.model';
 import { CreerAccesComponent } from '../acces/creer-acces.component';
+import { PaginationComponent } from '../pagination/pagination.component';
 import { AnneeScolaireService } from '../../core/services/annee-scolaire.service';
 import { ToastService } from '../../core/services/toast.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -17,7 +18,7 @@ import { dateDuJour } from '../dates';
 @Component({
   selector: 'app-generic-list',
   standalone: true,
-  imports: [CommonModule, RouterLink, CreerAccesComponent],
+  imports: [CommonModule, RouterLink, CreerAccesComponent, PaginationComponent],
   templateUrl: './generic-list.component.html',
 })
 export class GenericListComponent implements OnInit {
@@ -25,6 +26,9 @@ export class GenericListComponent implements OnInit {
   items = signal<any[]>([]);
   loading = signal(true);
   total = signal(0);
+  /** Page affichée ; l'API renvoie `taillePage` lignes à la fois. */
+  page = signal(1);
+  readonly taillePage = 20;
   erreur = signal<string | null>(null);
 
   /** Fiche dont on est en train de créer le compte de connexion. */
@@ -80,6 +84,7 @@ export class GenericListComponent implements OnInit {
           this.chargerFiltres();
         }
       });
+      this.page.set(1);
       this.charger();
     });
   }
@@ -88,6 +93,10 @@ export class GenericListComponent implements OnInit {
     this.route.data.subscribe((data) => {
       this.config = ENTITY_CONFIGS[data['entityKey']];
       this.valeursFiltres.set({});
+      // Changement d'écran : les lignes de l'écran précédent n'ont pas les
+      // mêmes colonnes, elles ne doivent pas rester affichées.
+      this.items.set([]);
+      this.page.set(1);
       this.dernierSupprime.set(null);
       // Transmis par le formulaire à la navigation ; effacé aussitôt lu, sans
       // quoi un rafraîchissement de la page ferait réapparaître le bandeau.
@@ -123,7 +132,12 @@ export class GenericListComponent implements OnInit {
     Object.assign(params, untracked(() => this.parametresPeriode()));
     // Une liste qu'on réordonne doit être entière : déplacer une ligne parmi
     // les vingt premières en laisserait d'autres à un rang inchangé.
-    if (this.config.reordonnable) params['page_size'] = '200';
+    if (this.config.reordonnable) {
+      params['page_size'] = '200';
+    } else {
+      params['page'] = String(untracked(() => this.page()));
+      params['page_size'] = String(this.taillePage);
+    }
     // Filtre obligatoire dont les options ne sont pas encore là : on attend
     // plutôt que d'afficher toute la liste d'un coup. Sans aucune option (pas
     // de niveau créé), la liste s'affiche entière.
@@ -134,12 +148,32 @@ export class GenericListComponent implements OnInit {
     }
     this.crud.list(this.config.endpoint, params).subscribe({
       next: (res) => {
+        // La dernière ligne d'une page vient d'être supprimée : on recule
+        // d'une page plutôt que d'afficher un tableau vide.
+        if (!res.results.length && res.count > 0 && untracked(() => this.page()) > 1) {
+          this.page.update((p) => p - 1);
+          this.charger();
+          return;
+        }
         this.items.set(res.results);
         this.total.set(res.count);
         this.loading.set(false);
       },
-      error: () => this.loading.set(false),
+      error: (e) => {
+        // Page qui n'existe plus (filtre changé entre-temps) : retour à la première.
+        if (e?.status === 404 && untracked(() => this.page()) > 1) {
+          this.page.set(1);
+          this.charger();
+          return;
+        }
+        this.loading.set(false);
+      },
     });
+  }
+
+  allerPage(page: number): void {
+    this.page.set(page);
+    this.charger();
   }
 
   /** Le filtre propose les lignes d'une liste qui suit l'année (les classes). */
@@ -168,7 +202,7 @@ export class GenericListComponent implements OnInit {
           if (filtre.obligatoire && options.length && !this.valeursFiltres()[filtre.param]) {
             this.valeursFiltres.update((v) => ({ ...v, [filtre.param]: String(options[0].id) }));
           }
-          if (filtre.obligatoire) this.charger();
+          if (filtre.obligatoire) { this.page.set(1); this.charger(); }
         },
         error: () => {
           this.optionsFiltres.update((o) => ({ ...o, [filtre.param]: [] }));
@@ -192,12 +226,13 @@ export class GenericListComponent implements OnInit {
 
   choisirVue(vue: string): void {
     this.vue.set(vue as 'annuelle' | 'mensuelle' | 'hebdomadaire');
+    this.page.set(1);
     this.charger();
   }
 
   choisirDate(date: string): void {
     this.datePeriode.set(date);
-    if (this.vue() !== 'annuelle') this.charger();
+    if (this.vue() !== 'annuelle') { this.page.set(1); this.charger(); }
   }
 
   /** Recule ou avance d'un mois ou d'une semaine, selon la vue. */
@@ -215,10 +250,19 @@ export class GenericListComponent implements OnInit {
    * affichée. L'écran bouge tout de suite ; un refus du serveur le remet
    * comme il était.
    */
+  /** Vrai si la ligne peut monter (-1) ou descendre (1) d'un cran. */
+  peutDeplacer(index: number, sens: 1 | -1): boolean {
+    const lignes = this.items();
+    const cible = index + sens;
+    if (cible < 0 || cible >= lignes.length) return false;
+    const groupe = this.config.groupeOrdre;
+    return !groupe || (lignes[index][groupe] ?? null) === (lignes[cible][groupe] ?? null);
+  }
+
   deplacer(index: number, sens: 1 | -1): void {
     const lignes = [...this.items()];
     const cible = index + sens;
-    if (cible < 0 || cible >= lignes.length || this.occupe()) return;
+    if (!this.peutDeplacer(index, sens) || this.occupe()) return;
     const avant = this.items();
     [lignes[index], lignes[cible]] = [lignes[cible], lignes[index]];
     this.items.set(lignes);
@@ -267,6 +311,8 @@ export class GenericListComponent implements OnInit {
 
   filtrer(param: string, valeur: string): void {
     this.valeursFiltres.update((v) => ({ ...v, [param]: valeur }));
+    // Un filtre change le nombre de pages : rester en page 4 afficherait vide.
+    this.page.set(1);
     this.charger();
   }
 

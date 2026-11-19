@@ -66,7 +66,7 @@ export class AnneeScolaireService {
   private lire(activer?: number): void {
     this.enCours = true;
     this.http
-      .get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/`)
+      .get<Paginated<AnneeScolaire>>(`${environment.apiUrl}/annees-scolaires/?page_size=200`)
       .subscribe({
         next: (r) => {
           const annees = r.results ?? [];

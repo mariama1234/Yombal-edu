@@ -47,7 +47,7 @@
     } @else {
       <table class="simple">
         <thead>
-          <tr><th>Élève</th><th>Matricule</th><th>Date de naissance</th><th>Sexe</th><th>N° de registre</th></tr>
+          <tr><th>Élève</th><th>Matricule</th><th>Date de naissance</th><th>Lieu de naissance</th><th>Sexe</th><th>N° de registre</th></tr>
         </thead>
         <tbody>
           @for (l of visibles(); track l.id) {
@@ -57,6 +57,10 @@
               <td>
                 <input class="input" type="date" style="min-width:150px;" [attr.aria-label]="'Date de naissance de ' + l.nom_complet"
                        [ngModel]="l.saisie.date_naissance" (ngModelChange)="modifier(l, 'date_naissance', $event)">
+              </td>
+              <td>
+                <input class="input" style="min-width:120px;" maxlength="100" [attr.aria-label]="'Lieu de naissance de ' + l.nom_complet"
+                       [ngModel]="l.saisie.lieu_naissance" (ngModelChange)="modifier(l, 'lieu_naissance', $event)">
               </td>
               <td>
                 <select class="input" [attr.aria-label]="'Sexe de ' + l.nom_complet"
